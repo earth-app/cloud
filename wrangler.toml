@@ -1,0 +1,22 @@
+name = "earthapp-cloud"
+main = "src/index.ts"
+compatibility_date = "2025-04-28"
+routes = [
+    { pattern = "cloud.earth-app.com", custom_domain = true }
+]
+
+[assets]
+directory = "public"
+binding = "ASSETS"
+
+[ai]
+binding = "AI"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[[d1_databases]]
+binding = "DB"
+database_name = "earth-app"
+database_id = "4c88abe1-6768-4f17-8cc6-8b8e41475a34"

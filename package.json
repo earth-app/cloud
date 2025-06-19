@@ -1,0 +1,18 @@
+{
+  "private": true,
+  "name": "@earth-app/cloud",
+  "version": "1.0.0",
+  "description": "The Automaton behind The Earth App",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy --minify"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "^4.20250610.0",
+    "@earth-app/ocean": "1.0.0-f4d6d80",
+    "hono": "^4.7.11"
+  },
+  "devDependencies": {
+    "wrangler": "^4.19.1"
+  }
+}
