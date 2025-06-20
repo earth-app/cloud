@@ -11,6 +11,7 @@ export type ActivityData = {
     name: string,
     description: string,
     icon: Uint8Array,
+    data_url: string,
     created_at: string,
     updated_at?: string
 }
