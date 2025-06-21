@@ -4,11 +4,14 @@ export type Bindings = {
     DB: D1Database,
     AI: Ai,
     ASSETS: Fetcher
+
+    ADMIN_API_TOKEN: string
 }
 
 export type ActivityData = {
     id: number,
     name: string,
+    human_name: string,
     description: string,
     icon: Uint8Array,
     data_url: string,

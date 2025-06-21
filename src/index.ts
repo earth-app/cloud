@@ -5,6 +5,7 @@ import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
 import { cache } from 'hono/cache';
 import { secureHeaders } from 'hono/secure-headers'
+import { bearerAuth } from "hono/bearer-auth";
 
 import * as packageJson from '../package.json'
 import { activityDescriptionPrompt, activityDescriptionSystemMessage, activityImagePrompt } from "./prompts";
@@ -13,6 +14,9 @@ import { getActivity, setActivity } from "./db";
 import { base64ToUint8Array, detectImageMime, uint8ArrayToBase64 } from "./compression";
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+const imageModel = "@cf/black-forest-labs/flux-1-schnell";
+const textModel = "@cf/meta/llama-3.2-1b-instruct";
 
 // Middleware
 
@@ -39,10 +43,19 @@ app.use('*', cache({ // Cache middleware
 // Implementation
 app.get('/', (c) => c.text('Woosh!'))
 
+// app.use('/activity/*', async (c, next) => { 
+//     const token = c.env.ADMIN_API_TOKEN
+//     return bearerAuth({ token })(c, next)
+// })
+
 app.get('/activity/:id', async (c) => {
     const id = c.req.param('id')?.toLowerCase();
     if (!id) {
         return c.text('Activity ID is required', 400);
+    }
+
+    if (id.length < 3 || id.length > 20) {
+        return c.text('Activity ID must be between 3 and 20 characters', 400);
     }
 
     // Try to fetch existing
@@ -84,21 +97,22 @@ app.get('/activity/:id', async (c) => {
     }
 
     // Generate description
-    const description = await c.env.AI.run("@cf/meta/llama-3.2-1b-instruct", {
+    const promptId = id.replace(/_/g, ' ')
+    const description = await c.env.AI.run(textModel, {
         messages: [
             { role: "system", content: activityDescriptionSystemMessage.trim() },
-            { role: "user", content: activityDescriptionPrompt(id).trim() }
+            { role: "user", content: activityDescriptionPrompt(promptId).trim() }
         ]
     });
     const descRaw = description?.response?.trim() || `No description available for ${id}.`;
     const trimmedDesc = descRaw.length > 500 ? descRaw.slice(0, 500) + '...' : descRaw;
 
     // Generate image
-    const imageResult = await c.env.AI.run("@cf/black-forest-labs/flux-1-schnell", {
-        prompt: activityImagePrompt(id, trimmedDesc).trim(),
+    const imageResult = await c.env.AI.run(imageModel, {
+        prompt: activityImagePrompt(promptId, trimmedDesc).trim(),
         seed: Math.floor(Math.random() * 1000000)
     });
-    const imgBase64 = imageResult?.image; // assume base64 string, e.g. "iVBORw0KGgoAAAANS..."
+    const imgBase64 = imageResult?.image;
     if (!imgBase64) {
         return c.text(`Failed to generate image for activity '${id}'`, 500);
     }
@@ -120,11 +134,14 @@ app.get('/activity/:id', async (c) => {
     }
 
     const now = new Date().toISOString();
-    const data_url = `data:image/png;base64,${imgBase64}`;
+    const data_url = `data:image/jpeg;base64,${imgBase64}`;
 
     const activityData = {
         id: 0, // Will be set by DB auto-increment
         name: id,
+        human_name: id
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, (c) => c.toUpperCase()),
         description: descRaw,
         icon: compressedImg,
         data_url,
@@ -135,6 +152,7 @@ app.get('/activity/:id', async (c) => {
     try {
         await setActivity(c.env.DB, activityData);
     } catch (err) {
+        console.error(`Failed to save activity '${id}':`, err);
         return c.text(`Failed to save activity`, 500);
     }
 
@@ -190,5 +208,60 @@ app.get('/activity/:id/icon', async (c) => {
         'Content-Disposition': `inline; filename="${id}-icon.jpg"`,
     });
 });
+
+app.get('/activity/:id/regenerate_icon', async (c) => {
+    const id = c.req.param('id')?.toLowerCase();
+    if (!id) {
+        return c.text('Activity ID is required', 400);
+    }
+
+    const activity = await getActivity(c.env.DB, id);
+    if (!activity) {
+        return c.text(`Activity '${id}' not found`, 404);
+    }
+
+    const promptId = id.replace(/_/g, ' ');
+    const trimmedDesc = activity.description.length > 500 ? activity.description.slice(0, 500) + '...' : activity.description;
+
+    // Generate image
+    const imageResult = await c.env.AI.run(imageModel, {
+        prompt: activityImagePrompt(promptId, trimmedDesc).trim(),
+        seed: Math.floor(Math.random() * 1000000)
+    });
+    const imgBase64 = imageResult?.image;
+    if (!imgBase64) return c.text(`Failed to generate image for activity '${id}'`, 500);
+
+    // Decode base64 to raw bytes
+    let imgBytes: Uint8Array;
+    try {
+        imgBytes = base64ToUint8Array(imgBase64);
+    } catch (err) {
+        return c.text(`Failed to decode generated image data`, 500);
+    }
+
+    // Compress raw bytes
+    let compressedImg: Uint8Array;
+    try {
+        compressedImg = deflate(imgBytes);
+    } catch (err) {
+        return c.text(`Failed to compress image`, 500);
+    }
+
+    const activityData = {
+        ...activity,
+        icon: compressedImg,
+        data_url: `data:image/jpeg;base64,${imgBase64}`,
+        updated_at: new Date().toISOString()
+    };
+
+    try {
+        await setActivity(c.env.DB, activityData);
+    } catch (err) {
+        console.error(`Failed to update activity '${id}':`, err);
+        return c.text(`Failed to update activity`, 500);
+    }
+
+    return c.json(activityData, 200);
+})
 
 export default app;

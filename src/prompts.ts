@@ -11,7 +11,7 @@ export const activityImagePrompt = (activity: string, description: string): stri
 **Composition**
 - Center the main icon with balanced spacing. Avoid clutter.
 - Focus on one clear symbol or character that expresses the idea of "${activity}".
-- Do not include text or typography in the image.
+- Do not include text or typography in the image. Avoid excess detail or complexity, and chose a singlular focus that captures the essence of the activity.
 
 **Concept & Symbolism**
 - Choose a universal metaphor according to the description.
