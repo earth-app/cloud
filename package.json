@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "The Automaton behind The Earth App",
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --port 9898",
     "deploy": "wrangler deploy --minify"
   },
   "dependencies": {
