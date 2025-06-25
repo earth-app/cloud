@@ -6,7 +6,8 @@ async function checkActivityTable(d1: D1Database) {
         id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
         name TEXT NOT NULL UNIQUE,
         human_name TEXT NOT NULL,
-        description TEXT NOT NULL, 
+        description TEXT NOT NULL,
+        types TEXT NOT NULL,
         icon BLOB NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -34,15 +35,15 @@ export async function setActivity(d1: D1Database, activity: ActivityData) {
     const existing = await getActivity(d1, activity.name);
     if (existing) {
         // Update existing activity
-        const query = `UPDATE activities SET description = ?, icon = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?`;
+        const query = `UPDATE activities SET description = ?, types = ?, icon = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?`;
         await d1.prepare(query)
-            .bind(activity.description, activity.icon, activity.name)
+            .bind(activity.description, activity.types, activity.icon, activity.name)
             .run();
         return;
     } else {
-        const query = `INSERT INTO activities (name, human_name, description, icon) VALUES (?, ?, ?, ?)`;
+        const query = `INSERT INTO activities (name, human_name, description, types, icon) VALUES (?, ?, ?, ?, ?)`;
         await d1.prepare(query)
-            .bind(activity.name, activity.human_name, activity.description, activity.icon)
+            .bind(activity.name, activity.human_name, activity.description, activity.types, activity.icon)
             .run();
     }
 }

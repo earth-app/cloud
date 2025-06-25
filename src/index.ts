@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { inflate, deflate } from "pako";
+import * as ocean from "@earth-app/ocean";
 
 import { cors } from 'hono/cors';
 import { logger } from 'hono/logger';
@@ -8,8 +9,8 @@ import { secureHeaders } from 'hono/secure-headers'
 import { bearerAuth } from "hono/bearer-auth";
 
 import * as packageJson from '../package.json'
-import { activityDescriptionPrompt, activityDescriptionSystemMessage, activityImagePrompt } from "./prompts";
-import { Bindings } from "./types";
+import { activityDescriptionPrompt, activityDescriptionSystemMessage, activityImagePrompt, activityTagsSystemMessage } from "./prompts";
+import { ActivityData, Bindings } from "./types";
 import { getActivity, setActivity } from "./db";
 import { base64ToUint8Array, detectImageMime, uint8ArrayToBase64 } from "./compression";
 
@@ -117,6 +118,19 @@ app.get('/activity/:id', async (c) => {
         return c.text(`Failed to generate image for activity '${id}'`, 500);
     }
 
+    // Generate tags
+    const tagsResult = await c.env.AI.run(textModel, {
+        messages: [
+            { role: "system", content: activityTagsSystemMessage.trim() },
+            { role: "user", content: `'${promptId}'` }
+        ]
+    });
+    const validTags = ocean.com.earthapp.activity.ActivityType.values().map(t => t.name.trim().toUpperCase());
+    const tags = tagsResult?.response?.trim().split(',')
+        .map(tag => tag.trim().toUpperCase())
+        .filter(tag => tag.length > 0)
+        .filter(tag => validTags.includes(tag)) || ["OTHER"];
+
     // Decode base64 to raw bytes
     let imgBytes: Uint8Array;
     try {
@@ -142,12 +156,13 @@ app.get('/activity/:id', async (c) => {
         human_name: id
             .replace(/_/g, ' ')
             .replace(/\b\w/g, (c) => c.toUpperCase()),
+        types: tags.join(','),
         description: descRaw,
         icon: compressedImg,
         data_url,
         created_at: now,
         updated_at: now
-    };
+    } as ActivityData;
 
     try {
         await setActivity(c.env.DB, activityData);

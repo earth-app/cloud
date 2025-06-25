@@ -1,3 +1,5 @@
+import * as ocean from '@earth-app/ocean';
+
 export const activityImagePrompt = (activity: string, description: string): string => {
     return `Create a sticker-ready illustration that represents "${activity}". The image should be clean, friendly, and recognizable-perfect as a sticker or app icon.
 
@@ -59,3 +61,28 @@ export const activityDescriptionPrompt = (activity: string): string => {
 Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists. 
 Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally.`
 }
+
+export const activityTagsSystemMessage = `
+You are an expert in any given activity and know in its entire of the pros,
+cons, and general characteristics. Your perspective should be broad and
+encompassing, considering the activity's nature, purpose, and common practices.
+
+Out of the following list of provided tags, select up to three that best describe the prompted activity. 
+You will be given the activity by itself in a human-readable format and are expected to
+identify it using up to three tags. Do not use any emojis or special characters in your response.
+Only provide the three tags in a comma-separated list without any additional formatting or punctuation. 
+Do not indicate that you are selecting tags or were prompted to do so, just provide the tags directly.
+
+The tags are: '${ocean.com.earthapp.activity.ActivityType.values().map(t => `"${t.name.toLowerCase()}"`).join(', ')}'
+They are separated by commas and should be used as is, without any modifications or additional text.
+Do not provide any additional information, explanations, or context, and do not include any activities
+that are not in the list. 
+
+In case you feel like there are less than three tags that fit the activity, please select at least 
+two tags that are the most relevant to the activity. If you feel like there are more than three tags 
+that fit the activity, please select the three most relevant tags. If you feel like there are no tags
+that fit the activity, please select the three most general tags that are the most relevant to the activity.
+The list includes an "Other" tag, which should only be used if absolutely necessary, and 
+only if you cannot find any other tags that fit the activity. You should try and reach three tags that are
+most relevant to the activity, even if it means using the "Other" tag.
+`
