@@ -13,6 +13,7 @@ import { activityDescriptionPrompt, activityDescriptionSystemMessage, activityIm
 import { ActivityData, Bindings } from "./types";
 import { getActivity, setActivity } from "./db";
 import { base64ToUint8Array, detectImageMime, uint8ArrayToBase64 } from "./compression";
+import { getSynonyms, isValidWord } from "./lang";
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -97,12 +98,16 @@ app.get('/activity/:id', async (c) => {
         return c.json(existing, 200);
     }
 
+    const activity = id.replace(/_/g, ' ')
+    if (!(await isValidWord(activity))) {
+        return c.text(`Activity '${id}' is not a valid word`, 400);
+    }
+
     // Generate description
-    const promptId = id.replace(/_/g, ' ')
     const description = await c.env.AI.run(textModel, {
         messages: [
             { role: "system", content: activityDescriptionSystemMessage.trim() },
-            { role: "user", content: activityDescriptionPrompt(promptId).trim() }
+            { role: "user", content: activityDescriptionPrompt(activity).trim() }
         ]
     });
     const descRaw = description?.response?.trim() || `No description available for ${id}.`;
@@ -110,7 +115,7 @@ app.get('/activity/:id', async (c) => {
 
     // Generate image
     const imageResult = await c.env.AI.run(imageModel, {
-        prompt: activityImagePrompt(promptId, trimmedDesc).trim(),
+        prompt: activityImagePrompt(activity, trimmedDesc).trim(),
         seed: Math.floor(Math.random() * 1000000)
     });
     const imgBase64 = imageResult?.image;
@@ -122,7 +127,7 @@ app.get('/activity/:id', async (c) => {
     const tagsResult = await c.env.AI.run(textModel, {
         messages: [
             { role: "system", content: activityTagsSystemMessage.trim() },
-            { role: "user", content: `'${promptId}'` }
+            { role: "user", content: `'${activity}'` }
         ]
     });
     const validTags = ocean.com.earthapp.activity.ActivityType.values().map(t => t.name.trim().toUpperCase());
@@ -150,6 +155,15 @@ app.get('/activity/:id', async (c) => {
     const now = new Date().toISOString();
     const data_url = `data:image/jpeg;base64,${imgBase64}`;
 
+    let aliases: string | null = null;
+    const synonyms = await getSynonyms(activity);
+    if (synonyms && synonyms.length > 0) {
+        aliases = synonyms
+            .map(syn => syn.trim().toLowerCase())
+            .filter(syn => syn.length > 0 && syn !== activity)
+            .join(',');
+    }
+
     const activityData = {
         id: 0, // Will be set by DB auto-increment
         name: id,
@@ -158,6 +172,7 @@ app.get('/activity/:id', async (c) => {
             .replace(/\b\w/g, (c) => c.toUpperCase()),
         types: tags.join(','),
         description: descRaw,
+        aliases: aliases,
         icon: compressedImg,
         data_url,
         created_at: now,
