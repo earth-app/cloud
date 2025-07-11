@@ -1,10 +1,11 @@
 name = "earthapp-cloud"
 main = "src/index.ts"
 compatibility_date = "2025-04-28"
-compatibility_flags = [ "nodejs_compat" ]
+compatibility_flags = [ "nodejs_compat", "nodejs_zlib" ]
 routes = [
     { pattern = "cloud.earth-app.com", custom_domain = true }
 ]
+send_metrics = false
 
 [assets]
 directory = "public"
@@ -21,3 +22,8 @@ head_sampling_rate = 1
 binding = "DB"
 database_name = "earth-app"
 database_id = "4c88abe1-6768-4f17-8cc6-8b8e41475a34"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "earth-app"
+preview_bucket_name = "earth-app-preview"
