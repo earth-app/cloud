@@ -1,29 +1,5 @@
 import * as ocean from '@earth-app/ocean';
 
-export const activityImagePrompt = (activity: string, description: string): string => {
-    return `Create a sticker-ready illustration that represents "${activity}". The image should be clean, friendly, and recognizable-perfect as a sticker or app icon.
-
-**Style & Aesthetic**
-- Flat or minimally shaded with bold outlines, simplified shapes, and a vector-like look.
-- Use 3-5 bright, cheerful colors. Flat fills preferred; subtle gradients okay.
-- Match mood to the activity (calm = soft tones, energy = dynamic shapes), and prioritize bold, clean, simple, yet engaging visuals.
-- Keep it playful and readable at small sizes. Add a white sticker border (with optional soft shadow).
-- Use a transparent or white background.
-
-**Composition**
-- Center the main icon with balanced spacing. Avoid clutter.
-- Focus on one clear symbol or character that expresses the idea of "${activity}".
-- Do not include text or typography in the image. Avoid excess detail or complexity, and chose a singlular focus that captures the essence of the activity.
-
-**Concept & Symbolism**
-- Choose a universal metaphor according to the description.
-- Avoid literal or complex scenes. Keep it abstract, simple, and culturally neutral.
-- Use shapes and symbols that evoke the essence of "${activity}" without being too specific or detailed.
-
-Here is a description of "${activity}": '${description}'
-Use this to inspire the visual elements and ensure the image captures the essence of the activity in a fun, engaging way.`
-}
-
 export const activityDescriptionSystemMessage = `
 You are an expert in any given activity. 
 You must provide a paragraph briefly explaining the activity in a concise, engaging manner. 

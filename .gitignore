@@ -2,6 +2,6 @@
 .idea/
 .vscode/
 node_modules/
-.env
+.dev.vars
 package-lock.json
 dist/

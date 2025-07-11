@@ -8,13 +8,13 @@
     "deploy": "wrangler deploy --minify"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20250620.0",
-    "@earth-app/ocean": "1.0.0-f4d6d80",
+    "@cloudflare/workers-types": "^4.20250711.0",
+    "@earth-app/ocean": "1.0.0-9aff928",
     "@types/pako": "^2.0.3",
-    "hono": "^4.8.2",
+    "hono": "^4.8.4",
     "pako": "^2.1.0"
   },
   "devDependencies": {
-    "wrangler": "^4.20.5"
+    "wrangler": "^4.24.3"
   }
 }

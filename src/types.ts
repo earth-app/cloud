@@ -15,8 +15,6 @@ export type ActivityData = {
     description: string,
     aliases?: string,
     types: string,
-    icon: Uint8Array,
-    data_url: string,
     created_at: string,
     updated_at?: string
 }

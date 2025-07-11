@@ -1,6 +1,7 @@
 name = "earthapp-cloud"
 main = "src/index.ts"
 compatibility_date = "2025-04-28"
+compatibility_flags = [ "nodejs_compat" ]
 routes = [
     { pattern = "cloud.earth-app.com", custom_domain = true }
 ]
