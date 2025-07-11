@@ -1,6 +1,5 @@
 .wrangler/
 .idea/
-.vscode/
 node_modules/
 .dev.vars
 package-lock.json
