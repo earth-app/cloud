@@ -5,7 +5,10 @@
   "description": "The Automaton behind The Earth App",
   "scripts": {
     "dev": "wrangler dev --port 9898",
-    "deploy": "wrangler deploy --minify"
+    "deploy": "wrangler deploy --minify",
+    "prettier": "bunx prettier --write .",
+    "prettier:check": "bunx prettier --check .",
+    "prepare": "husky install"
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20250711.0",
@@ -15,6 +18,12 @@
     "pako": "^2.1.0"
   },
   "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.1.2",
+    "prettier": "^3.6.2",
     "wrangler": "^4.24.3"
+  },
+  "lint-staged": {
+    "*.{js,ts,json,yml}": "prettier --write"
   }
 }

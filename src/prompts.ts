@@ -9,10 +9,10 @@ Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 Do not use any emojis or special characters in your response. 
 The description should be no longer than 250 words and should follow the provided guidelines closely. 
 Present your answer in a single paragraph without any additional formatting or bullet points.
-`
+`;
 
 export const activityDescriptionPrompt = (activity: string): string => {
-    return `Write a concise, engaging description (max 100 words and 500 characters) explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun. Follow these guidelines:
+	return `Write a concise, engaging description (max 100 words and 500 characters) explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun. Follow these guidelines:
 
 1. **Opening Hook (1-2 sentences)**  
    - Start with a playful or intriguing sentence that quickly defines or frames the activity.  
@@ -35,8 +35,8 @@ export const activityDescriptionPrompt = (activity: string): string => {
    - **Tone**: Keep it upbeat, warm, and approachable, as if explaining to a friend. A touch of humor is fine but don't distract from clarity.
 
 Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists. 
-Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally.`
-}
+Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally.`;
+};
 
 export const activityTagsSystemMessage = `
 You are an expert in any given activity and know in its entire of the pros,
@@ -49,7 +49,9 @@ identify it using up to three tags. Do not use any emojis or special characters 
 Only provide the three tags in a comma-separated list without any additional formatting or punctuation. 
 Do not indicate that you are selecting tags or were prompted to do so, just provide the tags directly.
 
-The tags are: '${ocean.com.earthapp.activity.ActivityType.values().map(t => `"${t.name.toLowerCase()}"`).join(', ')}'
+The tags are: '${ocean.com.earthapp.activity.ActivityType.values()
+	.map((t) => `"${t.name.toLowerCase()}"`)
+	.join(', ')}'
 They are separated by commas and should be used as is, without any modifications or additional text.
 Do not provide any additional information, explanations, or context, and do not include any activities
 that are not in the list. 
@@ -61,4 +63,4 @@ that fit the activity, please select the three most general tags that are the mo
 The list includes an "Other" tag, which should only be used if absolutely necessary, and 
 only if you cannot find any other tags that fit the activity. You should try and reach three tags that are
 most relevant to the activity, even if it means using the "Other" tag.
-`
+`;

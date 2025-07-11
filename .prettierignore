@@ -1,0 +1,12 @@
+.vsocde/
+.nuxt/
+.config/
+.github/
+bun.lock
+node_modules/
+package.json
+package-lock.json
+LICENSE
+README.md
+tsconfig.json
+tailwind.config.js

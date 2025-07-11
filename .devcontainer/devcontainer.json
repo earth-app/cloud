@@ -1,4 +1,4 @@
 {
-    "name": "mantle",
-    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04"
+	"name": "mantle",
+	"image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04"
 }
