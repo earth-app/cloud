@@ -23,9 +23,9 @@ let HAS_PUBMED_API_KEY = false;
 export async function findArticles(
 	query: string,
 	c: Context<{ Bindings: Bindings }>,
-	limit: number = 3
+	limit: number = 1
 ) {
-	if (!HAS_PUBMED_API_KEY) {
+	if (!HAS_PUBMED_API_KEY && c.env.NCBI_API_KEY) {
 		com.earthapp.ocean.boat.Scraper.setApiKey('PubMed', c.env.NCBI_API_KEY);
 		HAS_PUBMED_API_KEY = true;
 	}
