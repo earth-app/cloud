@@ -10,13 +10,10 @@ export type Bindings = {
 	NCBI_API_KEY: string;
 };
 
-export type ActivityData = {
-	id: number;
+export type Activity = {
+	id: string;
 	name: string;
-	human_name: string;
 	description: string;
-	aliases?: string;
-	types: string;
-	created_at: string;
-	updated_at?: string;
+	aliases: string[];
+	types: string[];
 };
