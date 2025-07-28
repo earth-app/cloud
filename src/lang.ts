@@ -7,6 +7,7 @@ type DictionaryEntry = {
 		definitions: {
 			synonyms: string[];
 		}[];
+		synonyms: string[];
 	}[];
 };
 
@@ -27,6 +28,14 @@ export async function isValidWord(word: string): Promise<boolean> {
 }
 
 export async function getSynonyms(word: string) {
+	if (!word || word.length < 3) {
+		return [];
+	}
+
+	if (!(await isValidWord(word))) {
+		return [];
+	}
+
 	try {
 		const response = await fetch(dictionaryUrl(word));
 		if (!response.ok) return [];
@@ -35,12 +44,18 @@ export async function getSynonyms(word: string) {
 		if (!data || !data.length) return []; // in case it's not an array or empty
 
 		const synonyms: string[] = [];
-		for (const entry of data)
-			for (const meaning of entry.meanings)
-				for (const definition of meaning.definitions)
+		for (const entry of data) {
+			for (const meaning of entry.meanings) {
+				for (const definition of meaning.definitions) {
 					if (definition.synonyms && definition.synonyms.length > 0) {
 						synonyms.push(...definition.synonyms);
 					}
+				}
+				if (meaning.synonyms && meaning.synonyms.length > 0) {
+					synonyms.push(...meaning.synonyms);
+				}
+			}
+		}
 
 		// Remove duplicates and filter out the original word
 		return Array.from(new Set(synonyms))
