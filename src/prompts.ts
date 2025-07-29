@@ -1,45 +1,46 @@
 import * as ocean from '@earth-app/ocean';
+import { OceanArticle } from './types';
 
 export const activityDescriptionSystemMessage = `
-You are an expert in any given activity. 
-You must provide a paragraph briefly explaining the activity in a concise, engaging manner. 
-The description should be informative and educational but also lighthearted and fun. 
-Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it. 
-Use simple language, avoid jargon, and keep the tone upbeat and friendly. 
-Do not use any emojis or special characters in your response. 
-The description should be no longer than 100 words, 500 characters, or 160 tokens, and should follow the provided guidelines closely. 
+You are an expert in any given activity.
+You must provide a paragraph briefly explaining the activity in a concise, engaging manner.
+The description should be informative and educational but also lighthearted and fun.
+Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
+Use simple language, avoid jargon, and keep the tone upbeat and friendly.
+Do not use any emojis or special characters in your response.
+The description should be no longer than 100 words, 500 characters, or 160 tokens, and should follow the provided guidelines closely.
 Present your answer in a single paragraph without any additional formatting or bullet points.
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
 	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun. Follow these guidelines:
 
-1. **Opening Hook (1-2 sentences)**  
-   - Start with a playful or intriguing sentence that quickly defines or frames the activity.  
-   - Examples: 
+1. **Opening Hook (1-2 sentences)**
+   - Start with a playful or intriguing sentence that quickly defines or frames the activity.
+   - Examples:
        - "Ever wondered why people love ${activity}? It's more than just a pastime-it's..."
        - "Imagine a world where ${activity} is the norm, not the exception. Here's why it matters..."
        - "If you think ${activity} is just for experts, think again! It's actually a great way to...".
 
-2. **Core Explanation (2-3 short paragraphs)**  
-   - **Definition & Essence**: Clearly state what ${activity} involves. Use simple language so anyone can understand.  
-   - **How It Works / What You Do**: Summarize the basic steps or typical elements (e.g., "To get started, you need," "Participants usually").  
+2. **Core Explanation (2-3 short paragraphs)**
+   - **Definition & Essence**: Clearly state what ${activity} involves. Use simple language so anyone can understand.
+   - **How It Works / What You Do**: Summarize the basic steps or typical elements (e.g., "To get started, you need," "Participants usually").
    - **Benefits & Appeal**: Highlight why people enjoy it-physical, mental, social, or creative perks. Keep it upbeat (e.g., "Besides being a great way to," "It's perfect for those who").
 
-3. **Fun Fact or Twist (optional, 1 sentence)**  
-   - Include a light trivia or surprising tidbit about ${activity}.  
+3. **Fun Fact or Twist (optional, 1 sentence)**
+   - Include a light trivia or surprising tidbit about ${activity}.
 
-4. **Friendly Invitation (1 sentence)**  
-   - Encourage readers to try or learn more: 
+4. **Friendly Invitation (1 sentence)**
+   - Encourage readers to try or learn more:
        - "Whether you're a beginner or curious explorer, ${activity} offers."
        - "Join the fun and discover why ${activity} is loved by so many!"
 
-5. **Constraints & Style**  
-   - **Word limit**: Ensure the entire description is <= 100 words or 500 characters.  
-   - **Readability**: Use short sentences or bullet-like flow; avoid jargon. If using a term, briefly explain it.  
+5. **Constraints & Style**
+   - **Word limit**: Ensure the entire description is <= 100 words or 500 characters.
+   - **Readability**: Use short sentences or bullet-like flow; avoid jargon. If using a term, briefly explain it.
    - **Tone**: Keep it upbeat, warm, and approachable, as if explaining to a friend. A touch of humor is fine but don't distract from clarity.
 
-Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists. 
+Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists.
 Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally.`;
 };
 
@@ -74,3 +75,52 @@ swimming -> SPORT,HEALTH,NATURE,ENTERTAINMENT
 cooking -> HOBBY,CREATIVE,HEALTH,ENTERTAINMENT
 photography -> HOBBY,CREATIVE,ART,TRAVEL,NATURE
 `;
+
+// Article Prompts
+
+export const articleSystemMessage = `
+You are an expert in writing articles about various topics. You will be provided with the contents
+of an article, and your task is to generate a concise, engaging summary of the article. You will
+also be provided with up to five different tags that should be incorporated into the summary and
+how they relate to the article.
+
+The summary should be informative and educational but also lighthearted and fun.
+Your goal is to make the article sound appealing and accessible to a wide audience, including those
+who may not be familiar with the topic. Use simple language, avoid jargon, and keep the tone upbeat and friendly.
+Do not use any emojis or special characters in your response.
+The summary should be no longer than 300 words and should follow the provided guidelines closely.
+Present your answer in a single paragraph without any additional formatting or bullet points.
+
+Do not include or indicate that you were prompted to write a summary, just provide the summary directly.
+`;
+
+export const articleTitlePrompt = (article: OceanArticle, tags: string[]): string => {
+	return `Write a concise, engaging title (max 10 words, 50 characters, or 24 tokens) for the article "${article.title}" by ${article.author} from ${article.source}.
+The title should capture the essence of the article and be appealing to a wide audience.
+It should be informative, educational, and lighthearted, while also being fun and engaging.
+Avoid using any special characters or emojis in the title.
+
+The summary will be based on the following tags:
+${tags.map((tag) => `- ${tag}`).join('\n')}
+
+Therefore, predict the title based on the article's content and the tags provided.
+The title should be no longer than 10 words and should follow the provided guidelines closely.
+`;
+};
+
+export const articleSummaryPrompt = (article: OceanArticle, tags: string[]): string => {
+	return `You have been provided with the contents of "${article.title}" by ${article.author} from ${article.source}.
+Your task is to generate a concise, engaging summary of the article that incorporates the following tags:
+${tags.map((tag) => `- ${tag}`).join('\n')}.
+
+Here is the article's abstract. It may be identical to the content, but it may also be a shorter version of the content:
+${article.abstract}
+
+You can use the abstract's conclusion to help you write the summary, but you should not
+just copy it. Instead, use it as a starting point to write a summary that is engaging
+and informative, while also being concise and to the point.
+
+In addition the article has the following keywords: ${article.keywords.join(', ')}.
+The article was published on ${article.date}, so if it is relevant, please include the date in the summary.
+Otherwise, keep a skeptic tone about the article's relevance to the current date.`;
+};

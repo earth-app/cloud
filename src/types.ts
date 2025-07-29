@@ -1,7 +1,7 @@
-import { Ai, D1Database, Fetcher } from '@cloudflare/workers-types';
+import { Ai, KVNamespace, R2Bucket } from '@cloudflare/workers-types';
 
 export type Bindings = {
-	DB: D1Database;
+	KV: KVNamespace;
 	R2: R2Bucket;
 	AI: Ai;
 	ASSETS: Fetcher;
@@ -16,4 +16,30 @@ export type Activity = {
 	description: string;
 	aliases: string[];
 	types: string[];
+};
+
+export type OceanArticle = {
+	title: string;
+	author: string;
+	source: string;
+	url: string;
+	abstract: string;
+	content: string;
+	theme_color: string;
+	keywords: string[];
+	date: string;
+	favicon: string;
+	links: {
+		[key: string]: string;
+	};
+};
+
+export type Article = {
+	id: string;
+	title: string;
+	summary: string;
+	tags: string[];
+	created_at: string;
+	updated_at?: string;
+	ocean: OceanArticle;
 };

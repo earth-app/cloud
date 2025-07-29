@@ -1,8 +1,8 @@
 import * as ocean from '@earth-app/ocean';
 import { Hono } from 'hono';
 
-import { findArticles } from './boat';
-import { getSynonyms, isValidWord } from './lang';
+import { createArticle, findArticles } from './boat';
+import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 
 import { Activity as Activity, Bindings } from './types';
@@ -61,7 +61,6 @@ app.get('/activity/:id', async (c) => {
 		],
 		max_tokens: 45
 	});
-
 	const validTags = ocean.com.earthapp.activity.ActivityType.values().map((t) =>
 		t.name.trim().toUpperCase()
 	);
@@ -98,7 +97,7 @@ app.get('/activity/:id', async (c) => {
 	return c.json(activityData, 201);
 });
 
-app.get('/article_search', async (c) => {
+app.get('/articles/search', async (c) => {
 	const query = c.req.query('q')?.trim();
 	if (!query || query.length < 3) {
 		return c.text('Query must be at least 3 characters long', 400);
@@ -111,6 +110,37 @@ app.get('/article_search', async (c) => {
 		}
 
 		return c.json(articles, 200);
+	} catch (err) {
+		console.error(`Error searching articles for query '${query}':`, err);
+		return c.text('Failed to search articles', 500);
+	}
+});
+
+app.get('/articles/create', async (c) => {
+	const query = c.req.query('q')?.trim();
+	if (!query || query.length < 3) {
+		return c.text('Query must be at least 3 characters long', 400);
+	}
+
+	try {
+		const articles = await findArticles(query, c, 2);
+		if (articles.length === 0) {
+			return c.text('No articles found', 404);
+		}
+
+		let article = articles[Math.floor(Math.random() * articles.length)];
+		let kvId = `cloud:article:${article.url}`;
+
+		// Find article that is not already in KV
+		while (c.env.KV.get(kvId)) {
+			article = articles[Math.floor(Math.random() * articles.length)];
+			kvId = `cloud:article:${article.url}`;
+		}
+
+		const articleData = await createArticle(article, c.env.AI);
+		c.env.KV.put(kvId, JSON.stringify(articleData));
+
+		return c.json(articleData, 201);
 	} catch (err) {
 		console.error(`Error searching articles for query '${query}':`, err);
 		return c.text('Failed to search articles', 500);
