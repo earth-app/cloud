@@ -12,16 +12,16 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20250726.0",
-    "@earth-app/ocean": "1.0.0-76c2cf6",
+    "@earth-app/ocean": "1.0.0-b45b72e",
     "@types/pako": "^2.0.3",
-    "hono": "^4.8.9",
+    "hono": "^4.8.10",
     "pako": "^2.1.0"
   },
   "devDependencies": {
     "husky": "^9.1.7",
     "lint-staged": "^16.1.2",
     "prettier": "^3.6.2",
-    "wrangler": "^4.26.0"
+    "wrangler": "^4.26.1"
   },
   "lint-staged": {
     "*.{js,ts,json,yml,md}": "prettier --write"
