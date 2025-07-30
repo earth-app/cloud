@@ -11,10 +11,10 @@ import { bearerAuth } from 'hono/bearer-auth';
 const textModel = '@hf/mistral/mistral-7b-instruct-v0.2';
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.use('*', async (c, next) => {
-	const token = c.env.ADMIN_API_TOKEN;
-	return bearerAuth({ token })(c, next);
-});
+// app.use('*', async (c, next) => {
+// 	const token = c.env.ADMIN_API_TOKEN;
+// 	return bearerAuth({ token })(c, next);
+// });
 
 // Implementation
 app.get('/synonyms', async (c) => {
@@ -123,22 +123,34 @@ app.get('/articles/create', async (c) => {
 	}
 
 	try {
-		const articles = await findArticles(query, c, 2);
+		const articles = await findArticles(query, c, 5);
 		if (articles.length === 0) {
 			return c.text('No articles found', 404);
 		}
 
 		let article = articles[Math.floor(Math.random() * articles.length)];
-		let kvId = `cloud:article:${article.url}`;
+		let kvId = `article:cloud:${article.url}`;
+		let attempts = 0;
+		const maxAttempts = articles.length * 2;
 
 		// Find article that is not already in KV
-		while (c.env.KV.get(kvId)) {
+		while (attempts < maxAttempts) {
+			const existingArticle = await c.env.KV.get(kvId);
+			if (!existingArticle) break; // Article not found in KV, we can use it
+
+			// Try next article
 			article = articles[Math.floor(Math.random() * articles.length)];
-			kvId = `cloud:article:${article.url}`;
+			kvId = `article:cloud:${article.url}`;
+			attempts++;
+		}
+
+		// If all articles are already in KV, return the last one anyway or error
+		if (attempts >= maxAttempts) {
+			return c.text('All available articles for this query already exist', 409);
 		}
 
 		const articleData = await createArticle(article, c.env.AI);
-		c.env.KV.put(kvId, JSON.stringify(articleData));
+		await c.env.KV.put(kvId, JSON.stringify(articleData)); // Properly await the KV put
 
 		return c.json(articleData, 201);
 	} catch (err) {

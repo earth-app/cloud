@@ -62,17 +62,19 @@ let HAS_PUBMED_API_KEY = false;
 export async function findArticles(
 	query: string,
 	c: Context<{ Bindings: Bindings }>,
-	limit: number = 1
+	pageLimit: number = 1
 ) {
 	if (!HAS_PUBMED_API_KEY && c.env.NCBI_API_KEY) {
 		com.earthapp.ocean.boat.Scraper.setApiKey('PubMed', c.env.NCBI_API_KEY);
 		HAS_PUBMED_API_KEY = true;
 	}
 
+	const query0 = query.replace(/\+/g, ' ').replace(/[^a-zA-Z0-9\s]/g, '');
+
 	const res = await com.earthapp.ocean.boat.searchAllAsPromise(
 		com.earthapp.ocean.boat.Scraper.Companion,
-		query,
-		limit
+		query0,
+		pageLimit
 	);
 	const results = res
 		.asJsReadonlyArrayView()
@@ -84,43 +86,58 @@ export async function findArticles(
 export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Article> {
 	const id = `cloud:article:${ocean.url}`;
 
-	const tagCount = Math.random() * 3 + 2; // Randomly select 2 to 5 tags
+	const tagCount = Math.floor(Math.random() * 3) + 2; // Randomly select 2 to 4 tags (fixed Math.random calculation)
 	const tags = com.earthapp.activity.ActivityType.values()
 		.sort(() => Math.random() - 0.5)
 		.slice(0, tagCount)
 		.map((t) => t.name.trim().toUpperCase());
 
-	const articleContent = ocean.content.trim().substring(0, 256000); // Limit to 256k characters
+	// Limit content size more conservatively to prevent memory issues
+	const maxContentLength = 100000; // Reduced from 256k to 100k
+	const articleContent =
+		ocean.content?.trim()?.substring(0, maxContentLength) || ocean.abstract?.trim() || '';
 
-	const title = await ai.run(articleModel, {
-		messages: [
-			{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
-			{ role: 'user', content: ocean.title.trim() }
-		],
-		max_tokens: 24
-	});
-	if (!title || !title.response) {
-		throw new Error('Failed to generate article title');
+	if (!articleContent) {
+		throw new Error('No content available for article generation');
 	}
 
-	const summary = await ai.run(articleModel, {
-		messages: [
-			{ role: 'system', content: prompts.articleSystemMessage.trim() },
-			{ role: 'user', content: articleContent },
-			{ role: 'user', content: prompts.articleSummaryPrompt(ocean, tags).trim() }
-		]
-	});
+	try {
+		const title = await ai.run(articleModel, {
+			messages: [
+				{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
+				{ role: 'user', content: ocean.title.trim() }
+			],
+			max_tokens: 24
+		});
+		if (!title || !title.response) {
+			throw new Error('Failed to generate article title');
+		}
 
-	if (!summary || !summary.response) {
-		throw new Error('Failed to generate article summary');
+		const summary = await ai.run(articleModel, {
+			messages: [
+				{ role: 'system', content: prompts.articleSystemMessage.trim() },
+				{ role: 'user', content: articleContent },
+				{ role: 'user', content: prompts.articleSummaryPrompt(ocean, tags).trim() }
+			],
+			max_tokens: 1000 // Add max_tokens limit for summary
+		});
+
+		if (!summary || !summary.response) {
+			throw new Error('Failed to generate article summary');
+		}
+
+		return {
+			id,
+			ocean,
+			tags,
+			title: title.response.trim(),
+			summary: summary.response.trim(),
+			created_at: new Date().toISOString()
+		};
+	} catch (error) {
+		console.error('Error creating article:', error);
+		throw new Error(
+			`Article creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+		);
 	}
-
-	return {
-		id,
-		ocean,
-		tags,
-		title: title.response.trim(),
-		summary: summary.response.trim(),
-		created_at: new Date().toISOString()
-	};
 }

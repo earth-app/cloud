@@ -95,16 +95,21 @@ Do not include or indicate that you were prompted to write a summary, just provi
 `;
 
 export const articleTitlePrompt = (article: OceanArticle, tags: string[]): string => {
-	return `Write a concise, engaging title (max 10 words, 50 characters, or 24 tokens) for the article "${article.title}" by ${article.author} from ${article.source}.
-The title should capture the essence of the article and be appealing to a wide audience.
-It should be informative, educational, and lighthearted, while also being fun and engaging.
-Avoid using any special characters or emojis in the title.
+	return `You are an expert in writing article titles.
+Your task is to generate a concise, engaging title for the article "${article.title}" by ${article.author} from ${article.source}.
+The title should be informative and educational but also lighthearted and fun.
+Your goal is to make the article sound appealing and accessible to a wide audience, including those who may not find it interesting at first.
 
+In addition, a summary about the article will be written.
 The summary will be based on the following tags:
 ${tags.map((tag) => `- ${tag}`).join('\n')}
 
 Therefore, predict the title based on the article's content and the tags provided.
 The title should be no longer than 10 words and should follow the provided guidelines closely.
+
+You should not include any additional text or formatting in your response, just a singular title itself.
+Do not use any emojis or special characters in your response, and do not include any formatting like bullet points or numbered lists.
+Do not mention that you are generating a title or that you were prompted to do so.
 `;
 };
 
