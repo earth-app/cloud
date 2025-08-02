@@ -16,7 +16,7 @@
     "@types/pako": "^2.0.3",
     "hono": "^4.8.10",
     "pako": "^2.1.0",
-    "undici": "5"
+    "undici": "7"
   },
   "devDependencies": {
     "husky": "^9.1.7",
