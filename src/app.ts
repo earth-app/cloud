@@ -7,6 +7,7 @@ import * as prompts from './prompts';
 
 import { Activity as Activity, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
+import { trimToByteLimit } from './util';
 
 const textModel = '@hf/mistral/mistral-7b-instruct-v0.2';
 const app = new Hono<{ Bindings: Bindings }>();
@@ -138,7 +139,6 @@ app.get('/articles/create', async (c) => {
 			const existingArticle = await c.env.KV.get(kvId);
 			if (!existingArticle) break; // Article not found in KV, we can use it
 
-			// Try next article
 			article = articles[Math.floor(Math.random() * articles.length)];
 			kvId = `article:cloud:${article.url}`;
 			attempts++;
@@ -150,7 +150,29 @@ app.get('/articles/create', async (c) => {
 		}
 
 		const articleData = await createArticle(article, c.env.AI);
-		await c.env.KV.put(kvId, JSON.stringify(articleData)); // Properly await the KV put
+
+		// Max 1024 bytes; 2 bytes per character
+		const metadata = {
+			title: trimToByteLimit(articleData.title, 200), // Max 200 bytes
+			author: trimToByteLimit(articleData.author, 100), // Max 100 bytes
+			tags: articleData.tags.slice(0, 5).map((tag) => trimToByteLimit(tag, 30)), // Max 150 bytes (30 x 5)
+			summary: trimToByteLimit(articleData.content, 512), // Max 512 bytes,
+			created_at: Date.now() // Max 8 bytes (32-bit integer)
+		};
+		// Total Max: 200 + 100 + 150 + 512 + 8 = 970 bytes
+
+		// Assert Metadata is below 1024 bytes
+		const byteSize = (obj: Record<string, any>) => {
+			return new TextEncoder().encode(JSON.stringify(obj)).length;
+		};
+		if (byteSize(metadata) > 1024) {
+			return c.text(
+				`Cloud Metadata for "${articleData.title}" at ${articleData.ocean.url} exceeds maximum size of 1024 bytes`,
+				500
+			);
+		}
+
+		await c.env.KV.put(kvId, JSON.stringify(articleData), { metadata });
 
 		return c.json(articleData, 201);
 	} catch (err) {

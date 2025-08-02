@@ -36,9 +36,14 @@ export type OceanArticle = {
 
 export type Article = {
 	id: string;
+	article_id: string;
 	title: string;
-	summary: string;
+	description: string;
 	tags: string[];
+	content: string;
+	author: string;
+	author_id: string;
+	color: string;
 	created_at: string;
 	updated_at?: string;
 	ocean: OceanArticle;

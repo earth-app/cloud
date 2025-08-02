@@ -84,16 +84,15 @@ export async function findArticles(
 }
 
 export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Article> {
-	const id = `cloud:article:${ocean.url}`;
+	const id = `article:cloud:${ocean.url}`;
 
-	const tagCount = Math.floor(Math.random() * 3) + 2; // Randomly select 2 to 4 tags (fixed Math.random calculation)
+	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
 	const tags = com.earthapp.activity.ActivityType.values()
 		.sort(() => Math.random() - 0.5)
 		.slice(0, tagCount)
 		.map((t) => t.name.trim().toUpperCase());
 
-	// Limit content size more conservatively to prevent memory issues
-	const maxContentLength = 100000; // Reduced from 256k to 100k
+	const maxContentLength = 100000;
 	const articleContent =
 		ocean.content?.trim()?.substring(0, maxContentLength) || ocean.abstract?.trim() || '';
 
@@ -126,12 +125,19 @@ export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Articl
 			throw new Error('Failed to generate article summary');
 		}
 
+		const articleId = com.earthapp.util.newIdentifier();
+
 		return {
 			id,
+			article_id: articleId,
 			ocean,
 			tags,
 			title: title.response.trim(),
-			summary: summary.response.trim(),
+			description: summary.response.substring(0, 25) + '...',
+			author: ocean.author || 'Cloud',
+			author_id: 'cloud',
+			color: ocean.theme_color || '#ffffff',
+			content: summary.response.trim(),
 			created_at: new Date().toISOString()
 		};
 	} catch (error) {
