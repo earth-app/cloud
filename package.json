@@ -11,18 +11,18 @@
     "prepare": "husky install"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20250730.0",
+    "@cloudflare/workers-types": "^4.20250813.0",
     "@earth-app/ocean": "1.0.0-3f0c7fa",
     "@types/pako": "^2.0.3",
-    "hono": "^4.8.10",
+    "hono": "^4.9.1",
     "pako": "^2.1.0",
-    "undici": "5"
+    "undici": "^5.29.0"
   },
   "devDependencies": {
     "husky": "^9.1.7",
-    "lint-staged": "^16.1.2",
+    "lint-staged": "^16.1.5",
     "prettier": "^3.6.2",
-    "wrangler": "^4.26.1"
+    "wrangler": "^4.29.0"
   },
   "lint-staged": {
     "*.{js,ts,json,yml,md}": "prettier --write"
