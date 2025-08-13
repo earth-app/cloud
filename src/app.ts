@@ -9,13 +9,13 @@ import { Activity as Activity, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
 import { trimToByteLimit } from './util';
 
-const textModel = '@hf/mistral/mistral-7b-instruct-v0.2';
+const textModel = '@cf/qwen/qwen1.5-14b-chat-awq';
 const app = new Hono<{ Bindings: Bindings }>();
 
-// app.use('*', async (c, next) => {
-// 	const token = c.env.ADMIN_API_TOKEN;
-// 	return bearerAuth({ token })(c, next);
-// });
+app.use('*', async (c, next) => {
+	const token = c.env.ADMIN_API_TOKEN;
+	return bearerAuth({ token })(c, next);
+});
 
 // Implementation
 app.get('/synonyms', async (c) => {
@@ -50,7 +50,7 @@ app.get('/activity/:id', async (c) => {
 			{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
 			{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 		],
-		max_tokens: 200
+		max_tokens: 350
 	});
 	const descRaw = description?.response?.trim() || `No description available for ${id}.`;
 
@@ -60,7 +60,7 @@ app.get('/activity/:id', async (c) => {
 			{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
 			{ role: 'user', content: activity }
 		],
-		max_tokens: 45
+		max_tokens: 60
 	});
 	const validTags = ocean.com.earthapp.activity.ActivityType.values().map((t) =>
 		t.name.trim().toUpperCase()

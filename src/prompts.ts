@@ -11,6 +11,7 @@ Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 Do not use any emojis or special characters in your response.
 The description should be no longer than 200 tokens, and should follow the provided guidelines closely.
 Present your answer in a single paragraph without any additional formatting or bullet points.
+Do not put it in quotes or any other formatting, just the description itself.
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
@@ -23,6 +24,11 @@ Follow these guidelines:
 1. Opening Hook (1-2 sentences)
 Start with a playful or intriguing sentence that quickly defines or frames the activity.
 Here are some examples that you should refine on, not copy exactly:
+- "Have you ever tried ${activity}? It's a fantastic way to..."
+- "Imagine spending your weekends enjoying ${activity} with friends and family. It's not just fun, it's also a great way to..."
+- "If you're looking for a new hobby, ${activity} might be just what you need! It's a perfect blend of..."
+- "Did you know that ${activity} can help you relax and unwind? It's a great way to..."
+- "Whether you're a beginner or an expert, ${activity} offers something for everyone. It's a wonderful way to..."
 - "Imagine a world where ${activity} is the norm, not the exception. Here's why it matters..."
 - "If you think ${activity} is just for experts, think again! It's actually a great way to...".
 - "Ever wondered why people love ${activity}? It's more than just a pastime-it's..."
@@ -33,10 +39,16 @@ Summarize the basic steps or typical elements (e.g., "To get started, you need,"
 Highlight why people enjoy it-physical, mental, social, or creative perks. Keep it upbeat (e.g., "Besides being a great way to," "It's perfect for those who").
 In addition, mention any common misconceptions or surprising aspects about ${activity} that might intrigue readers.
 If there is space, Include a light trivia or surprising tidbit about ${activity}.
+- "For example, many people think ${activity} is only for experts, but it's actually a great way to..."
+- "Many people think ${activity} is only for experts, but it's actually a great way to relax and unwind."
+- "Did you know that ${activity} can also help you improve your skills in other areas? You could..."
 
 3. Friendly Invitation (1 sentence)
 Encourage readers to try or learn more about ${activity} in a warm, inviting way.
 Here are some more examples that you should refine on, not use exactly and word-for-word.
+- "Why not give ${activity} a try? It's easier than you think to get started!"
+- "Curious about ${activity}? There's a whole community waiting to welcome you!"
+- "Ready to dive into ${activity}? It's a fantastic way to spend your time!"
 - "So why not give ${activity} a try? You might just find your new favorite hobby!"
 - "Ready to dive into ${activity}? It's easier than you think to get started!"
 - "Curious about ${activity}? There's a whole community waiting to welcome you!"
@@ -45,7 +57,8 @@ Ensure grammatical correctness and no special characters or emojis at all times.
 Keep everything concise and to the point, and do not include any additional text or explanations. It should be formatted as a single paragraph, within the specified limits.
 Do not mention that you are generating a description or that you were prompted to do so.
 Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally. Maintain within the bounds of 200 tokens,
-and do not exceed these limits. Do not mention that you are generating a description or that you were prompted to do so. Only provide the description itself.`;
+and do not exceed these limits. Do not mention that you are generating a description or that you were prompted to do so. Only provide the description itself.
+Do not put it in quotes or any other formatting, just the description itself.`;
 };
 
 export const activityTagsSystemMessage = `
