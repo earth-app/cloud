@@ -4,7 +4,8 @@ import { OceanArticle } from './types';
 export const activityDescriptionSystemMessage = `
 You are an expert in any given activity.
 You must provide a paragraph briefly explaining the activity in a concise, engaging manner.
-The description should be informative and educational but also lighthearted and fun.
+The description should be informative and educational but also lighthearted and fun. They should be easy to read and understand for a general audience,
+while also providing unique insights or interesting facts about the activity.
 Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
 Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 Do not use any emojis or special characters in your response.
@@ -13,35 +14,35 @@ Present your answer in a single paragraph without any additional formatting or b
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
-	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun. Follow these guidelines:
+	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun. 
 
-1. **Opening Hook (1-2 sentences)**
-   - Start with a playful or intriguing sentence that quickly defines or frames the activity.
-   - Examples:
-       - "Ever wondered why people love ${activity}? It's more than just a pastime-it's..."
-       - "Imagine a world where ${activity} is the norm, not the exception. Here's why it matters..."
-       - "If you think ${activity} is just for experts, think again! It's actually a great way to...".
+The description should be no longer than 100 words or 500 characters. You will be cut off at 160 tokens, so be concise.
+Follow these guidelines:
 
-2. **Core Explanation (2-3 short paragraphs)**
-   - **Definition & Essence**: Clearly state what ${activity} involves. Use simple language so anyone can understand.
-   - **How It Works / What You Do**: Summarize the basic steps or typical elements (e.g., "To get started, you need," "Participants usually").
-   - **Benefits & Appeal**: Highlight why people enjoy it-physical, mental, social, or creative perks. Keep it upbeat (e.g., "Besides being a great way to," "It's perfect for those who").
+1. Opening Hook (1-2 sentences)
+Start with a playful or intriguing sentence that quickly defines or frames the activity.
+Here are some examples. You can use one of these or create your own:
+- "Ever wondered why people love ${activity}? It's more than just a pastime-it's..."
+- "Imagine a world where ${activity} is the norm, not the exception. Here's why it matters..."
+ - "If you think ${activity} is just for experts, think again! It's actually a great way to...".
 
-3. **Fun Fact or Twist (optional, 1 sentence)**
-   - Include a light trivia or surprising tidbit about ${activity}.
+2. Core Explanation (2-3 short paragraphs)
+Clearly state what ${activity} involves. Use simple language so anyone can understand.
+Summarize the basic steps or typical elements (e.g., "To get started, you need," "Participants usually").
+Highlight why people enjoy it-physical, mental, social, or creative perks. Keep it upbeat (e.g., "Besides being a great way to," "It's perfect for those who").
+In addition, mention any common misconceptions or surprising aspects about ${activity} that might intrigue readers.
+If there is space, Include a light trivia or surprising tidbit about ${activity}.
 
-4. **Friendly Invitation (1 sentence)**
-   - Encourage readers to try or learn more:
-       - "Whether you're a beginner or curious explorer, ${activity} offers."
-       - "Join the fun and discover why ${activity} is loved by so many!"
-
-5. **Constraints & Style**
-   - **Word limit**: Ensure the entire description is <= 100 words or 500 characters.
-   - **Readability**: Use short sentences or bullet-like flow; avoid jargon. If using a term, briefly explain it.
-   - **Tone**: Keep it upbeat, warm, and approachable, as if explaining to a friend. A touch of humor is fine but don't distract from clarity.
+3. Friendly Invitation (1 sentence)
+Encourage readers to try or learn more about ${activity} in a warm, inviting way.
+Here are some more examples. You can use one of these or create your own:
+- "So why not give ${activity} a try? You might just find your new favorite hobby!"
+- "Ready to dive into ${activity}? It's easier than you think to get started!"
+- "Curious about ${activity}? There's a whole community waiting to welcome you!"
 
 Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists.
-Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally.`;
+Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally. Maintain within the bounds of 100 words, 500 characters, or 160 tokens,
+and do not exceed these limits. Do not mention that you are generating a description or that you were prompted to do so. Only provide the description itself.`;
 };
 
 export const activityTagsSystemMessage = `
