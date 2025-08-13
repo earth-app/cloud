@@ -6,7 +6,7 @@ export type Bindings = {
 	AI: Ai;
 	ASSETS: Fetcher;
 
-	ADMIN_API_TOKEN: string;
+	ADMIN_API_KEY: string;
 	NCBI_API_KEY: string;
 };
 
