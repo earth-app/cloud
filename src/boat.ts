@@ -5,11 +5,10 @@ import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
-import { validateCandidate } from './util';
 
 const activityModel = '@hf/google/gemma-7b-it';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
-const promptModel = '@cf/qwen/qwen1.5-14b-chat-awq';
+const promptModel = '@cf/meta/llama-2-7b-chat-int8';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	// Generate description
@@ -168,49 +167,21 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 }
 
 export async function createPrompt(ai: Ai) {
-	for (let attempt = 0; attempt < 6; attempt++) {
-		const gen = await ai.run(promptModel, {
-			messages: [
-				{ role: 'system', content: prompts.promptsSystemMessage.trim() },
-				{ role: 'user', content: prompts.promptsQuestionPrompt.trim() }
-			],
-			temperature: 0.62,
-			max_tokens: 40
-		});
+	const gen = await ai.run(promptModel, {
+		messages: [
+			{ role: 'system', content: prompts.promptsSystemMessage.trim() },
+			{ role: 'user', content: prompts.promptsQuestionPrompt.trim() }
+		],
+		temperature: 1.2,
+		max_tokens: 40
+	});
 
-		const raw = gen?.response?.trim();
-		if (!raw) continue;
-
-		const candidate = raw.split('\n')[0].trim();
-		if (validateCandidate(candidate, 80, 15)) return candidate;
-
-		const polishInstruction = `
-            You must rewrite this single question to obey these exact rules:
-            - Output exactly one sentence (one line), end with a question mark.
-            - Use ASCII characters only; do not output any non-ASCII script.
-            - Keep meaning and tone, shorten if needed to meet length limits.
-            - Under 80 characters, under 15 words, at most one comma.
-            - Do not add or remove the core idea; only make it concise and ASCII-only.
-            Output only the rewritten question line.
-            Original: ${candidate}`.trim();
-
-		const polished = await ai.run(promptModel, {
-			messages: [
-				{
-					role: 'system',
-					content: 'You are a precise copyeditor. Output only the single rewritten question.'
-				},
-				{ role: 'user', content: polishInstruction }
-			],
-			temperature: 0.2,
-			max_tokens: 40
-		});
-
-		const polishedText = polished?.response?.trim()?.split('\n')[0]?.trim();
-		if (validateCandidate(polishedText || '', 80, 15)) return polishedText!;
+	const response = gen?.response?.trim();
+	if (!response || response.length < 10) {
+		throw new Error('Failed to generate prompt, response too short');
 	}
 
-	throw new Error('Failed to generate a valid ASCII question after attempts');
+	return response;
 }
 
 export async function postPrompt(prompt: string, bindings: Bindings): Promise<Prompt> {

@@ -150,55 +150,32 @@ Otherwise, keep a skeptic tone about the article's relevance to the current date
 // Prompts Prompts
 
 export const promptsSystemMessage = `
-You are an insightful and imaginative assistant that must generate EXACTLY ONE original introspective question.
+You MUST output EXACTLY ONE original introspective question and ONLY the question text.
 
-Your job is to produce questions that are **diverse, surprising, and varied** in structure, tone, and subject.
-The goal is to avoid repetitive themes and to explore as many distinct angles as possible over time.
+Choose one prefix:
+Who, What, When, Where, Why, How, If, In, Could, Would, Can, Should, 
+Is, Are, Was, Were, Do, Does, Did, Will, Might, May, Must
 
-Core rules for the question
-1. Under 80 characters, fewer than 15 words, single sentence, ends with a question mark.
-2.  Must begin with one of: Who, What, When, Where, Why, How, If.
-3. Simple, plain English. No jargon, slang, or technical terms.
-4. Structure:
-   - At most one comma.
-   - No special characters, emojis, quotes, or formatting.
-   - Must be grammatical and clearly phrased.
-5. Content:
-   - Must be open-ended (cannot be answered with "yes" or "no").
-   - Not rhetorical.
-   - Avoid clichés and overused themes: kindness, happiness, gratitude, empathy, compassion, forgiveness, love, peace, positivity.
-   - Avoid repeating phrases like "stumbled upon," "hidden treasure," "in a world where."
-   - Avoid holidays, specific dates, company names, or historical events.
-   - Use ASCII characters only (no other alphabets or scripts).
-6. Diversity requirement:
-   - Randomly select one theme from the pool below for EACH question and commit fully to it.
-   - Vary perspective (personal, societal, futuristic, hypothetical, observational).
-   - Avoid repeating similar wording, metaphors, or scenarios.
-   - Encourage novel mental imagery and less obvious angles.
-   
-Theme Examples:
-- Human relationships and connections
-- Curiosity and exploration
-- Creativity and innovation
-- Nature and perception
-- Personal challenges and resilience
-- Technology and human behavior
-- Ethics and choices
-- Culture and identity
-- Ambition and tradeoffs
-- Time and change
-- Memory and perception
-- Unknown possibilities and "what if" scenarios
-- Limits and boundaries (physical, mental, societal)
-- Risk and uncertainty
+Choose one topic to commit to fully:
+Adventure; Exploration; Discovery; Learning; Growth; Change; Connection; Imagination;
+Human relationships; Curiosity; Creativity; Nature; Challenges; Technology; Ethics;
+Culture; Ambition; Time; Memory; Unknown possibilities; Limits; Risk
 
-Output requirements:
-- Output ONLY the question text, no explanations, no extra text.
-- Your question should feel fresh and different from any common "deep" question.
-- Before outputting, double-check:
-  - Rules followed
-  - No repetition of recent styles
-  - Language is concise, correct, and varied
+Rules:
+1) Single sentence, ends with "?", under 80 characters, under 15 words.
+2) Plain ASCII English only; no slang, jargon, quotes, emojis, or special characters.
+3) At most one comma; grammatical and clear.
+4) Open-ended (not yes/no), not rhetorical.
+5) Avoid these phrases: stumbled upon; hidden treasure; in a world where.
+6) No holidays, dates, company names, or historical events.
+7) Timeless (not tied to current events or trends).
+8) Pick exactly ONE theme from this list and commit fully:
+9) Vary perspective, wording, imagery, and scenario across calls.
+10) Unique, not generic or cliche.
+11) No repetition of previous questions.
+12) No personal pronouns like "you" or "your".
+13) No "what if" or "imagine" scenarios.
 `;
 
-export const promptsQuestionPrompt = `Generate the question now following every system rule exactly. Output only the question.`;
+export const promptsQuestionPrompt = `Generate the question now. Output only the question. 
+Do not include any additional text or formatting, and do not mention that you were prompted.`;
