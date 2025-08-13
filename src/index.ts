@@ -6,6 +6,7 @@ import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 
 import app from './app';
+import scheduled from './scheduled';
 
 import * as packageJson from '../package.json';
 import { Bindings } from './types';
@@ -44,4 +45,7 @@ main.use(
 main.get('/', (c) => c.text('Woosh!'));
 main.route('/v1', app);
 
-export default main;
+export default {
+	fetch: main.fetch,
+	scheduled: scheduled
+};

@@ -1,4 +1,5 @@
 import { Ai, KVNamespace, R2Bucket } from '@cloudflare/workers-types';
+import { com } from '@earth-app/ocean';
 
 export type Bindings = {
 	KV: KVNamespace;
@@ -8,6 +9,7 @@ export type Bindings = {
 
 	ADMIN_API_KEY: string;
 	NCBI_API_KEY: string;
+	MANTLE_URL: string;
 };
 
 export type Activity = {
@@ -47,4 +49,13 @@ export type Article = {
 	created_at: string;
 	updated_at?: string;
 	ocean: OceanArticle;
+};
+
+export type Prompt = {
+	id: string;
+	owner_id: string;
+	prompt: string;
+	visibility: typeof com.earthapp.account.Privacy.prototype.name;
+	created_at: Date;
+	updated_at?: Date;
 };

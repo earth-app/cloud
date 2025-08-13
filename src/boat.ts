@@ -1,13 +1,15 @@
 import { com } from '@earth-app/ocean';
 import { Context } from 'hono';
 
-import { Activity, Article, Bindings, OceanArticle } from './types';
+import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
+import { validateCandidate } from './util';
 
 const activityModel = '@hf/google/gemma-7b-it';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
+const promptModel = '@cf/qwen/qwen1.5-14b-chat-awq';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	// Generate description
@@ -58,14 +60,9 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 }
 
 let HAS_PUBMED_API_KEY = false;
-
-export async function findArticles(
-	query: string,
-	c: Context<{ Bindings: Bindings }>,
-	pageLimit: number = 1
-) {
-	if (!HAS_PUBMED_API_KEY && c.env.NCBI_API_KEY) {
-		com.earthapp.ocean.boat.Scraper.setApiKey('PubMed', c.env.NCBI_API_KEY);
+export async function findArticles(query: string, bindings: Bindings, pageLimit: number = 1) {
+	if (!HAS_PUBMED_API_KEY && bindings.NCBI_API_KEY) {
+		com.earthapp.ocean.boat.Scraper.setApiKey('PubMed', bindings.NCBI_API_KEY);
 		HAS_PUBMED_API_KEY = true;
 	}
 
@@ -83,9 +80,7 @@ export async function findArticles(
 	return await Promise.all(results);
 }
 
-export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Article> {
-	const id = `article:cloud:${ocean.url}`;
-
+export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Partial<Article>> {
 	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
 	const tags = com.earthapp.activity.ActivityType.values()
 		.sort(() => Math.random() - 0.5)
@@ -125,11 +120,7 @@ export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Articl
 			throw new Error('Failed to generate article summary');
 		}
 
-		const articleId = com.earthapp.util.newIdentifier();
-
 		return {
-			id,
-			article_id: articleId,
 			ocean,
 			tags,
 			title: title.response.trim(),
@@ -146,4 +137,106 @@ export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Articl
 			`Article creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
 		);
 	}
+}
+
+export async function postArticle(article: Partial<Article>, bindings: Bindings): Promise<Article> {
+	if (!article.title || !article.description || !article.content) {
+		throw new Error('Article must have title, description and content');
+	}
+
+	const url = (bindings.MANTLE_URL || 'https://api.earth-app.com') + '/v1/articles/create';
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+		},
+		body: JSON.stringify(article)
+	});
+
+	if (!res.ok) {
+		const errorText = await res.text();
+		throw new Error(`Failed to post article: ${res.status} ${res.statusText} - ${errorText}`);
+	}
+
+	const data = await res.json<Article>();
+	if (!data || !data.id) {
+		throw new Error('Failed to create article, no ID returned');
+	}
+
+	return data;
+}
+
+export async function createPrompt(ai: Ai) {
+	for (let attempt = 0; attempt < 6; attempt++) {
+		const gen = await ai.run(promptModel, {
+			messages: [
+				{ role: 'system', content: prompts.promptsSystemMessage.trim() },
+				{ role: 'user', content: prompts.promptsQuestionPrompt.trim() }
+			],
+			temperature: 0.62,
+			max_tokens: 40
+		});
+
+		const raw = gen?.response?.trim();
+		if (!raw) continue;
+
+		const candidate = raw.split('\n')[0].trim();
+		if (validateCandidate(candidate, 80, 15)) return candidate;
+
+		const polishInstruction = `
+            You must rewrite this single question to obey these exact rules:
+            - Output exactly one sentence (one line), end with a question mark.
+            - Use ASCII characters only; do not output any non-ASCII script.
+            - Keep meaning and tone, shorten if needed to meet length limits.
+            - Under 80 characters, under 15 words, at most one comma.
+            - Do not add or remove the core idea; only make it concise and ASCII-only.
+            Output only the rewritten question line.
+            Original: ${candidate}`.trim();
+
+		const polished = await ai.run(promptModel, {
+			messages: [
+				{
+					role: 'system',
+					content: 'You are a precise copyeditor. Output only the single rewritten question.'
+				},
+				{ role: 'user', content: polishInstruction }
+			],
+			temperature: 0.2,
+			max_tokens: 40
+		});
+
+		const polishedText = polished?.response?.trim()?.split('\n')[0]?.trim();
+		if (validateCandidate(polishedText || '', 80, 15)) return polishedText!;
+	}
+
+	throw new Error('Failed to generate a valid ASCII question after attempts');
+}
+
+export async function postPrompt(prompt: string, bindings: Bindings): Promise<Prompt> {
+	if (!prompt || prompt.length < 10) {
+		throw new Error('Prompt must be at least 10 characters long');
+	}
+
+	const url = (bindings.MANTLE_URL || 'https://api.earth-app.com') + '/v1/prompts/create';
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+		},
+		body: JSON.stringify({ prompt, visibility: 'PUBLIC' })
+	});
+
+	if (!res.ok) {
+		const errorText = await res.text();
+		throw new Error(`Failed to post prompt: ${res.status} ${res.statusText} - ${errorText}`);
+	}
+
+	const data = await res.json<Prompt>();
+	if (!data || !data.id) {
+		throw new Error('Failed to create prompt, no ID returned');
+	}
+
+	return data;
 }
