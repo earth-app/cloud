@@ -50,7 +50,7 @@ app.get('/activity/:id', async (c) => {
 			{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
 			{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 		],
-		max_tokens: 160
+		max_tokens: 200
 	});
 	const descRaw = description?.response?.trim() || `No description available for ${id}.`;
 

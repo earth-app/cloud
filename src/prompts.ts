@@ -9,22 +9,23 @@ while also providing unique insights or interesting facts about the activity.
 Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
 Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 Do not use any emojis or special characters in your response.
-The description should be no longer than 100 words, 500 characters, or 160 tokens, and should follow the provided guidelines closely.
+The description should be no longer than 200 tokens, and should follow the provided guidelines closely.
 Present your answer in a single paragraph without any additional formatting or bullet points.
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
 	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun. 
+Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it. 
+Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 
-The description should be no longer than 100 words or 500 characters. You will be cut off at 160 tokens, so be concise.
 Follow these guidelines:
 
 1. Opening Hook (1-2 sentences)
 Start with a playful or intriguing sentence that quickly defines or frames the activity.
-Here are some examples. You can use one of these or create your own:
-- "Ever wondered why people love ${activity}? It's more than just a pastime-it's..."
+Here are some examples that you should refine on, not copy exactly:
 - "Imagine a world where ${activity} is the norm, not the exception. Here's why it matters..."
- - "If you think ${activity} is just for experts, think again! It's actually a great way to...".
+- "If you think ${activity} is just for experts, think again! It's actually a great way to...".
+- "Ever wondered why people love ${activity}? It's more than just a pastime-it's..."
 
 2. Core Explanation (2-3 short paragraphs)
 Clearly state what ${activity} involves. Use simple language so anyone can understand.
@@ -35,13 +36,15 @@ If there is space, Include a light trivia or surprising tidbit about ${activity}
 
 3. Friendly Invitation (1 sentence)
 Encourage readers to try or learn more about ${activity} in a warm, inviting way.
-Here are some more examples. You can use one of these or create your own:
+Here are some more examples that you should refine on, not use exactly and word-for-word.
 - "So why not give ${activity} a try? You might just find your new favorite hobby!"
 - "Ready to dive into ${activity}? It's easier than you think to get started!"
 - "Curious about ${activity}? There's a whole community waiting to welcome you!"
 
 Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists.
-Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally. Maintain within the bounds of 100 words, 500 characters, or 160 tokens,
+Keep everything concise and to the point, and do not include any additional text or explanations. It should be formatted as a single paragraph, within the specified limits.
+Do not mention that you are generating a description or that you were prompted to do so.
+Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally. Maintain within the bounds of 200 tokens,
 and do not exceed these limits. Do not mention that you are generating a description or that you were prompted to do so. Only provide the description itself.`;
 };
 
