@@ -22,7 +22,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.1.5",
     "prettier": "^3.6.2",
-    "wrangler": "^4.29.0"
+    "wrangler": "^4.30.0"
   },
   "lint-staged": {
     "*.{js,ts,json,yml,md}": "prettier --write"
