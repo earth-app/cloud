@@ -14,7 +14,10 @@ const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('*', async (c, next) => {
 	const token = c.env.ADMIN_API_KEY;
-	return bearerAuth({ token })(c, next);
+	return bearerAuth({ token, invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key' })(
+		c,
+		next
+	);
 });
 
 // Implementation
@@ -38,8 +41,8 @@ app.get('/activity/:id', async (c) => {
 		return c.text('Activity ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 20) {
-		return c.text('Activity ID must be between 3 and 20 characters', 400);
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Activity ID must be between 3 and 50 characters', 400);
 	}
 
 	const activity = id.replace(/_/g, ' ');
@@ -52,7 +55,8 @@ app.get('/activity/:id', async (c) => {
 		],
 		max_tokens: 350
 	});
-	const descRaw = description?.response?.trim() || `No description available for ${id}.`;
+	const descRaw =
+		description?.response?.replace(/[\"\n]/g, '').trim() || `No description available for ${id}.`;
 
 	// Generate tags
 	const tagsResult = await c.env.AI.run(textModel, {
