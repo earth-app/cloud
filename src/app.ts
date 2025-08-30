@@ -9,6 +9,7 @@ import { Activity as Activity, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
 
 const textModel = '@cf/qwen/qwen1.5-14b-chat-awq';
+
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.use('*', async (c, next) => {
@@ -123,7 +124,7 @@ app.get('/articles/search', async (c) => {
 	}
 });
 
-// User Recommendation
+// Users
 app.post('/users/recommend_activities', async (c) => {
 	const body = await c.req.json<{
 		all: {
@@ -175,6 +176,39 @@ app.post('/users/recommend_activities', async (c) => {
 
 	const recommended = com.earthapp.ocean.recommendActivity(all, user);
 	return c.json(recommended, 200);
+});
+
+app.get('/users/profile_photo/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	const photo = await prompts.getProfilePhoto(id, c.env);
+	if (!photo) {
+		return c.text('Profile photo not found', 404);
+	}
+
+	return c.body(photo, 200);
+});
+
+app.put('/users/profile_photo/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	const body = await c.req.json<prompts.UserProfilePromptData>();
+	if (!body) {
+		return c.text('Invalid request body', 400);
+	}
+
+	const photo = await prompts.newProfilePhoto(body, id, c.env);
+	if (!photo) {
+		return c.text('Failed to update profile photo', 500);
+	}
+
+	return c.body(photo, 200);
 });
 
 export default app;

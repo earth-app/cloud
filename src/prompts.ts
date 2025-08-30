@@ -1,5 +1,6 @@
 import * as ocean from '@earth-app/ocean';
-import { OceanArticle } from './types';
+import { Bindings, OceanArticle } from './types';
+import { Ai } from '@cloudflare/workers-types';
 
 export const activityDescriptionSystemMessage = `
 You are an expert in any given activity.
@@ -179,3 +180,94 @@ Rules:
 
 export const promptsQuestionPrompt = `Generate the question now. Output only the question. 
 Do not include any additional text or formatting, and do not mention that you were prompted.`;
+
+// User Profile Photo
+
+const profileModel = '@cf/bytedance/stable-diffusion-xl-lightning';
+
+export type UserProfilePromptData = {
+	username: string;
+	bio: string;
+	created_at: string;
+	visibility: typeof ocean.com.earthapp.Visibility.prototype.name;
+	country: string;
+	fullName: string;
+	activities: Array<{
+		name: string;
+		description: string;
+	}>;
+};
+
+export const userProfilePhotoPrompt = (data: UserProfilePromptData) => {
+	return {
+		prompt: `
+		Generate a heavily expressive, abstract, artistic, colorful, vibrant, and unique profile picture for a user with the username "${data.username}."
+		The profile picture should be a special representation of the user as a whole, so include lots of vibrant colors and effects in every corner.
+		The photo should be around inanimate objects or attributes, avoiding things like people or animals, or symbols that represent them (like toys or paintings.)
+
+		The style of the profile picture should be in a flat, colorful, painting-like tone and style. Whatever you choose, make sure it is vibrant and colorful.
+        There should be no text, logos, or any other elements that could be considered as a watermark or branding. The primary object should be placed in the
+        center of the image. The background should be a simple, abstract design that complements the primary object without distracting from it.
+        The object should be easily recognizable and visually appealing, with a focus on the colors and shapes rather than intricate details.
+
+		For more information about the user, here is the user's biography:
+		"${data.bio}"
+
+        They created their account on ${data.created_at}. They have set their account visibility to ${data.visibility}.
+		The user lives in ${data.country}. Their name is "${data.fullName ?? 'No name provided.'}".
+
+		Lastly, the like the following activities:
+		${data.activities.map((activity) => `- ${activity.name}: ${activity.description?.substring(70) ?? 'No description available.'}\n`)}
+
+		If any field says "None Provided" or "Unknown," disregard that element as apart of the profile picture, as the user has omitted said details.
+		`.trim(),
+		negative_prompt: `Avoid elements of toys, scary elements, political or sensitive statements, words, or any branding.`,
+		guidance: 35
+	} satisfies AiTextToImageInput;
+};
+
+export async function generateProfilePhoto(
+	data: UserProfilePromptData,
+	ai: Ai
+): Promise<Uint8Array> {
+	const profile = await ai.run(profileModel, userProfilePhotoPrompt(data));
+
+	const reader = profile.getReader();
+	const chunks: Uint8Array[] = [];
+	let done = false;
+
+	while (!done) {
+		const { value, done: readerDone } = await reader.read();
+		done = readerDone;
+		if (value) {
+			chunks.push(value);
+		}
+	}
+
+	const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+	const imageBytes = new Uint8Array(totalLength);
+	let offset = 0;
+	for (const chunk of chunks) {
+		imageBytes.set(chunk, offset);
+		offset += chunk.length;
+	}
+
+	return imageBytes;
+}
+
+export async function getProfilePhoto(id: string, bindings: Bindings): Promise<Uint8Array> {
+	const profileImage = `users/${id}/profile.png`;
+
+	const bytes = (await bindings.R2.get(profileImage))?.bytes();
+	if (bytes) return bytes;
+
+	return (await bindings.ASSETS.fetch('https://assets.local/earth-app.png'))!.bytes();
+}
+
+export async function newProfilePhoto(data: UserProfilePromptData, id: string, bindings: Bindings) {
+	const profileImage = `users/${id}/profile.png`;
+	const profile = await generateProfilePhoto(data, bindings.AI);
+	await bindings.R2.put(profileImage, profile);
+
+	return profile;
+}
