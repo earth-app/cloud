@@ -191,10 +191,12 @@ export type UserProfilePromptData = {
 	created_at: string;
 	visibility: typeof ocean.com.earthapp.Visibility.prototype.name;
 	country: string;
-	fullName: string;
+	full_name: string;
 	activities: Array<{
 		name: string;
 		description: string;
+		types: (typeof ocean.com.earthapp.activity.ActivityType.prototype.name)[];
+		aliases: string[];
 	}>;
 };
 
@@ -214,10 +216,13 @@ export const userProfilePhotoPrompt = (data: UserProfilePromptData) => {
 		"${data.bio}"
 
         They created their account on ${data.created_at}. They have set their account visibility to ${data.visibility}.
-		The user lives in ${data.country}. Their name is "${data.fullName ?? 'No name provided.'}".
+		The user lives in ${data.country}. Their name is "${data.full_name ?? 'No name provided.'}".
 
 		Lastly, the like the following activities:
-		${data.activities.map((activity) => `- ${activity.name}: ${activity.description?.substring(70) ?? 'No description available.'}\n`)}
+		${data.activities.map(
+			(activity) =>
+				`- ${activity.name} (aka ${activity.aliases.join(', ')}): ${activity.description?.substring(70) ?? 'No description available.'}\nIt is categorized as '${activity.types.join(', ')}.'\n`
+		)}
 
 		If any field says "None Provided" or "Unknown," disregard that element as apart of the profile picture, as the user has omitted said details.
 		`.trim(),

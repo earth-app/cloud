@@ -7,6 +7,7 @@ import * as prompts from './prompts';
 
 import { Activity as Activity, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
+import { toDataURL } from './util';
 
 const textModel = '@cf/qwen/qwen1.5-14b-chat-awq';
 
@@ -189,7 +190,7 @@ app.get('/users/profile_photo/:id', async (c) => {
 		return c.text('Profile photo not found', 404);
 	}
 
-	return c.body(photo, 200);
+	return c.json({ data: toDataURL(photo) });
 });
 
 app.put('/users/profile_photo/:id', async (c) => {
@@ -208,7 +209,7 @@ app.put('/users/profile_photo/:id', async (c) => {
 		return c.text('Failed to update profile photo', 500);
 	}
 
-	return c.body(photo, 200);
+	return c.json({ data: toDataURL(photo) });
 });
 
 export default app;
