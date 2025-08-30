@@ -16,7 +16,7 @@
 	"send_metrics": false,
 	"triggers": {
 		"crons": [
-			"0 * * * *" // Every hour
+			// "0 * * * *" // Every hour
 			// "0 */6 * * *" // Every 6 hours
 		]
 	},
