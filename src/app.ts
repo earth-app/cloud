@@ -13,13 +13,13 @@ const textModel = '@cf/qwen/qwen1.5-14b-chat-awq';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// app.use('*', async (c, next) => {
-// 	const token = c.env.ADMIN_API_KEY;
-// 	return bearerAuth({ token, invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key' })(
-// 		c,
-// 		next
-// 	);
-// });
+app.use('*', async (c, next) => {
+	const token = c.env.ADMIN_API_KEY;
+	return bearerAuth({ token, invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key' })(
+		c,
+		next
+	);
+});
 
 // Implementation
 
