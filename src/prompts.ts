@@ -10,7 +10,7 @@ while also providing unique insights or interesting facts about the activity.
 Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
 Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 Do not use any emojis or special characters in your response.
-The description should be no longer than 200 tokens, and should follow the provided guidelines closely.
+The description should be no longer than 350 tokens, and should follow the provided guidelines closely.
 Present your answer in a single paragraph without any additional formatting or bullet points.
 Do not put it in quotes or any other formatting, just the description itself.
 `;
@@ -64,11 +64,11 @@ Do not put it in quotes or any other formatting, just the description itself.`;
 
 export const activityTagsSystemMessage = `
 You are given an activity and a fixed list of tags.
-You must output up to 5 tags, exactly matching items in the tag list (case-sensitive lowercase), separated by commas, with no other output.
+You must output up to 5 tags, exactly matching items in the tag list (case-sensitive uppercase), separated by commas, with no other output.
 Limit your response to under 150 characters, as the list of tags is fixed and should not be modified.
 
 The tags are: '${ocean.com.earthapp.activity.ActivityType.values()
-	.map((t) => `"${t.name.toLowerCase()}"`)
+	.map((t) => `"${t.name.toUpperCase()}"`)
 	.join(', ')}'
 They are separated by commas and should be used as is, without any modifications or additional text.
 Do not provide any additional information, explanations, or context, and do not include any activities

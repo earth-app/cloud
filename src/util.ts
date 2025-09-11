@@ -25,7 +25,7 @@ export function trimToByteLimit(str: string, byteLimit: number): string {
 	return cut >= 0 ? chars.slice(0, cut + 1).join('') : '';
 }
 
-export async function toDataURL(image: Uint8Array, type = 'image/png'): Promise<string> {
+export function toDataURL(image: Uint8Array, type = 'image/png'): string {
 	const url = `data:${type};base64,` + btoa(String.fromCharCode.apply(null, Array.from(image)));
 	return url;
 }
