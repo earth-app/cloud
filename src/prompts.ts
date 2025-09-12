@@ -260,7 +260,7 @@ export async function generateProfilePhoto(
 	return imageBytes;
 }
 
-export async function getProfilePhoto(id: string, bindings: Bindings): Promise<Uint8Array> {
+export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<Uint8Array> {
 	const profileImage = `users/${id}/profile.png`;
 
 	const bytes = (await bindings.R2.get(profileImage))?.bytes();
@@ -269,7 +269,7 @@ export async function getProfilePhoto(id: string, bindings: Bindings): Promise<U
 	return (await bindings.ASSETS.fetch('https://assets.local/earth-app.png'))!.bytes();
 }
 
-export async function newProfilePhoto(data: UserProfilePromptData, id: string, bindings: Bindings) {
+export async function newProfilePhoto(data: UserProfilePromptData, id: bigint, bindings: Bindings) {
 	const profileImage = `users/${id}/profile.png`;
 	const profile = await generateProfilePhoto(data, bindings.AI);
 	await bindings.R2.put(profileImage, profile);

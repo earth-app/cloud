@@ -180,7 +180,7 @@ app.post('/users/recommend_activities', async (c) => {
 });
 
 app.get('/users/profile_photo/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	const id = BigInt(c.req.param('id'));
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
@@ -194,7 +194,7 @@ app.get('/users/profile_photo/:id', async (c) => {
 });
 
 app.put('/users/profile_photo/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	const id = BigInt(c.req.param('id'));
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
