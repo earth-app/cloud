@@ -180,10 +180,11 @@ app.post('/users/recommend_activities', async (c) => {
 });
 
 app.get('/users/profile_photo/:id', async (c) => {
-	const id = BigInt(c.req.param('id'));
-	if (!id) {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
 		return c.text('User ID is required', 400);
 	}
+	const id = BigInt(idParam);
 
 	const photo = await prompts.getProfilePhoto(id, c.env);
 	if (!photo) {
@@ -194,10 +195,11 @@ app.get('/users/profile_photo/:id', async (c) => {
 });
 
 app.put('/users/profile_photo/:id', async (c) => {
-	const id = BigInt(c.req.param('id'));
-	if (!id) {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
 		return c.text('User ID is required', 400);
 	}
+	const id = BigInt(idParam);
 
 	const body = await c.req.json<prompts.UserProfilePromptData>();
 	if (!body) {

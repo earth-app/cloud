@@ -221,7 +221,11 @@ export const userProfilePhotoPrompt = (data: UserProfilePromptData) => {
 		Lastly, the like the following activities:
 		${data.activities.map(
 			(activity) =>
-				`- ${activity.name} (aka ${activity.aliases.join(', ')}): ${activity.description?.substring(70) ?? 'No description available.'}\nIt is categorized as '${activity.types.join(', ')}.'\n`
+				`- ${activity.name} (aka ${activity.aliases.join(', ')}): ${
+					activity.description
+						? activity.description.substring(0, 140)
+						: 'No description available.'
+				}\nIt is categorized as '${activity.types.join(', ')}.'\n`
 		)}
 
 		If any field says "None Provided" or "Unknown," disregard that element as apart of the profile picture, as the user has omitted said details.
@@ -263,16 +267,23 @@ export async function generateProfilePhoto(
 export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<Uint8Array> {
 	const profileImage = `users/${id}/profile.png`;
 
-	const bytes = (await bindings.R2.get(profileImage))?.bytes();
-	if (bytes) return bytes;
+	const obj = await bindings.R2.get(profileImage);
+	if (obj) {
+		const buf = await obj.arrayBuffer();
+		return new Uint8Array(buf);
+	}
 
-	return (await bindings.ASSETS.fetch('https://assets.local/earth-app.png'))!.bytes();
+	const resp = await bindings.ASSETS.fetch('https://assets.local/earth-app.png');
+	const fallback = await resp!.arrayBuffer();
+	return new Uint8Array(fallback);
 }
 
 export async function newProfilePhoto(data: UserProfilePromptData, id: bigint, bindings: Bindings) {
 	const profileImage = `users/${id}/profile.png`;
 	const profile = await generateProfilePhoto(data, bindings.AI);
-	await bindings.R2.put(profileImage, profile);
+	await bindings.R2.put(profileImage, profile, {
+		httpMetadata: { contentType: 'image/png' }
+	});
 
 	return profile;
 }

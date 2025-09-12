@@ -25,7 +25,15 @@ export function trimToByteLimit(str: string, byteLimit: number): string {
 	return cut >= 0 ? chars.slice(0, cut + 1).join('') : '';
 }
 
-export function toDataURL(image: Uint8Array, type = 'image/png'): string {
-	const url = `data:${type};base64,` + btoa(String.fromCharCode.apply(null, Array.from(image)));
-	return url;
+export function toDataURL(image: Uint8Array | ArrayBuffer, type = 'image/png'): string {
+	const bytes = image instanceof Uint8Array ? image : new Uint8Array(image);
+
+	const chunkSize = 0x2000; // 8KB chunks to stay well under call stack/arg limits
+	let binary = '';
+	for (let i = 0; i < bytes.length; i += chunkSize) {
+		const chunk = bytes.subarray(i, i + chunkSize);
+		binary += String.fromCharCode.apply(null, Array.from(chunk));
+	}
+
+	return `data:${type};base64,` + btoa(binary);
 }
