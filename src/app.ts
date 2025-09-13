@@ -184,7 +184,11 @@ app.get('/users/profile_photo/:id', async (c) => {
 	if (!idParam || !/^\d+$/.test(idParam)) {
 		return c.text('User ID is required', 400);
 	}
+
 	const id = BigInt(idParam);
+	if (id <= 0n) {
+		return c.text('Invalid User ID', 400);
+	}
 
 	const photo = await prompts.getProfilePhoto(id, c.env);
 	if (!photo) {
@@ -200,6 +204,14 @@ app.put('/users/profile_photo/:id', async (c) => {
 		return c.text('User ID is required', 400);
 	}
 	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid User ID', 400);
+	}
+
+	if (id === 1n) {
+		return c.text('Cannot replace admin profile photo', 400);
+	}
 
 	const body = await c.req.json<prompts.UserProfilePromptData>();
 	if (!body) {

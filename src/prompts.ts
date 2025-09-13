@@ -265,6 +265,12 @@ export async function generateProfilePhoto(
 }
 
 export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<Uint8Array> {
+	if (id === 1n) {
+		const resp = await bindings.ASSETS.fetch('https://assets.local/cloud.png');
+		const fallback = await resp!.arrayBuffer();
+		return new Uint8Array(fallback);
+	}
+
 	const profileImage = `users/${id}/profile.png`;
 
 	const obj = await bindings.R2.get(profileImage);
