@@ -2,7 +2,6 @@ import { Ai, KVNamespace, R2Bucket } from '@cloudflare/workers-types';
 import { com } from '@earth-app/ocean';
 
 export type Bindings = {
-	KV: KVNamespace;
 	R2: R2Bucket;
 	AI: Ai;
 	ASSETS: Fetcher;
