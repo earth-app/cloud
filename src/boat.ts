@@ -10,7 +10,7 @@ const newActivityModel = '@cf/meta/llama-3-8b-instruct-awq';
 const activityModel = '@cf/google/gemma-3-12b-it';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
-const promptModel = '@cf/meta/llama-2-7b-chat-int8';
+const promptModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 
 export async function createNewActivity(bindings: Bindings): Promise<string | undefined> {
 	const listEndpoint = `${bindings.MANTLE_URL || 'https://api.earth-app.com'}/v2/activities/list?limit=1000`;
@@ -294,7 +294,6 @@ export async function createPrompt(ai: Ai) {
 			{ role: 'system', content: prompts.promptsSystemMessage.trim() },
 			{ role: 'user', content: prompts.promptsQuestionPrompt.trim() }
 		],
-		temperature: 1.2,
 		max_tokens: 40
 	});
 

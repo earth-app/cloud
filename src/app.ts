@@ -120,10 +120,19 @@ app.post('/users/recommend_activities', async (c) => {
 		)
 	);
 
+	const seen = new Set<string>();
 	const recommended = com.earthapp.ocean
 		.recommendActivity(all, user)
 		.asJsReadonlyArrayView()
-		.map((a) => JSON.parse(a.toJson()));
+		.map((a) => JSON.parse(a.toJson()))
+		.filter((a) => {
+			const id = String(a.id);
+			if (seen.has(id)) return false;
+			seen.add(id);
+
+			return true;
+		});
+
 	return c.json(recommended, 200);
 });
 
