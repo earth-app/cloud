@@ -178,7 +178,7 @@ app.post('/users/recommend_activities', async (c) => {
 	const recommended = com.earthapp.ocean
 		.recommendActivity(all, user)
 		.asJsReadonlyArrayView()
-		.map((a) => a.toJson());
+		.map((a) => JSON.parse(a.toJson()));
 	return c.json(recommended, 200);
 });
 
