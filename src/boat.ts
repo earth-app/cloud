@@ -6,8 +6,9 @@ import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
 
-const newActivityModel = '@cf/meta/llama-3.2-3b-instruct';
+const newActivityModel = '@cf/meta/llama-3-8b-instruct-awq';
 const activityModel = '@cf/google/gemma-3-12b-it';
+const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const promptModel = '@cf/meta/llama-2-7b-chat-int8';
 
@@ -60,7 +61,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			.replace(/—/g, ', '); // em dash to comma
 
 		// Generate tags
-		const tagsResult = await ai.run(activityModel, {
+		const tagsResult = await ai.run(tagsModel, {
 			messages: [
 				{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
 				{ role: 'user', content: `'${activity}'` }
@@ -69,6 +70,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 		const validTags = com.earthapp.activity.ActivityType.values().map((t) =>
 			t.name.trim().toUpperCase()
 		);
+
 		const tags = tagsResult?.response
 			?.trim()
 			.split(',')
