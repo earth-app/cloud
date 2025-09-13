@@ -18,7 +18,7 @@
 		"crons": [
 			// "0 * * * *" // Every hour
 			// "0 */6 * * *" // Every 6 hours
-			"*/10 * * * *" // Every 10 minutes
+			// "*/10 * * * *" // Every 10 minutes
 		]
 	},
 	"ai": {
