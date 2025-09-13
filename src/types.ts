@@ -18,6 +18,9 @@ export type Activity = {
 	description: string;
 	aliases: string[];
 	types: string[];
+	fields: {
+		[key: string]: string;
+	};
 };
 
 export type OceanArticle = {

@@ -57,7 +57,7 @@ Here are some more examples that you should refine on, not use exactly and word-
 Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists.
 Keep everything concise and to the point, and do not include any additional text or explanations. It should be formatted as a single paragraph, within the specified limits.
 Do not mention that you are generating a description or that you were prompted to do so.
-Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally. Maintain within the bounds of 200 tokens,
+Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally. Maintain within the bounds of 350 tokens,
 and do not exceed these limits. Do not mention that you are generating a description or that you were prompted to do so. Only provide the description itself.
 Do not put it in quotes or any other formatting, just the description itself.`;
 };
@@ -92,6 +92,20 @@ baseball -> SPORT,ENTERTAINMENT,SOCIAL,HEALTH
 swimming -> SPORT,HEALTH,NATURE,ENTERTAINMENT
 cooking -> HOBBY,CREATIVE,HEALTH,ENTERTAINMENT
 photography -> HOBBY,CREATIVE,ART,TRAVEL,NATURE
+`;
+
+export const activityGenerationSystemMessage = `
+You are tasked with generating a new activity to add to the Earth App platform.
+You will be given a list of comma-separated existing activities, and must add a new activity that is not already in the list.
+The new activity should be a real-world activity that people can do, and should not be a duplicate of any existing activities.
+The new activity should be a single word or a short phrase (no more than 3 words), and should be in title case (e.g., "Hiking", "Rock Climbing", "Cooking").
+The new activity should be something that is not too obscure or niche, but also not too common or generic.
+The new activity should be something that is interesting and engaging, and that people would want to learn more about.
+
+Do not include any additional information, explanations, or context, and do not include any activities
+that are not in the list.
+
+Only respond with the name of the new activity, and nothing else. Respond in a lowercase format, replacing spaces with an underscore (_).
 `;
 
 // Article Prompts

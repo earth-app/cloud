@@ -6,57 +6,170 @@ import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
 
-const activityModel = '@hf/google/gemma-7b-it';
+const newActivityModel = '@cf/meta/llama-3.2-3b-instruct';
+const activityModel = '@cf/google/gemma-3-12b-it';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const promptModel = '@cf/meta/llama-2-7b-chat-int8';
 
-export async function createActivityData(id: string, activity: string, ai: Ai) {
-	// Generate description
-	const description = await ai.run(activityModel, {
-		messages: [
-			{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
-			{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
-		]
-	});
-	const descRaw = description?.response?.trim() || `No description available for ${id}.`;
-
-	// Generate tags
-	const tagsResult = await ai.run(activityModel, {
-		messages: [
-			{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
-			{ role: 'user', content: `'${activity}'` }
-		]
-	});
-	const validTags = com.earthapp.activity.ActivityType.values().map((t) =>
-		t.name.trim().toUpperCase()
+export async function createNewActivity(bindings: Bindings): Promise<string | undefined> {
+	const listEndpoint = `${bindings.MANTLE_URL || 'https://api.earth-app.com'}/v2/activities/list?limit=1000`;
+	const first = await fetch(listEndpoint).then((res) =>
+		res.json<{ total: number; items: string[] }>()
 	);
-	const tags = tagsResult?.response
-		?.trim()
-		.split(',')
-		.map((tag) => tag.trim().toUpperCase())
-		.filter((tag) => tag.length > 0)
-		.filter((tag) => validTags.includes(tag)) || ['OTHER'];
 
-	let aliases: string[] = [];
-	const synonyms = await getSynonyms(activity);
-	if (synonyms && synonyms.length > 0) {
-		aliases.push(
-			...synonyms
-				.map((syn) => syn.trim().toLowerCase())
-				.filter((syn) => syn.length > 0 && syn !== activity)
-		);
+	let total = first.total;
+	let retrieved = 1000;
+	let activityChunks = [];
+	activityChunks.push(first.items); // add first chunk
+
+	let i = 1;
+	while (retrieved < total) {
+		const paginatedEndpoint = `${listEndpoint}&page=${i + 1}`;
+		const chunk = await fetch(paginatedEndpoint).then((res) => res.json<{ items: string[] }>());
+		activityChunks.push(chunk.items);
+
+		i++;
+		retrieved += 1000;
 	}
 
-	const activityData = {
-		id: id,
-		name: id.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
-		types: tags,
-		description: descRaw,
-		aliases: aliases
-	} satisfies Activity;
-
-	return activityData;
+	// Prompt with messages as list of chunks
+	const res = await bindings.AI.run(newActivityModel, {
+		messages: [
+			{ role: 'system', content: prompts.activityGenerationSystemMessage.trim() },
+			...activityChunks.map((chunk) => {
+				return { role: 'user', content: chunk.join(',') };
+			})
+		]
+	});
+	const activity = res?.response?.trim();
+	return activity;
 }
+
+export async function createActivityData(id: string, activity: string, ai: Ai) {
+	try {
+		// Generate description
+		const description = await ai.run(activityModel, {
+			messages: [
+				{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
+				{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
+			]
+		});
+		const descRaw = description?.response?.trim() || `No description available for ${id}.`;
+
+		// Generate tags
+		const tagsResult = await ai.run(activityModel, {
+			messages: [
+				{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
+				{ role: 'user', content: `'${activity}'` }
+			]
+		});
+		const validTags = com.earthapp.activity.ActivityType.values().map((t) =>
+			t.name.trim().toUpperCase()
+		);
+		const tags = tagsResult?.response
+			?.trim()
+			.split(',')
+			.map((tag) => tag.trim().toUpperCase())
+			.filter((tag) => tag.length > 0)
+			.filter((tag) => validTags.includes(tag)) || ['OTHER'];
+
+		// Find aliases
+		let aliases: string[] = [];
+		const synonyms = await getSynonyms(activity);
+		if (synonyms && synonyms.length > 0) {
+			aliases.push(
+				...synonyms
+					.map((syn) => syn.trim().toLowerCase())
+					.filter((syn) => syn.length > 0 && syn !== activity)
+					.filter((syn) => !syn.includes(' ')) // no multi-word aliases
+					.slice(0, 5) // limit to 5 aliases
+			);
+		}
+
+		// Find icon
+		const searchUrl = `https://api.iconify.design/search?query=${encodeURIComponent(activity)}&category=Material`;
+		let icon = await fetch(searchUrl)
+			.then(async (res) => res.json<{ icons: string[]; total: number }>())
+			.then((data) => {
+				if (data.total === 0) return null;
+
+				const preferredSets = [
+					'mdi',
+					'material-symbols',
+					'material-symbols-light',
+					'carbon',
+					'lucide',
+					'ph'
+				]; // preferred icon sets in order
+
+				// Prefer icons that contain "round" or "rounded"
+				const iconsAll = data?.icons || [];
+				const isRounded = (id: string) => /(^|[-_:])(?:round|rounded)(?=($|[-_:]))/i.test(id);
+
+				for (const set of preferredSets) {
+					const found = iconsAll.find((icon) => icon.startsWith(set + ':') && isRounded(icon));
+					if (found) return found;
+				}
+
+				const anyRounded = iconsAll.find((icon) => isRounded(icon));
+				if (anyRounded) return anyRounded;
+				const icons = data?.icons || [];
+
+				for (const set of preferredSets) {
+					const found = icons.find((icon) => icon.startsWith(set + ':'));
+					if (found) return found;
+				}
+
+				return icons[0]; // fallback to first icon if no preferred set found
+			});
+
+		const activityData = {
+			id: id,
+			name: id.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
+			types: tags,
+			description: descRaw,
+			aliases: aliases,
+			fields: {} as { [key: string]: string }
+		} satisfies Activity;
+
+		if (icon) {
+			activityData.fields.icon = icon;
+		}
+
+		return activityData;
+	} catch (error) {
+		console.error('Error creating activity data:', error);
+		throw new Error(
+			`Activity data creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+		);
+	}
+}
+
+export async function postActivity(bindings: Bindings, activity: Activity): Promise<Activity> {
+	const url = `${bindings.MANTLE_URL || 'https://api.earth-app.com'}/v2/activities`;
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+		},
+		body: JSON.stringify(activity)
+	});
+
+	if (!res.ok) {
+		const errorText = await res.text();
+		throw new Error(`Failed to post activity: ${res.status} ${res.statusText} - ${errorText}`);
+	}
+
+	const data = await res.json<Activity>();
+	if (!data || !data.id) {
+		throw new Error('Failed to create activity, no ID returned');
+	}
+
+	return data;
+}
+
+// Article Endpoints
 
 let HAS_PUBMED_API_KEY = false;
 export async function findArticles(query: string, bindings: Bindings, pageLimit: number = 1) {
@@ -143,7 +256,7 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 		throw new Error('Article must have title, description and content');
 	}
 
-	const url = (bindings.MANTLE_URL || 'https://api.earth-app.com') + '/v1/articles/create';
+	const url = (bindings.MANTLE_URL || 'https://api.earth-app.com') + '/v2/articles';
 	const res = await fetch(url, {
 		method: 'POST',
 		headers: {
@@ -189,7 +302,7 @@ export async function postPrompt(prompt: string, bindings: Bindings): Promise<Pr
 		throw new Error('Prompt must be at least 10 characters long');
 	}
 
-	const url = (bindings.MANTLE_URL || 'https://api.earth-app.com') + '/v1/prompts/create';
+	const url = (bindings.MANTLE_URL || 'https://api.earth-app.com') + '/v2/prompts';
 	const res = await fetch(url, {
 		method: 'POST',
 		headers: {
