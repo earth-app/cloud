@@ -6,7 +6,7 @@ import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
 
-const newActivityModel = '@cf/meta/llama-3-8b-instruct-awq';
+const newActivityModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const activityModel = '@cf/google/gemma-3-12b-it';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
@@ -34,14 +34,15 @@ export async function createNewActivity(bindings: Bindings): Promise<string | un
 	}
 
 	// Prompt with messages as list of chunks
-	const res = await bindings.AI.run(newActivityModel, {
+	const res = (await bindings.AI.run(newActivityModel, {
 		messages: [
 			{ role: 'system', content: prompts.activityGenerationSystemMessage.trim() },
 			...activityChunks.map((chunk) => {
 				return { role: 'user', content: chunk.join(',') };
 			})
 		]
-	});
+	})) as { response: string | null | undefined };
+
 	const activity = res?.response?.trim();
 	return activity;
 }
