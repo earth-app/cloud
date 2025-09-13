@@ -54,7 +54,10 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 				{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 			]
 		});
-		const descRaw = description?.response?.trim() || `No description available for ${id}.`;
+		const desc = (description?.response?.trim() || `No description available for ${id}.`)
+			.replace(/\n/g, ' ')
+			.replace(/“/g, '"')
+			.replace(/—/g, ', '); // em dash to comma
 
 		// Generate tags
 		const tagsResult = await ai.run(activityModel, {
@@ -87,20 +90,24 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 		}
 
 		// Find icon
-		const searchUrl = `https://api.iconify.design/search?query=${encodeURIComponent(activity)}&category=Material`;
+		const preferredSets = [
+			'mdi',
+			'material-symbols',
+			'material-symbols-light',
+			'carbon',
+			'lucide',
+			'ph',
+			'cib',
+			'carbon',
+			'solar',
+			'heroicons'
+		]; // preferred icon sets in order
+
+		const searchUrl = `https://api.iconify.design/search?query=${encodeURIComponent(activity)}&prefixes=${preferredSets.join(',')}`;
 		let icon = await fetch(searchUrl)
 			.then(async (res) => res.json<{ icons: string[]; total: number }>())
 			.then((data) => {
 				if (data.total === 0) return null;
-
-				const preferredSets = [
-					'mdi',
-					'material-symbols',
-					'material-symbols-light',
-					'carbon',
-					'lucide',
-					'ph'
-				]; // preferred icon sets in order
 
 				// Prefer icons that contain "round" or "rounded"
 				const iconsAll = data?.icons || [];
@@ -127,7 +134,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			id: id,
 			name: id.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()),
 			types: tags,
-			description: descRaw,
+			description: desc,
 			aliases: aliases,
 			fields: {} as { [key: string]: string }
 		} satisfies Activity;

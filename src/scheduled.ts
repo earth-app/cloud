@@ -41,8 +41,11 @@ export default async function scheduled(
 				const data = await createActivityData(id, activity, env.AI);
 				await postActivity(env, data);
 
+				console.log('Created new activity:', id);
 				resolve();
 			})
 		);
 	}
+
+	return new Response('No cron job matched', { status: 404 });
 }
