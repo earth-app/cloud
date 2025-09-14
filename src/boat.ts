@@ -7,7 +7,7 @@ import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
 
 const newActivityModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
-const activityModel = '@cf/google/gemma-3-12b-it';
+const activityModel = '@cf/meta/llama-3.2-11b-vision-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const promptModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
@@ -65,7 +65,8 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			messages: [
 				{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
 				{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
-			]
+			],
+			max_tokens: 350
 		});
 		const desc = (description?.response?.trim() || `No description available for ${id}.`)
 			.replace(/\n/g, ' ')

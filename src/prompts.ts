@@ -12,54 +12,13 @@ Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 Do not use any emojis or special characters in your response.
 The description should be no longer than 350 tokens, and should follow the provided guidelines closely.
 Present your answer in a single paragraph without any additional formatting or bullet points.
-Do not put it in quotes or any other formatting, just the description itself.
+Do not put it in quotes or any other formatting, just the description itself. Make the description unique, human-like, and engaging.
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
 	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun.
 Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
-Use simple language, avoid jargon, and keep the tone upbeat and friendly.
-
-Follow these guidelines:
-
-1. Opening Hook (1-2 sentences)
-Start with a playful or intriguing sentence that quickly defines or frames the activity.
-Here are some examples that you should refine on, not copy exactly:
-- "Have you ever tried ${activity}? It's a fantastic way to..."
-- "Imagine spending your weekends enjoying ${activity} with friends and family. It's not just fun, it's also a great way to..."
-- "If you're looking for a new hobby, ${activity} might be just what you need! It's a perfect blend of..."
-- "Did you know that ${activity} can help you relax and unwind? It's a great way to..."
-- "Whether you're a beginner or an expert, ${activity} offers something for everyone. It's a wonderful way to..."
-- "Imagine a world where ${activity} is the norm, not the exception. Here's why it matters..."
-- "If you think ${activity} is just for experts, think again! It's actually a great way to...".
-- "Ever wondered why people love ${activity}? It's more than just a pastime-it's..."
-
-2. Core Explanation (2-3 short paragraphs)
-Clearly state what ${activity} involves. Use simple language so anyone can understand.
-Summarize the basic steps or typical elements (e.g., "To get started, you need," "Participants usually").
-Highlight why people enjoy it-physical, mental, social, or creative perks. Keep it upbeat (e.g., "Besides being a great way to," "It's perfect for those who").
-In addition, mention any common misconceptions or surprising aspects about ${activity} that might intrigue readers.
-If there is space, Include a light trivia or surprising tidbit about ${activity}.
-- "For example, many people think ${activity} is only for experts, but it's actually a great way to..."
-- "Many people think ${activity} is only for experts, but it's actually a great way to relax and unwind."
-- "Did you know that ${activity} can also help you improve your skills in other areas? You could..."
-
-3. Friendly Invitation (1 sentence)
-Encourage readers to try or learn more about ${activity} in a warm, inviting way.
-Here are some more examples that you should refine on, not use exactly and word-for-word.
-- "Why not give ${activity} a try? It's easier than you think to get started!"
-- "Curious about ${activity}? There's a whole community waiting to welcome you!"
-- "Ready to dive into ${activity}? It's a fantastic way to spend your time!"
-- "So why not give ${activity} a try? You might just find your new favorite hobby!"
-- "Ready to dive into ${activity}? It's easier than you think to get started!"
-- "Curious about ${activity}? There's a whole community waiting to welcome you!"
-
-Ensure grammatical correctness and no special characters or emojis at all times. Do not use any formatting like ending prompts, bullet points or numbered lists.
-Keep everything concise and to the point, and do not include any additional text or explanations. It should be formatted as a single paragraph, within the specified limits.
-Do not mention that you are generating a description or that you were prompted to do so.
-Present your answer in a single paragraph without any additional formatting, and make sure it flows naturally. Maintain within the bounds of 350 tokens,
-and do not exceed these limits. Do not mention that you are generating a description or that you were prompted to do so. Only provide the description itself.
-Do not put it in quotes or any other formatting, just the description itself.`;
+Use simple language, avoid jargon, and keep the tone upbeat and friendly.`;
 };
 
 export const activityTagsSystemMessage = `
@@ -96,16 +55,20 @@ photography -> HOBBY,CREATIVE,ART,TRAVEL,NATURE
 
 export const activityGenerationSystemMessage = `
 You are tasked with generating a new activity to add to the Earth App platform.
-You will be given a list of comma-separated existing activities, and must add a new activity that is not already in the list.
-The new activity should be a real-world activity that people can do, and should not be a duplicate of any existing activities.
-The new activity should be a single word or a short phrase (no more than 3 words), and should be in title case (e.g., "Hiking", "Rock Climbing", "Cooking").
-The new activity should be something that is not too obscure or niche, but also not too common or generic.
-The new activity should be something that is interesting and engaging, and that people would want to learn more about.
 
-Do not include any additional information, explanations, or context, and do not include any activities
-that are not in the list. Do not mention any thinking process or that you were prompted to generate a new activity.
+You will be given a list of existing activities, separated by commas. Your job is to generate exactly one new activity that:
+- Is a real-world activity people actually do.
+- Is not already in the list.
+- Is 1-3 words long.
+- Is written in lowercase, with spaces replaced by underscores (_).
+- Is diverse, meaning it can come from creative, physical, outdoor, indoor, or social activities.
+- Is appropriate, safe, and engaging.
+- Is not generic (like "sports") or obscure (like "extreme ironing").
+- Does not include explanations, commentary, or extra text.
+- Must be definitionally different from every other activity in this list.
+- It can apply to a wide range of fields, such as in-person, online, physical activity, relaxation, home improvement, nature, personal goals, and more.
 
-Only respond with the name of the new activity, and nothing else. Respond in a lowercase format, replacing spaces with an underscore (_).
+Only output the activity name. Do not include any other words, punctuation, or formatting.
 `;
 
 // Article Prompts
