@@ -16,8 +16,8 @@ Do not put it in quotes or any other formatting, just the description itself.
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
-	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun. 
-Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it. 
+	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun.
+Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
 Use simple language, avoid jargon, and keep the tone upbeat and friendly.
 
 Follow these guidelines:
@@ -103,7 +103,7 @@ The new activity should be something that is not too obscure or niche, but also 
 The new activity should be something that is interesting and engaging, and that people would want to learn more about.
 
 Do not include any additional information, explanations, or context, and do not include any activities
-that are not in the list.
+that are not in the list. Do not mention any thinking process or that you were prompted to generate a new activity.
 
 Only respond with the name of the new activity, and nothing else. Respond in a lowercase format, replacing spaces with an underscore (_).
 `;
@@ -168,7 +168,7 @@ export const promptsSystemMessage = `
 You MUST output EXACTLY ONE original introspective question and ONLY the question text.
 
 Choose one prefix:
-Who, What, When, Where, Why, How, If, In, Could, Would, Can, Should, 
+Who, What, When, Where, Why, How, If, In, Could, Would, Can, Should,
 Is, Are, Was, Were, Do, Does, Did, Will, Might, May, Must
 
 Choose one topic to commit to fully:
@@ -192,7 +192,7 @@ Rules:
 13) No "what if" or "imagine" scenarios.
 `;
 
-export const promptsQuestionPrompt = `Generate the question now. Output only the question. 
+export const promptsQuestionPrompt = `Generate the question now. Output only the question.
 Do not include any additional text or formatting, and do not mention that you were prompted.`;
 
 // User Profile Photo

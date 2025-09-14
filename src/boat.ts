@@ -41,15 +41,10 @@ export async function createNewActivity(bindings: Bindings): Promise<string | un
 				return { role: 'user', content: chunk.join(',') };
 			})
 		],
-		max_tokens: 10
+		max_tokens: 25
 	})) as { response: string | null | undefined };
 
 	const activity = res?.response?.trim();
-	if (!activity || activity.length > 30) return undefined; // invalid activity name
-
-	// Ensure activity is a single phrase
-	if (activity.includes('\n') || activity.includes(':') || activity.includes(',')) return undefined;
-
 	return activity;
 }
 
