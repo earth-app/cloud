@@ -45,6 +45,16 @@ export async function createNewActivity(bindings: Bindings): Promise<string | un
 	})) as { response: string | null | undefined };
 
 	const activity = res?.response?.trim();
+
+	// check excess thinking
+	if (activity?.includes('is already in the list, a new activity is:')) {
+		return activity
+			.split('is already in the list, a new activity is:')[1]
+			.trim()
+			.toLowerCase()
+			.replace(/\s+/g, '_');
+	}
+
 	return activity;
 }
 
