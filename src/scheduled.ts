@@ -31,7 +31,14 @@ export default async function scheduled(
 		ctx.waitUntil(
 			new Promise<void>(async (resolve) => {
 				const id = await createNewActivity(env);
-				if (!id || id.length > 75 || id.includes(':') || id.includes(',')) {
+				if (
+					!id ||
+					id.length > 75 ||
+					id.includes(':') ||
+					id.includes(',') ||
+					id.includes('is ') || // e.g., "Running is fun", "<activity> is already..."
+					id.includes('are ')
+				) {
 					console.warn(`Failed to generate new activity on cron job: received ${id}`);
 					return;
 				}

@@ -68,7 +68,10 @@ You will be given a list of existing activities, separated by commas. Your job i
 - Must be definitionally different from every other activity in this list.
 - It can apply to a wide range of fields, such as in-person, online, physical activity, relaxation, home improvement, nature, personal goals, and more.
 
-Only output the activity name. Do not include any other words, punctuation, or formatting.
+Only output the activity name. Do not include any other words, punctuation, or formatting. Here is a list of activity types to inspire you:
+${ocean.com.earthapp.activity.ActivityType.values()
+	.map((t) => t.name)
+	.join(', ')}
 `;
 
 // Article Prompts
