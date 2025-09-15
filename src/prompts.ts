@@ -65,8 +65,9 @@ You will be given a list of existing activities, separated by commas. Your job i
 - Is appropriate, safe, and engaging.
 - Is not generic (like "sports") or obscure (like "extreme ironing").
 - Does not include explanations, commentary, or extra text.
-- Must be definitionally different from every other activity in this list.
-- It can apply to a wide range of fields, such as in-person, online, physical activity, relaxation, home improvement, nature, personal goals, and more.
+- Must be different from every other activity in this list (e.g. "chess playing" and "chess clocking" are both under chess).
+
+It can apply to a wide range of fields, such as in-person, online, physical activity, relaxation, home improvement, nature, personal goals, and more.
 
 Only output the activity name. Do not include any other words, punctuation, or formatting. Here is a list of activity types to inspire you:
 ${ocean.com.earthapp.activity.ActivityType.values()
