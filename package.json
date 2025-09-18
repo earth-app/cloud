@@ -11,7 +11,7 @@
     "prepare": "husky install"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20250913.0",
+    "@cloudflare/workers-types": "^4.20250917.0",
     "@earth-app/ocean": "1.0.0-c755216",
     "@types/pako": "^2.0.4",
     "hono": "^4.9.7",
@@ -22,7 +22,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.1.6",
     "prettier": "^3.6.2",
-    "wrangler": "^4.36.0"
+    "wrangler": "^4.37.1"
   },
   "lint-staged": {
     "*.{js,ts,json,yml,md}": "prettier --write"
