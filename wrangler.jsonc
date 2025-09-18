@@ -16,16 +16,17 @@
 	"send_metrics": false,
 	"triggers": {
 		"crons": [
-			// "0 * * * *" // Every hour
+			"0 * * * *" // Every hour
 			// "0 */6 * * *" // Every 6 hours
 		]
 	},
 	"ai": {
-		"binding": "AI"
+		"binding": "AI",
+		"remote": true
 	},
 	"observability": {
 		"enabled": true,
-		"head_sampling_rate": 1
+		"head_sampling_rate": 0.5
 	},
 	"r2_buckets": [
 		{

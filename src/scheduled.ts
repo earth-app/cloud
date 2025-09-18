@@ -11,7 +11,7 @@ export default async function scheduled(
 		ctx.waitUntil(
 			new Promise<void>(async (resolve) => {
 				const prompt = await createPrompt(env.AI);
-				// await postPrompt(prompt, env);
+				await postPrompt(prompt, env);
 				console.log('Created new prompt:', prompt);
 
 				resolve();

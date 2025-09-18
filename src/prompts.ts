@@ -132,35 +132,108 @@ Otherwise, keep a skeptic tone about the article's relevance to the current date
 // Prompts Prompts
 
 export const promptsSystemMessage = `
-You MUST output EXACTLY ONE original introspective question and ONLY the question text.
-
-Choose one prefix:
-Who, What, When, Where, Why, How, If, In, Could, Would, Can, Should,
-Is, Are, Was, Were, Do, Does, Did, Will, Might, May, Must
-
-Choose one topic to commit to fully:
-Adventure; Exploration; Discovery; Learning; Growth; Change; Connection; Imagination;
-Human relationships; Curiosity; Creativity; Nature; Challenges; Technology; Ethics;
-Culture; Ambition; Time; Memory; Unknown possibilities; Limits; Risk
+The date is ${new Date().toISOString().split('T')[0]}.
+Output exactly ONE original open-ended question.
 
 Rules:
-1) Single sentence, ends with "?", under 80 characters, under 15 words.
-2) Plain ASCII English only; no slang, jargon, quotes, emojis, or special characters.
-3) At most one comma; grammatical and clear.
-4) Open-ended (not yes/no), not rhetorical.
-5) Avoid these phrases: stumbled upon; hidden treasure; in a world where.
-6) No holidays, dates, company names, or historical events.
-7) Timeless (not tied to current events or trends).
-8) Pick exactly ONE theme from this list and commit fully:
-9) Vary perspective, wording, imagery, and scenario across calls.
-10) Unique, not generic or cliche.
-11) No repetition of previous questions.
-12) No personal pronouns like "you" or "your".
-13) No "what if" or "imagine" scenarios.
+- One sentence, under 15 words, under 80 characters. End with '?' if it makes sense.
+- Plain English only, no slang, jargon, quotes, or special symbols
+- Max one comma; clear and grammatically correct
+- Open-ended, not yes/no or rhetorical
+- No "what if," no "imagine," no personal pronouns
+- No clichés, no repeats, no holidays, dates, companies, or events
+- Must feel simple, timeless, insightful, engaging, and heavily creative
+- Avoid complexity, overused topics, analogies or metaphors, anything too niche or obscure
+- Must be general enough to apply to a wide audience and easy to understand
 `;
 
-export const promptsQuestionPrompt = `Generate the question now. Output only the question.
-Do not include any additional text or formatting, and do not mention that you were prompted.`;
+const prefixes = [
+	'Who',
+	'What',
+	'When',
+	'Where',
+	'Why',
+	'How',
+	'Describe',
+	'Explain',
+	'Discuss',
+	'Share',
+	'Recommend',
+	'Would',
+	'If',
+	'Which',
+	'Can',
+	'Could',
+	'Should',
+	'Is',
+	'Are',
+	'Do',
+	'Does',
+	'Have',
+	'Has',
+	'Will',
+	'In'
+];
+
+const topics = [
+	'life',
+	'technology',
+	'science',
+	'art',
+	'history',
+	'travel',
+	'culture',
+	'philosophy',
+	'nature',
+	'health',
+	'education',
+	'society',
+	'innovation',
+	'creativity',
+	'personal growth',
+	'human behavior',
+	'future trends',
+	'sustainability',
+	'global issues',
+	'psychology',
+	'communication',
+	'productivity',
+	'leadership',
+	'teamwork',
+	'ethics',
+	'design',
+	'inspiration',
+	'motivation',
+	'wellness',
+	'fitness',
+	'mindfulness',
+	'travel experiences',
+	'cultural differences',
+	'technological advancements',
+	'scientific discoveries',
+	'perserverance',
+	'integrity',
+	'mental health',
+	'financial literacy',
+	'work-life balance',
+	'remote work',
+	'hydration',
+	'nutrition',
+	'meditation',
+	'energy',
+	'resilience',
+	'curiosity',
+	'open-mindedness',
+	'critical thinking',
+	'emotional intelligence'
+];
+
+export const promptsQuestionPrompt = () => {
+	const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+	const topic = topics[Math.floor(Math.random() * topics.length)];
+
+	return `Create a question with the prefix '${prefix}' about '${topic}' that is open-ended, engaging, and thought-provoking.`;
+};
 
 // User Profile Photo
 

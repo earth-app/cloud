@@ -255,17 +255,44 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 }
 
 export async function createPrompt(ai: Ai) {
-	const gen = await ai.run(promptModel as any, {
+	const gen = (await ai.run(promptModel as any, {
 		instructions: prompts.promptsSystemMessage.trim(),
-		input: prompts.promptsQuestionPrompt.trim()
-	});
+		input: prompts.promptsQuestionPrompt().trim(),
+		reasoning: {
+			effort: 'low',
+			summary: 'concise'
+		}
+	})) as {
+		output: {
+			id: string;
+			content: {
+				text: string;
+				type: 'output_text' | 'reasoning_text';
+			}[];
+			type: 'message' | 'reasoning';
+		}[];
+	};
 
-	const response = gen?.response?.trim();
-	if (!response || response.length < 10) {
-		throw new Error('Failed to generate prompt, response too short');
+	if (!gen || !gen.output || gen.output.length === 0) {
+		throw new Error('Failed to generate prompt: ' + JSON.stringify(gen));
 	}
 
-	return response;
+	const message = gen.output.find((o) => o.type === 'message');
+
+	if (!message) {
+		throw new Error('No valid prompt message found: ' + JSON.stringify(gen));
+	}
+
+	const promptText = message.content
+		.find((c) => c.type === 'output_text')
+		?.text.trim()
+		.replace(/\n/g, ' ');
+
+	if (!promptText || promptText.length < 10) {
+		throw new Error('Generated prompt is too short or invalid: ' + JSON.stringify(message));
+	}
+
+	return promptText;
 }
 
 export async function postPrompt(prompt: string, bindings: Bindings): Promise<Prompt> {
