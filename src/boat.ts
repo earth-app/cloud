@@ -259,7 +259,7 @@ export async function createPrompt(ai: Ai) {
 		instructions: prompts.promptsSystemMessage.trim(),
 		input: prompts.promptsQuestionPrompt().trim(),
 		reasoning: {
-			effort: 'low',
+			effort: 'medium',
 			summary: 'concise'
 		}
 	})) as {
