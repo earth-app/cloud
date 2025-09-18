@@ -6,57 +6,10 @@ import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
 
-const newActivityModel = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const activityModel = '@cf/meta/llama-3.2-11b-vision-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
-const promptModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
-
-export async function createNewActivity(bindings: Bindings): Promise<string | undefined> {
-	const listEndpoint = `${bindings.MANTLE_URL || 'https://api.earth-app.com'}/v2/activities/list?limit=1000`;
-	const first = await fetch(listEndpoint).then((res) =>
-		res.json<{ total: number; items: string[] }>()
-	);
-
-	let total = first.total;
-	let retrieved = 1000;
-	let activityChunks = [];
-	activityChunks.push(first.items); // add first chunk
-
-	let i = 1;
-	while (retrieved < total) {
-		const paginatedEndpoint = `${listEndpoint}&page=${i + 1}`;
-		const chunk = await fetch(paginatedEndpoint).then((res) => res.json<{ items: string[] }>());
-		activityChunks.push(chunk.items);
-
-		i++;
-		retrieved += 1000;
-	}
-
-	// Prompt with messages as list of chunks
-	const res = (await bindings.AI.run(newActivityModel, {
-		messages: [
-			{ role: 'system', content: prompts.activityGenerationSystemMessage.trim() },
-			...activityChunks.map((chunk) => {
-				return { role: 'user', content: chunk.join(',') };
-			})
-		],
-		max_tokens: 25
-	})) as { response: string | null | undefined };
-
-	const activity = res?.response?.trim();
-
-	// check excess thinking
-	if (activity?.includes('is already in the list, a new activity is:')) {
-		return activity
-			.split('is already in the list, a new activity is:')[1]
-			.trim()
-			.toLowerCase()
-			.replace(/\s+/g, '_');
-	}
-
-	return activity;
-}
+const promptModel = '@cf/openai/gpt-oss-120b';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
@@ -302,12 +255,9 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 }
 
 export async function createPrompt(ai: Ai) {
-	const gen = await ai.run(promptModel, {
-		messages: [
-			{ role: 'system', content: prompts.promptsSystemMessage.trim() },
-			{ role: 'user', content: prompts.promptsQuestionPrompt.trim() }
-		],
-		max_tokens: 40
+	const gen = await ai.run(promptModel as any, {
+		instructions: prompts.promptsSystemMessage.trim(),
+		input: prompts.promptsQuestionPrompt.trim()
 	});
 
 	const response = gen?.response?.trim();
