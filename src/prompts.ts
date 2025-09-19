@@ -53,42 +53,64 @@ cooking -> HOBBY,CREATIVE,HEALTH,ENTERTAINMENT
 photography -> HOBBY,CREATIVE,ART,TRAVEL,NATURE
 `;
 
-export const activityGenerationSystemMessage = `
-You are tasked with generating a new activity to add to the Earth App platform.
-
-You will be given a list of existing activities, separated by commas. Your job is to generate exactly one new activity that:
-- Is a real-world activity people actually do.
-- Is not already in the list.
-- Is 1-3 words long.
-- Is written in lowercase, with spaces replaced by underscores (_).
-- Is diverse, meaning it can come from creative, physical, outdoor, indoor, or social activities.
-- Is appropriate, safe, and engaging.
-- Is not generic (like "sports") or obscure (like "extreme ironing").
-- Does not include explanations, commentary, or extra text.
-- Must be different from every other activity in this list (e.g. "chess playing" and "chess clocking" are both under chess).
-
-It can apply to a wide range of fields, such as in-person, online, physical activity, relaxation, home improvement, nature, personal goals, and more.
-
-Only output the activity name. Do not include any other words, punctuation, or formatting. Here is a list of activity types to inspire you:
-${ocean.com.earthapp.activity.ActivityType.values()
-	.map((t) => t.name)
-	.join(', ')}
-`;
-
 // Article Prompts
 
+export const articleTopicSystemMessage = `
+You are an expert in coming up with short, generic search terms (no more than three words) suitable for finding scientific articles.
+The search terms should be concise, relevant, and broadly applicable to a wide range of scientific topics.
+You will be given an example and must generate a topic of similarity.
+Do not output anything other than the given topic.
+`;
+
+const topicExamples = [
+	'self growth',
+	'perserverance',
+	'mental health',
+	'mathematics',
+	'physics',
+	'psychology',
+	'reading',
+	'writing',
+	'engineering',
+	'biology',
+	'chemistry',
+	'climate change',
+	'astronomy',
+	'music',
+	'artificial intelligence',
+	'robotics',
+	'data science',
+	'meditation',
+	'medical research',
+	'genetics',
+	'neuroscience',
+	'ecology',
+	'oceanography',
+	'linguistics',
+	'philosophy',
+	'ethics',
+	'anthropology',
+	'sociology',
+	'economics',
+	'education'
+];
+
+export const articleTopicPrompt = (): string => {
+	const example = topicExamples[Math.floor(Math.random() * topicExamples.length)];
+	return example;
+};
+
+export const articleClassificationQuery = (topic: string, tags: string[]): string => {
+	return `Articles primaryily related to ${topic} and ${tags.length > 1 ? 'these tags' : 'this tag'}: ${tags
+		.map((tag) => `"${tag}"`)
+		.join(', ')}`;
+};
+
 export const articleSystemMessage = `
-You are an expert in writing articles about various topics. You will be provided with the contents
+You are an expert in writing article summaries about various topics. You will be provided with the contents
 of an article, and your task is to generate a concise, engaging summary of the article. You will
 also be provided with up to five different tags that should be incorporated into the summary and
 how they relate to the article.
-
-The summary should be informative and educational but also lighthearted and fun.
-Your goal is to make the article sound appealing and accessible to a wide audience, including those
-who may not be familiar with the topic. Use simple language, avoid jargon, and keep the tone upbeat and friendly.
-Do not use any emojis or special characters in your response.
-The summary should be no longer than 300 words and should follow the provided guidelines closely.
-Present your answer in a single paragraph without any additional formatting or bullet points.
 
 Do not include or indicate that you were prompted to write a summary, just provide the summary directly.
 `;

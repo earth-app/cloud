@@ -37,3 +37,11 @@ export function toDataURL(image: Uint8Array | ArrayBuffer, type = 'image/png'): 
 
 	return `data:${type};base64,` + btoa(binary);
 }
+
+export function chunkArray<T>(arr: T[], size: number): Array<T[]> {
+	const result = [];
+	for (let i = 0; i < arr.length; i += size) {
+		result.push(arr.slice(i, i + size));
+	}
+	return result;
+}

@@ -5,9 +5,12 @@ import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
+import { chunkArray } from './util';
 
 const activityModel = '@cf/meta/llama-3.2-11b-vision-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
+const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
+const articleRankerModel = '@cf/baai/bge-reranker-base';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const promptModel = '@cf/openai/gpt-oss-120b';
 
@@ -145,9 +148,96 @@ export async function postActivity(bindings: Bindings, activity: Activity): Prom
 }
 
 // Article Endpoints
+export async function findArticle(bindings: Bindings): Promise<[OceanArticle, string[]]> {
+	const ai = bindings.AI as Ai;
+
+	const topicRaw = await ai.run(articleTopicModel, {
+		messages: [
+			{ role: 'system', content: prompts.articleTopicSystemMessage.trim() },
+			{ role: 'user', content: prompts.articleTopicPrompt().trim() }
+		],
+		max_tokens: 16
+	});
+
+	const topic = topicRaw?.response?.trim().replace(/\n/g, ' ').toLowerCase();
+	if (!topic || topic.length < 3) {
+		throw new Error('Failed to generate a valid article topic: ' + JSON.stringify(topicRaw));
+	}
+	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
+	const tags = com.earthapp.activity.ActivityType.values()
+		.sort(() => Math.random() - 0.5)
+		.slice(0, tagCount)
+		.map((t) => t.name.trim().toUpperCase());
+
+	// Search for articles on the topic
+	const searchResults = await findArticles(topic, bindings, 2);
+	if (!searchResults || searchResults.length === 0) {
+		throw new Error('No articles found for topic: ' + topic);
+	}
+
+	// Rank articles to find the best one
+	// Limit is ~512 tokens per context for BGE-Reranker
+	// Chunk by 125 articles to reduce latency and neuron load
+	const batches = chunkArray(searchResults, 125);
+
+	const allArticles: { text: string; ocean: OceanArticle }[] = [];
+	const rankQuery = prompts.articleClassificationQuery(topic, tags);
+	const allRanked: { id: number; score: number }[] = [];
+
+	for (const batch of batches) {
+		const contexts = batch
+			.filter((article) => article.abstract || article.content) // must have abstract or content
+			.filter((article) => article.title.match(/[^\x00-\x7F]+/gim)?.length || 0 < 5) // title must be mostly ASCII
+			.map((article) => ({
+				text:
+					(article.title || '') +
+					' by ' +
+					(article.author || 'Unknown') +
+					' | Tags: ' +
+					(article.keywords || []).join(', ') +
+					'\n' +
+					(article.abstract || '').substring(0, 200),
+				ocean: article // store original for later retrieval
+			}));
+		allArticles.push(...contexts);
+
+		// Rank this batch
+		const ranked = await ai.run(articleRankerModel, {
+			query: rankQuery,
+			contexts: contexts.map((c) => ({ text: c.text })) // remove 'ocean' field for ranking
+		});
+
+		if (!ranked || !ranked.response) {
+			throw new Error('Failed to rank articles: ' + JSON.stringify(ranked));
+		}
+
+		allRanked.push(
+			...ranked.response
+				.filter((r) => r.id !== undefined)
+				.map((r) => ({ id: r.id!, score: r.score || 0 }))
+		);
+	}
+
+	// Find highest-ranked article
+	const best = allRanked.sort((a, b) => b.score - a.score)[0];
+	if (!best) {
+		throw new Error('No best article found after ranking: length ' + allRanked.length);
+	}
+
+	const bestArticle = allArticles[best.id].ocean;
+	if (!bestArticle) {
+		throw new Error('Best article data not found: index ' + best.id + ' of ' + allArticles.length);
+	}
+
+	return [bestArticle, tags];
+}
 
 let HAS_PUBMED_API_KEY = false;
-export async function findArticles(query: string, bindings: Bindings, pageLimit: number = 1) {
+export async function findArticles(
+	query: string,
+	bindings: Bindings,
+	pageLimit: number = 1
+): Promise<OceanArticle[]> {
 	if (!HAS_PUBMED_API_KEY && bindings.NCBI_API_KEY) {
 		com.earthapp.ocean.boat.Scraper.setApiKey('PubMed', bindings.NCBI_API_KEY);
 		HAS_PUBMED_API_KEY = true;
@@ -167,13 +257,11 @@ export async function findArticles(query: string, bindings: Bindings, pageLimit:
 	return await Promise.all(results);
 }
 
-export async function createArticle(ocean: OceanArticle, ai: Ai): Promise<Partial<Article>> {
-	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
-	const tags = com.earthapp.activity.ActivityType.values()
-		.sort(() => Math.random() - 0.5)
-		.slice(0, tagCount)
-		.map((t) => t.name.trim().toUpperCase());
-
+export async function createArticle(
+	ocean: OceanArticle,
+	ai: Ai,
+	tags: string[]
+): Promise<Partial<Article>> {
 	const maxContentLength = 100000;
 	const articleContent =
 		ocean.content?.trim()?.substring(0, maxContentLength) || ocean.abstract?.trim() || '';
