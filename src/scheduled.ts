@@ -9,13 +9,15 @@ export default async function scheduled(
 	if (controller.cron === '0 * * * *') {
 		console.log('Running scheduled task: Create new prompt');
 		ctx.waitUntil(
-			new Promise<void>(async (resolve) => {
+			(async () => {
+				console.log('Started at ', new Date().toISOString());
+
 				const prompt = await createPrompt(env.AI);
 				await postPrompt(prompt, env);
 				console.log('Created new prompt:', prompt);
 
-				resolve();
-			})
+				console.log('Finished at ', new Date().toISOString());
+			})()
 		);
 
 		return;
@@ -24,7 +26,9 @@ export default async function scheduled(
 	if (controller.cron === '0 */5 * * *') {
 		console.log('Running scheduled task: Create new article');
 		ctx.waitUntil(
-			new Promise<void>(async (resolve) => {
+			(async () => {
+				console.log('Started at ', new Date().toISOString());
+
 				const [article, tags] = await findArticle(env);
 				console.log('Found article and tags:', article.title, tags);
 
@@ -36,8 +40,8 @@ export default async function scheduled(
 					created.content?.slice(0, 100) + '...'
 				);
 
-				resolve();
-			})
+				console.log('Finished at ', new Date().toISOString());
+			})()
 		);
 
 		return;
