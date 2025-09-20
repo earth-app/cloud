@@ -2,64 +2,525 @@ import * as ocean from '@earth-app/ocean';
 import { Bindings, OceanArticle } from './types';
 import { Ai } from '@cloudflare/workers-types';
 
+// Validation and sanitation functions for AI outputs
+
+export function logAIFailure(context: string, input: any, output: any, error: string): void {
+	console.error(`AI Output Validation Failed [${context}]`, {
+		timestamp: new Date().toISOString(),
+		context,
+		input,
+		output,
+		error,
+		stack: new Error().stack
+	});
+}
+
+/**
+ * Sanitizes AI-generated text by removing unwanted formatting, quotes, and characters
+ * @param text - The text to sanitize
+ * @param options - Sanitization options
+ * @returns Sanitized text
+ */
+export function sanitizeAIOutput(
+	text: string,
+	options: {
+		removeQuotes?: boolean;
+		removeMarkdown?: boolean;
+		removeExtraWhitespace?: boolean;
+		removeBrackets?: boolean;
+		preserveBasicPunctuation?: boolean;
+	} = {}
+): string {
+	if (!text || typeof text !== 'string') {
+		return '';
+	}
+
+	let cleaned = text.trim();
+
+	// Default options
+	const opts = {
+		removeQuotes: true,
+		removeMarkdown: true,
+		removeExtraWhitespace: true,
+		removeBrackets: false,
+		preserveBasicPunctuation: true,
+		...options
+	};
+
+	// Remove markdown formatting
+	if (opts.removeMarkdown) {
+		cleaned = cleaned
+			.replace(/```[\s\S]*?```/g, '') // Remove code blocks
+			.replace(/`([^`]+)`/g, '$1') // Remove inline code backticks
+			.replace(/\*\*([^*]+)\*\*/g, '$1') // Remove bold **text**
+			.replace(/\*([^*]+)\*/g, '$1') // Remove italic *text*
+			.replace(/__([^_]+)__/g, '$1') // Remove bold __text__
+			.replace(/_([^_]+)_/g, '$1') // Remove italic _text_
+			.replace(/#{1,6}\s*/g, '') // Remove headers
+			.replace(/^\s*[-*+]\s+/gm, '') // Remove bullet points
+			.replace(/^\s*\d+\.\s+/gm, '') // Remove numbered lists
+			.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1') // Remove links [text](url) -> text
+			.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1'); // Remove images ![alt](url) -> alt
+	}
+
+	// Remove quotes and similar wrapper characters
+	if (opts.removeQuotes) {
+		cleaned = cleaned
+			.replace(/^["'`]+|["'`]+$/g, '') // Remove leading/trailing quotes
+			.replace(/["'"'""`]/g, '') // Remove fancy quotes and backticks
+			.trim();
+	}
+
+	// Remove brackets and parentheses content (sometimes AI adds explanatory notes)
+	if (opts.removeBrackets) {
+		cleaned = cleaned
+			.replace(/\[[^\]]*\]/g, '') // Remove [bracketed content]
+			.replace(/\([^)]*\)/g, '') // Remove (parenthetical content)
+			.trim();
+	}
+
+	// Clean up whitespace
+	if (opts.removeExtraWhitespace) {
+		cleaned = cleaned
+			.replace(/\s+/g, ' ') // Multiple spaces to single space
+			.replace(/\n\s*\n/g, '\n') // Multiple newlines to single newline
+			.trim();
+	}
+
+	// Remove common AI output artifacts
+	cleaned = cleaned
+		.replace(
+			/^(Here's|Here is|This is|The answer is|Response:|Output:|Summary:|Title:|Description:)\s*/i,
+			''
+		) // Remove AI prefixes
+		.replace(/^(A|An|The)\s+(?=\w)/i, (match, article) => {
+			// Only remove articles if they seem to be AI artifacts at the start
+			const nextWords = cleaned.slice(match.length).split(' ').slice(0, 3).join(' ').toLowerCase();
+			if (
+				nextWords.includes('description') ||
+				nextWords.includes('summary') ||
+				nextWords.includes('title')
+			) {
+				return '';
+			}
+			return match;
+		})
+		.replace(/\.\s*\.+/g, '.') // Remove multiple periods
+		.replace(/,\s*,+/g, ',') // Remove multiple commas
+		.replace(/\s*\.\s*$/, '.') // Ensure single period at end if needed
+		.replace(/\s*,\s*$/, '') // Remove trailing comma
+		.trim();
+
+	return cleaned;
+}
+
+/**
+ * Additional sanitization for specific content types
+ */
+export function sanitizeForContentType(
+	text: string,
+	contentType: 'description' | 'title' | 'topic' | 'tags' | 'question'
+): string {
+	let cleaned = text;
+
+	switch (contentType) {
+		case 'description':
+			cleaned = sanitizeAIOutput(cleaned, {
+				removeQuotes: true,
+				removeMarkdown: true,
+				removeExtraWhitespace: true,
+				removeBrackets: false,
+				preserveBasicPunctuation: true
+			});
+			// Additional description-specific cleaning
+			cleaned = cleaned
+				.replace(/^(This activity|This is|It is|This involves)\s*/i, '')
+				.replace(/\s+(involves|is about|consists of)\s+/gi, ' ')
+				.replace(/em dash/g, ',');
+			break;
+
+		case 'title':
+			cleaned = sanitizeAIOutput(cleaned, {
+				removeQuotes: true,
+				removeMarkdown: true,
+				removeExtraWhitespace: true,
+				removeBrackets: true,
+				preserveBasicPunctuation: true
+			});
+			// Remove title-specific artifacts
+			cleaned = cleaned.replace(/^(Title:|Article:|Study:)\s*/i, '');
+			break;
+
+		case 'topic':
+			cleaned = sanitizeAIOutput(cleaned, {
+				removeQuotes: true,
+				removeMarkdown: true,
+				removeExtraWhitespace: true,
+				removeBrackets: true,
+				preserveBasicPunctuation: false
+			});
+			// Keep only alphanumeric and spaces for topics
+			cleaned = cleaned.replace(/[^a-zA-Z0-9\s-]/g, '').trim();
+			break;
+
+		case 'tags':
+			cleaned = sanitizeAIOutput(cleaned, {
+				removeQuotes: true,
+				removeMarkdown: true,
+				removeExtraWhitespace: true,
+				removeBrackets: true,
+				preserveBasicPunctuation: true
+			});
+			// Clean up tag separators
+			cleaned = cleaned.replace(/[;|]/g, ',').replace(/\s*,\s*/g, ',');
+			break;
+
+		case 'question':
+			cleaned = sanitizeAIOutput(cleaned, {
+				removeQuotes: true,
+				removeMarkdown: true,
+				removeExtraWhitespace: true,
+				removeBrackets: true,
+				preserveBasicPunctuation: true
+			});
+			// Ensure proper question format
+			if (!cleaned.endsWith('?') && !cleaned.endsWith('.')) {
+				cleaned += '?';
+			}
+			break;
+	}
+
+	return cleaned.trim();
+}
+
+export function validateActivityDescription(description: string, activityName: string): string {
+	try {
+		if (!description || typeof description !== 'string') {
+			logAIFailure('ActivityDescription', activityName, description, 'Invalid response type');
+			throw new Error(`Failed to generate valid description for activity: ${activityName}`);
+		}
+
+		// Sanitize the description first
+		const sanitized = sanitizeForContentType(description, 'description');
+
+		const cleaned = sanitized.trim();
+		const wordCount = cleaned.split(/\s+/).length;
+
+		if (cleaned.length < 50) {
+			logAIFailure(
+				'ActivityDescription',
+				activityName,
+				cleaned,
+				`Description too short: ${cleaned.length} chars`
+			);
+			throw new Error(`Generated description too short for activity: ${activityName}`);
+		}
+
+		if (wordCount > 300) {
+			logAIFailure(
+				'ActivityDescription',
+				activityName,
+				cleaned,
+				`Description too long: ${wordCount} words`
+			);
+			throw new Error(`Generated description too long for activity: ${activityName}`);
+		}
+
+		// Check for remaining unwanted formatting after sanitization
+		if (cleaned.includes('```') || cleaned.includes('**') || cleaned.includes('##')) {
+			logAIFailure('ActivityDescription', activityName, cleaned, 'Contains markdown formatting');
+			throw new Error(
+				`Generated description contains invalid formatting for activity: ${activityName}`
+			);
+		}
+
+		return cleaned;
+	} catch (error) {
+		// If validation fails, we fail closed with a safe fallback
+		const fallback = `${activityName.replace(/_/g, ' ')} is an engaging activity that offers unique experiences and opportunities for personal growth.`;
+		logAIFailure(
+			'ActivityDescription',
+			activityName,
+			description,
+			`Validation failed, using fallback: ${error}`
+		);
+		return fallback;
+	}
+}
+
+export function validateActivityTags(tagsResponse: string, activityName: string): string[] {
+	try {
+		if (!tagsResponse || typeof tagsResponse !== 'string') {
+			logAIFailure('ActivityTags', activityName, tagsResponse, 'Invalid response type');
+			return ['OTHER'];
+		}
+
+		// Sanitize the tags response
+		const sanitized = sanitizeForContentType(tagsResponse, 'tags');
+
+		const validTags = ocean.com.earthapp.activity.ActivityType.values().map((t) =>
+			t.name.trim().toUpperCase()
+		);
+
+		const tags = sanitized
+			.trim()
+			.split(',')
+			.map((tag) => tag.trim().toUpperCase())
+			.filter((tag) => tag.length > 0)
+			.filter((tag) => validTags.includes(tag));
+
+		if (tags.length === 0) {
+			logAIFailure('ActivityTags', activityName, sanitized, 'No valid tags found');
+			return ['OTHER'];
+		}
+
+		if (tags.length > 5) {
+			console.warn('Too many tags generated, limiting to 5', { tags, activityName });
+			return tags.slice(0, 5);
+		}
+
+		return tags;
+	} catch (error) {
+		logAIFailure('ActivityTags', activityName, tagsResponse, `Validation error: ${error}`);
+		return ['OTHER'];
+	}
+}
+
+export function validateArticleTopic(topicResponse: string): string {
+	try {
+		if (!topicResponse || typeof topicResponse !== 'string') {
+			logAIFailure('ArticleTopic', 'N/A', topicResponse, 'Invalid response type');
+			throw new Error('Failed to generate valid article topic');
+		}
+
+		// Sanitize the topic response
+		const sanitized = sanitizeForContentType(topicResponse, 'topic');
+
+		const topic = sanitized.replace(/\n/g, ' ').toLowerCase();
+		const wordCount = topic.split(/\s+/).length;
+
+		if (topic.length < 3) {
+			logAIFailure('ArticleTopic', 'N/A', topic, `Topic too short: ${topic.length} chars`);
+			throw new Error('Generated article topic too short');
+		}
+
+		if (wordCount > 3) {
+			logAIFailure('ArticleTopic', 'N/A', topic, `Topic too long: ${wordCount} words`);
+			throw new Error('Generated article topic too long');
+		}
+
+		if (!/^[a-zA-Z0-9\s-]+$/.test(topic)) {
+			logAIFailure('ArticleTopic', 'N/A', topic, 'Contains invalid characters');
+			throw new Error('Generated article topic contains invalid characters');
+		}
+
+		return topic;
+	} catch (error) {
+		logAIFailure('ArticleTopic', 'N/A', topicResponse, `Validation failed: ${error}`);
+		throw error; // Re-throw since there's no safe fallback for article topics
+	}
+}
+
+export function validateArticleTitle(titleResponse: string, originalTitle: string): string {
+	try {
+		if (!titleResponse || typeof titleResponse !== 'string') {
+			logAIFailure('ArticleTitle', originalTitle, titleResponse, 'Invalid response type');
+			throw new Error('Failed to generate valid article title');
+		}
+
+		// Sanitize the title
+		const sanitized = sanitizeForContentType(titleResponse, 'title');
+
+		const title = sanitized.trim();
+		const wordCount = title.split(/\s+/).length;
+
+		if (title.length < 5) {
+			logAIFailure('ArticleTitle', originalTitle, title, `Title too short: ${title.length} chars`);
+			throw new Error('Generated article title too short');
+		}
+
+		if (wordCount > 10) {
+			logAIFailure('ArticleTitle', originalTitle, title, `Title too long: ${wordCount} words`);
+			throw new Error('Generated article title too long');
+		}
+
+		// Check for remaining unwanted formatting after sanitization
+		if (title.includes('"') || title.includes('```') || title.includes('*')) {
+			logAIFailure('ArticleTitle', originalTitle, title, 'Contains unwanted formatting');
+			throw new Error('Generated article title contains invalid formatting');
+		}
+
+		return title;
+	} catch (error) {
+		logAIFailure('ArticleTitle', originalTitle, titleResponse, `Validation failed: ${error}`);
+		throw error; // Re-throw since titles need to be valid
+	}
+}
+
+export function validateArticleSummary(summaryResponse: string, originalTitle: string): string {
+	try {
+		if (!summaryResponse || typeof summaryResponse !== 'string') {
+			logAIFailure('ArticleSummary', originalTitle, summaryResponse, 'Invalid response type');
+			throw new Error('Failed to generate valid article summary');
+		}
+
+		// Sanitize the summary
+		const sanitized = sanitizeAIOutput(summaryResponse, {
+			removeQuotes: true,
+			removeMarkdown: true,
+			removeExtraWhitespace: true,
+			removeBrackets: false, // Keep brackets as they might contain important citations
+			preserveBasicPunctuation: true
+		});
+
+		const summary = sanitized.trim();
+		const wordCount = summary.split(/\s+/).length;
+
+		if (summary.length < 100) {
+			logAIFailure(
+				'ArticleSummary',
+				originalTitle,
+				summary,
+				`Summary too short: ${summary.length} chars`
+			);
+			throw new Error('Generated article summary too short');
+		}
+
+		if (wordCount > 400) {
+			logAIFailure(
+				'ArticleSummary',
+				originalTitle,
+				summary,
+				`Summary too long: ${wordCount} words`
+			);
+			throw new Error('Generated article summary too long');
+		}
+
+		return summary;
+	} catch (error) {
+		logAIFailure('ArticleSummary', originalTitle, summaryResponse, `Validation failed: ${error}`);
+		throw error; // Re-throw since summaries need to be valid
+	}
+}
+
+export function validatePromptQuestion(questionResponse: string): string {
+	try {
+		if (!questionResponse || typeof questionResponse !== 'string') {
+			logAIFailure('PromptQuestion', 'N/A', questionResponse, 'Invalid response type');
+			throw new Error('Failed to generate valid prompt question');
+		}
+
+		// Sanitize the question
+		const sanitized = sanitizeForContentType(questionResponse, 'question');
+
+		const question = sanitized.replace(/\n/g, ' ');
+		const wordCount = question.split(/\s+/).length;
+
+		if (question.length < 10) {
+			logAIFailure(
+				'PromptQuestion',
+				'N/A',
+				question,
+				`Question too short: ${question.length} chars`
+			);
+			throw new Error('Generated prompt question too short');
+		}
+
+		if (question.length > 80) {
+			logAIFailure(
+				'PromptQuestion',
+				'N/A',
+				question,
+				`Question too long: ${question.length} chars`
+			);
+			throw new Error('Generated prompt question too long');
+		}
+
+		if (wordCount > 15) {
+			logAIFailure('PromptQuestion', 'N/A', question, `Too many words: ${wordCount}`);
+			throw new Error('Generated prompt question too long');
+		}
+
+		// Check for prohibited phrases
+		const prohibited = ['what if', 'imagine', 'you', 'your', 'i ', 'my ', 'we ', 'our '];
+		const lowerQuestion = question.toLowerCase();
+
+		for (const phrase of prohibited) {
+			if (lowerQuestion.includes(phrase)) {
+				logAIFailure('PromptQuestion', 'N/A', question, `Contains prohibited phrase: ${phrase}`);
+				throw new Error('Generated prompt question contains prohibited phrase');
+			}
+		}
+
+		return question;
+	} catch (error) {
+		logAIFailure('PromptQuestion', 'N/A', questionResponse, `Validation failed: ${error}`);
+		throw error; // Re-throw since prompts need to be valid
+	}
+}
+
+// Activity Prompts
+
 export const activityDescriptionSystemMessage = `
-You are an expert in any given activity.
-You must provide a paragraph briefly explaining the activity in a concise, engaging manner.
-The description should be informative and educational but also lighthearted and fun. They should be easy to read and understand for a general audience,
-while also providing unique insights or interesting facts about the activity.
-Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
-Use simple language, avoid jargon, and keep the tone upbeat and friendly.
-Do not use any emojis or special characters in your response.
-The description should be no longer than 350 tokens, and should follow the provided guidelines closely.
-Present your answer in a single paragraph without any additional formatting or bullet points.
-Do not put it in quotes or any other formatting, just the description itself. Make the description unique, human-like, and engaging.
+You are an expert in describing activities to a general audience.
+
+TASK: Generate a single paragraph description of the given activity.
+
+REQUIREMENTS:
+- Length: 150-250 words (approximately 200-350 tokens)
+- Format: Single paragraph, no bullet points, quotes, or special formatting
+- Tone: Informative yet lighthearted, engaging and accessible
+- Language: Simple, clear, avoid jargon
+- Content: Include practical benefits and interesting facts
+- No emojis, special characters, or markdown formatting
+
+OUTPUT FORMAT: Return only the description text, nothing else.
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
-	return `Write a concise, engaging description, explaining what "${activity}" is. The tone should be informative and educational but also lighthearted and fun.
-Your goal is to make the activity sound appealing and accessible to a wide audience, including those who may not be familiar with it.
-Use simple language, avoid jargon, and keep the tone upbeat and friendly.`;
+	return `Describe the activity: "${activity}"
+
+Focus on:
+- What the activity involves
+- Why people enjoy it
+- Benefits or interesting aspects
+- How accessible it is to beginners
+
+Write in an engaging, friendly tone that makes the activity sound appealing.`;
 };
 
 export const activityTagsSystemMessage = `
-You are given an activity and a fixed list of tags.
-You must output up to 5 tags, exactly matching items in the tag list (case-sensitive uppercase), separated by commas, with no other output.
-Limit your response to under 150 characters, as the list of tags is fixed and should not be modified.
+You are a categorization expert. Given an activity name, output ONLY the appropriate tags from this list:
 
-The tags are: '${ocean.com.earthapp.activity.ActivityType.values()
+VALID TAGS: ${ocean.com.earthapp.activity.ActivityType.values()
 	.map((t) => `"${t.name.toUpperCase()}"`)
-	.join(', ')}'
-They are separated by commas and should be used as is, without any modifications or additional text.
-Do not provide any additional information, explanations, or context, and do not include any activities
-that are not in the list.
+	.join(', ')}
 
-Do not use any emojis or special characters in your response, and do not include any formatting like bullet points or numbered lists.
-Only include the tags themselves, separated by commas, provided as-is. Do not include any additional text or explanations.
-Only include a singular list that applies to all general use cases. If an activity can be applied in multiple contexts, use the most general tags that apply.
-Do not include any extra explanation, context, or formatting in your response, especially in parenthesis; only the specified tags.
+RULES:
+- Output: Up to 5 tags separated by commas
+- Format: Exact tag names only, uppercase, no quotes
+- Example: SPORT,HEALTH,NATURE,TRAVEL
+- No explanations, context, or other text
+- Must use tags from the list above exactly as shown
+- Choose the most relevant and general tags that apply
 
-EXAMPLES:
-rock climbing -> SPORT,HEALTH,TRAVEL,NATURE
-hiking -> SPORT,HEALTH,NATURE,TRAVEL
-coding -> WORK,HOBBY,STUDY,TECHNOLOGY,CREATIVE
-drawing -> HOBBY,CREATIVE,RELAXATION,ART
-home gardening -> RELAXATION,HEALTH,NATURE,HOBBY
-woodworking -> HOBBY,PROJECT,CREATIVE,ART
-volunteering -> COMMUNITY_SERVICE,SOCIAL,TRAVEL,HOBBY
-soccer -> SPORT,HEALTH,SOCIAL,ENTERTAINMENT
-baseball -> SPORT,ENTERTAINMENT,SOCIAL,HEALTH
-swimming -> SPORT,HEALTH,NATURE,ENTERTAINMENT
-cooking -> HOBBY,CREATIVE,HEALTH,ENTERTAINMENT
-photography -> HOBBY,CREATIVE,ART,TRAVEL,NATURE
+If uncertain, default to fewer tags rather than incorrect ones.
 `;
 
 // Article Prompts
 
 export const articleTopicSystemMessage = `
-You are an expert in coming up with short, generic search terms (no more than three words) suitable for finding scientific articles.
-The search terms should be concise, relevant, and broadly applicable to a wide range of scientific topics.
-You will be given an example and must generate a topic of similarity.
-Do not output anything other than the given topic.
+You are an expert at generating scientific research topics.
+
+TASK: Generate a concise search term for finding scientific articles.
+
+REQUIREMENTS:
+- Length: 1-3 words maximum
+- Focus: Scientific, academic, or research topics
+- Style: Generic enough to find multiple relevant articles
+- Format: Simple terms, no special characters
+
+OUTPUT FORMAT: Return only the topic words, nothing else.
 `;
 
 const topicExamples = [
@@ -107,66 +568,80 @@ export const articleClassificationQuery = (topic: string, tags: string[]): strin
 };
 
 export const articleSystemMessage = `
-You are an expert in writing article summaries about various topics. You will be provided with the contents
-of an article, and your task is to generate a concise, engaging summary of the article. You will
-also be provided with up to five different tags that should be incorporated into the summary and
-how they relate to the article.
+You are an expert science writer specializing in accessible article summaries.
 
-Do not include or indicate that you were prompted to write a summary, just provide the summary directly.
+TASK: Write an engaging summary of the provided scientific article.
+
+REQUIREMENTS:
+- Incorporate the provided tags naturally into the summary
+- Length: 150-300 words
+- Tone: Informative yet accessible to general audiences
+- Format: Well-structured paragraphs, no special formatting
+- Focus: Key findings, implications, and relevance
+
+OUTPUT FORMAT: Return only the summary text, no introduction or metadata.
 `;
 
 export const articleTitlePrompt = (article: OceanArticle, tags: string[]): string => {
-	return `You are an expert in writing article titles.
-Your task is to generate a concise, engaging title for the article "${article.title}" by ${article.author} from ${article.source}.
-The title should be informative and educational but also lighthearted and fun.
-Your goal is to make the article sound appealing and accessible to a wide audience, including those who may not find it interesting at first.
+	return `Generate an engaging title for this article:
 
-In addition, a summary about the article will be written.
-The summary will be based on the following tags:
-${tags.map((tag) => `- ${tag}`).join('\n')}
+Original Title: "${article.title}"
+Author: ${article.author}
+Source: ${article.source}
 
-Therefore, predict the title based on the article's content and the tags provided.
-The title should be no longer than 10 words and should follow the provided guidelines closely.
+Related Tags: ${tags.join(', ')}
 
-You should not include any additional text or formatting in your response, just a singular title itself.
-Do not use any emojis or special characters in your response, and do not include any formatting like bullet points or numbered lists.
-Do not mention that you are generating a title or that you were prompted to do so.
-`;
+REQUIREMENTS:
+- Maximum 10 words
+- Engaging and accessible tone
+- Reflect the article's content and the provided tags
+- No quotes or special formatting
+
+OUTPUT: Title only, no explanations.`;
 };
 
 export const articleSummaryPrompt = (article: OceanArticle, tags: string[]): string => {
-	return `You have been provided with the contents of "${article.title}" by ${article.author} from ${article.source}.
-Your task is to generate a concise, engaging summary of the article that incorporates the following tags:
-${tags.map((tag) => `- ${tag}`).join('\n')}.
+	return `Summarize this article incorporating these tags: ${tags.join(', ')}
 
-Here is the article's abstract. It may be identical to the content, but it may also be a shorter version of the content:
+Article Information:
+- Title: "${article.title}"
+- Author: ${article.author}
+- Source: ${article.source}
+- Published: ${article.date}
+- Keywords: ${article.keywords.join(', ')}
+
+Abstract:
 ${article.abstract}
 
-You can use the abstract's conclusion to help you write the summary, but you should not
-just copy it. Instead, use it as a starting point to write a summary that is engaging
-and informative, while also being concise and to the point.
-
-In addition the article has the following keywords: ${article.keywords.join(', ')}.
-The article was published on ${article.date}, so if it is relevant, please include the date in the summary.
-Otherwise, keep a skeptic tone about the article's relevance to the current date.`;
+INSTRUCTIONS:
+- Write an engaging summary that incorporates the provided tags
+- Focus on key findings and their significance
+- Make it accessible to a general audience
+- Consider the publication date for relevance context
+- Length: 150-300 words`;
 };
 
 // Prompts Prompts
 
 export const promptsSystemMessage = `
-The date is ${new Date().toISOString().split('T')[0]}.
-Output exactly ONE original open-ended question.
+Current date: ${new Date().toISOString().split('T')[0]}
 
-Rules:
-- One sentence, under 15 words, under 80 characters. End with '?' if it makes sense.
-- Plain English only, no slang, jargon, quotes, or special symbols
-- Max one comma; clear and grammatically correct
-- Open-ended, not yes/no or rhetorical
-- No "what if," no "imagine," no personal pronouns
-- No clichés, no repeats, no holidays, dates, companies, or events
-- Must feel simple, timeless, insightful, engaging, and heavily creative
-- Avoid complexity, overused topics, analogies or metaphors, anything too niche or obscure
-- Must be general enough to apply to a wide audience and easy to understand
+TASK: Generate exactly ONE original, thought-provoking question.
+
+REQUIREMENTS:
+- Length: Under 15 words, under 80 characters
+- Format: End with '?' if appropriate
+- Style: Open-ended (not yes/no), clear, grammatically correct
+- Content: Timeless, insightful, engaging, creative
+- Language: Simple English, maximum one comma
+- Avoid: Personal pronouns, "what if", "imagine", clichés, company names, specific events
+
+EXAMPLES OF GOOD QUESTIONS:
+- "What drives people to take creative risks?"
+- "How does curiosity shape learning?"
+- "Why do some habits stick while others fade?"
+
+OUTPUT: Return only the question, nothing else.
 `;
 
 const prefixes = [

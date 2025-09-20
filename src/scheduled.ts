@@ -10,13 +10,13 @@ export default async function scheduled(
 		console.log('Running scheduled task: Create new prompt');
 		ctx.waitUntil(
 			(async () => {
-				console.log('Started at ', new Date().toISOString());
+				console.log('Started at', new Date().toISOString());
 
 				const prompt = await createPrompt(env.AI);
 				await postPrompt(prompt, env);
 				console.log('Created new prompt:', prompt);
 
-				console.log('Finished at ', new Date().toISOString());
+				console.log('Finished at', new Date().toISOString());
 			})()
 		);
 
@@ -27,7 +27,7 @@ export default async function scheduled(
 		console.log('Running scheduled task: Create new article');
 		ctx.waitUntil(
 			(async () => {
-				console.log('Started at ', new Date().toISOString());
+				console.log('Started at', new Date().toISOString());
 
 				const [article, tags] = await findArticle(env);
 				console.log('Found article and tags:', article.title, tags);
@@ -40,7 +40,7 @@ export default async function scheduled(
 					created.content?.slice(0, 100) + '...'
 				);
 
-				console.log('Finished at ', new Date().toISOString());
+				console.log('Finished at', new Date().toISOString());
 			})()
 		);
 

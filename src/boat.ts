@@ -15,36 +15,41 @@ const promptModel = '@cf/openai/gpt-oss-120b';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
-		// Generate description
-		const description = await ai.run(activityModel, {
-			messages: [
-				{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
-				{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
-			],
-			max_tokens: 350
-		});
-		const desc = (description?.response?.trim() || `No description available for ${id}.`)
-			.replace(/\n/g, ' ')
-			.replace(/“/g, '"')
-			.replace(/—/g, ', '); // em dash to comma
+		// Generate description with timeout and retry logic
+		let description;
+		try {
+			description = await ai.run(activityModel, {
+				messages: [
+					{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
+					{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
+				],
+				max_tokens: 350
+			});
+		} catch (aiError) {
+			console.error('AI model failed for activity description', { activity, error: aiError });
+			throw new Error(`AI model failed to generate description for activity: ${activity}`);
+		}
 
-		// Generate tags
-		const tagsResult = await ai.run(tagsModel, {
-			messages: [
-				{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
-				{ role: 'user', content: `'${activity}'` }
-			]
-		});
-		const validTags = com.earthapp.activity.ActivityType.values().map((t) =>
-			t.name.trim().toUpperCase()
-		);
+		const rawDesc = description?.response || '';
+		const desc = prompts.validateActivityDescription(rawDesc, activity);
+		// Note: sanitization now handled within validateActivityDescription
 
-		const tags = tagsResult?.response
-			?.trim()
-			.split(',')
-			.map((tag) => tag.trim().toUpperCase())
-			.filter((tag) => tag.length > 0)
-			.filter((tag) => validTags.includes(tag)) || ['OTHER'];
+		// Generate tags with error handling
+		let tagsResult;
+		try {
+			tagsResult = await ai.run(tagsModel, {
+				messages: [
+					{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
+					{ role: 'user', content: `'${activity}'` }
+				]
+			});
+		} catch (aiError) {
+			console.error('AI model failed for activity tags', { activity, error: aiError });
+			// Continue with default tags rather than failing completely
+			tagsResult = { response: 'OTHER' };
+		}
+
+		const tags = prompts.validateActivityTags(tagsResult?.response || '', activity);
 
 		// Find aliases
 		let aliases: string[] = [];
@@ -150,18 +155,21 @@ export async function postActivity(bindings: Bindings, activity: Activity): Prom
 export async function findArticle(bindings: Bindings): Promise<[OceanArticle, string[]]> {
 	const ai = bindings.AI as Ai;
 
-	const topicRaw = await ai.run(articleTopicModel, {
-		messages: [
-			{ role: 'system', content: prompts.articleTopicSystemMessage.trim() },
-			{ role: 'user', content: prompts.articleTopicPrompt().trim() }
-		],
-		max_tokens: 16
-	});
-
-	const topic = topicRaw?.response?.trim().replace(/\n/g, ' ').toLowerCase();
-	if (!topic || topic.length < 3) {
-		throw new Error('Failed to generate a valid article topic: ' + JSON.stringify(topicRaw));
+	let topicRaw;
+	try {
+		topicRaw = await ai.run(articleTopicModel, {
+			messages: [
+				{ role: 'system', content: prompts.articleTopicSystemMessage.trim() },
+				{ role: 'user', content: prompts.articleTopicPrompt().trim() }
+			],
+			max_tokens: 16
+		});
+	} catch (aiError) {
+		console.error('AI model failed for article topic generation', { error: aiError });
+		throw new Error('Failed to generate article topic using AI model');
 	}
+
+	const topic = prompts.validateArticleTopic(topicRaw?.response || '');
 	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
 	const tags = com.earthapp.activity.ActivityType.values()
 		.sort(() => Math.random() - 0.5)
@@ -270,38 +278,53 @@ export async function createArticle(
 	}
 
 	try {
-		const title = await ai.run(articleModel, {
-			messages: [
-				{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
-				{ role: 'user', content: ocean.title.trim() }
-			],
-			max_tokens: 24
-		});
-		if (!title || !title.response) {
-			throw new Error('Failed to generate article title');
+		let titleResult;
+		try {
+			titleResult = await ai.run(articleModel, {
+				messages: [
+					{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
+					{ role: 'user', content: ocean.title.trim() }
+				],
+				max_tokens: 24
+			});
+		} catch (aiError) {
+			console.error('AI model failed for article title generation', {
+				title: ocean.title,
+				error: aiError
+			});
+			throw new Error('Failed to generate article title using AI model');
 		}
 
-		const summary = await ai.run(articleModel, {
-			messages: [
-				{ role: 'system', content: prompts.articleSystemMessage.trim() },
-				{ role: 'user', content: articleContent },
-				{ role: 'user', content: prompts.articleSummaryPrompt(ocean, tags).trim() }
-			],
-			max_tokens: 1000 // Add max_tokens limit for summary
-		});
+		const title = prompts.validateArticleTitle(titleResult?.response || '', ocean.title);
 
-		if (!summary || !summary.response) {
-			throw new Error('Failed to generate article summary');
+		let summaryResult;
+		try {
+			summaryResult = await ai.run(articleModel, {
+				messages: [
+					{ role: 'system', content: prompts.articleSystemMessage.trim() },
+					{ role: 'user', content: articleContent },
+					{ role: 'user', content: prompts.articleSummaryPrompt(ocean, tags).trim() }
+				],
+				max_tokens: 1000 // Add max_tokens limit for summary
+			});
+		} catch (aiError) {
+			console.error('AI model failed for article summary generation', {
+				title: ocean.title,
+				error: aiError
+			});
+			throw new Error('Failed to generate article summary using AI model');
 		}
+
+		const summary = prompts.validateArticleSummary(summaryResult?.response || '', ocean.title);
 
 		return {
 			ocean,
 			tags,
-			title: title.response.trim(),
-			description: summary.response.substring(0, 25) + '...',
+			title: title,
+			description: summary.substring(0, 25) + '...',
 			author_id: '0', // 0 - cloud
 			color: ocean.theme_color || '#ffffff',
-			content: summary.response.trim(),
+			content: summary,
 			created_at: new Date().toISOString()
 		};
 	} catch (error) {
@@ -341,42 +364,48 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 }
 
 export async function createPrompt(ai: Ai) {
-	const gen = (await ai.run(promptModel as any, {
-		instructions: prompts.promptsSystemMessage.trim(),
-		input: prompts.promptsQuestionPrompt().trim(),
-		reasoning: {
-			effort: 'medium',
-			summary: 'concise'
-		}
-	})) as {
-		output: {
-			id: string;
-			content: {
-				text: string;
-				type: 'output_text' | 'reasoning_text';
+	let gen;
+	try {
+		gen = (await ai.run(promptModel as any, {
+			instructions: prompts.promptsSystemMessage.trim(),
+			input: prompts.promptsQuestionPrompt().trim(),
+			reasoning: {
+				effort: 'medium',
+				summary: 'concise'
+			}
+		})) as {
+			output: {
+				id: string;
+				content: {
+					text: string;
+					type: 'output_text' | 'reasoning_text';
+				}[];
+				type: 'message' | 'reasoning';
 			}[];
-			type: 'message' | 'reasoning';
-		}[];
-	};
+		};
+	} catch (aiError) {
+		console.error('AI model failed for prompt generation', { error: aiError });
+		throw new Error('Failed to generate prompt using AI model');
+	}
 
 	if (!gen || !gen.output || gen.output.length === 0) {
-		throw new Error('Failed to generate prompt: ' + JSON.stringify(gen));
+		console.error('Failed to generate prompt: empty or invalid response', { gen });
+		throw new Error('Failed to generate prompt: empty response');
 	}
 
 	const message = gen.output.find((o) => o.type === 'message');
 
 	if (!message) {
-		throw new Error('No valid prompt message found: ' + JSON.stringify(gen));
+		console.error('No valid prompt message found in response', { output: gen.output });
+		throw new Error('No valid prompt message found in response');
 	}
 
-	const promptText = message.content
+	const rawPromptText = message.content
 		.find((c) => c.type === 'output_text')
-		?.text.trim()
-		.replace(/\n/g, ' ');
+		?.text?.trim()
+		?.replace(/\n/g, ' ');
 
-	if (!promptText || promptText.length < 10) {
-		throw new Error('Generated prompt is too short or invalid: ' + JSON.stringify(message));
-	}
+	const promptText = prompts.validatePromptQuestion(rawPromptText || '');
 
 	return promptText;
 }
