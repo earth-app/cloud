@@ -1,5 +1,4 @@
 import { com } from '@earth-app/ocean';
-import { Context } from 'hono';
 
 import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
@@ -300,8 +299,7 @@ export async function createArticle(
 			tags,
 			title: title.response.trim(),
 			description: summary.response.substring(0, 25) + '...',
-			author: ocean.author || 'Cloud',
-			author_id: 'cloud',
+			author_id: '0', // 0 - cloud
 			color: ocean.theme_color || '#ffffff',
 			content: summary.response.trim(),
 			created_at: new Date().toISOString()
