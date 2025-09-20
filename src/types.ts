@@ -27,12 +27,12 @@ export type OceanArticle = {
 	author: string;
 	source: string;
 	url: string;
-	abstract: string;
-	content: string;
-	theme_color: string;
+	abstract?: string;
+	content?: string;
+	theme_color?: string;
 	keywords: string[];
 	date: string;
-	favicon: string;
+	favicon?: string;
 	links: {
 		[key: string]: string;
 	};
@@ -40,12 +40,11 @@ export type OceanArticle = {
 
 export type Article = {
 	id: string;
-	article_id: string;
 	title: string;
 	description: string;
 	tags: string[];
 	content: string;
-	author: string;
+	author: {}; // user object
 	author_id: string;
 	color: string;
 	created_at: string;
