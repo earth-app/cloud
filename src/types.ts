@@ -47,6 +47,7 @@ export type Article = {
 	author: {}; // user object
 	author_id: string;
 	color: string;
+	color_hex: string;
 	created_at: string;
 	updated_at?: string;
 	ocean: OceanArticle;
