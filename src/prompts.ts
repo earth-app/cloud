@@ -426,7 +426,7 @@ export function validatePromptQuestion(questionResponse: string): string {
 			throw new Error('Generated prompt question too short');
 		}
 
-		if (question.length > 80) {
+		if (question.length > 100) {
 			logAIFailure(
 				'PromptQuestion',
 				'N/A',
@@ -629,7 +629,7 @@ Current date: ${new Date().toISOString().split('T')[0]}
 TASK: Generate exactly ONE original, thought-provoking question.
 
 REQUIREMENTS:
-- Length: Under 15 words, under 80 characters
+- Length: Under 15 words, under 100 characters
 - Format: End with '?' if appropriate
 - Style: Open-ended (not yes/no), clear, grammatically correct
 - Content: Timeless, insightful, engaging, creative

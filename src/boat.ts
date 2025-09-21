@@ -364,28 +364,29 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 }
 
 export async function createPrompt(ai: Ai) {
-	let gen;
+	let gen: {
+		output: {
+			id: string;
+			content: {
+				text: string;
+				type: 'output_text' | 'reasoning_text';
+			}[];
+			type: 'message' | 'reasoning';
+		}[];
+	} | null = null;
+
 	try {
-		gen = (await ai.run(promptModel as any, {
+		gen = await ai.run(promptModel as any, {
 			instructions: prompts.promptsSystemMessage.trim(),
 			input: prompts.promptsQuestionPrompt().trim(),
 			reasoning: {
 				effort: 'medium',
 				summary: 'concise'
 			}
-		})) as {
-			output: {
-				id: string;
-				content: {
-					text: string;
-					type: 'output_text' | 'reasoning_text';
-				}[];
-				type: 'message' | 'reasoning';
-			}[];
-		};
+		});
 	} catch (aiError) {
 		console.error('AI model failed for prompt generation', { error: aiError });
-		throw new Error('Failed to generate prompt using AI model');
+		throw new Error('Failed to generate prompt using AI model', { cause: aiError });
 	}
 
 	if (!gen || !gen.output || gen.output.length === 0) {
