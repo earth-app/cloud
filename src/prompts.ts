@@ -562,9 +562,9 @@ export const articleTopicPrompt = (): string => {
 };
 
 export const articleClassificationQuery = (topic: string, tags: string[]): string => {
-	return `Articles primaryily related to ${topic} and ${tags.length > 1 ? 'these tags' : 'this tag'}: ${tags
+	return `Articles primarily related to ${topic} and ${tags.length > 1 ? 'these tags' : 'this tag'}: ${tags
 		.map((tag) => `"${tag}"`)
-		.join(', ')}`;
+		.join(', ')} in that order. Disregard articles that are not primarily focused on ${topic}.`;
 };
 
 export const articleSystemMessage = `
