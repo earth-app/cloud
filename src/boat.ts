@@ -170,11 +170,19 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 	}
 
 	const topic = prompts.validateArticleTopic(topicRaw?.response || '');
+	console.debug('Generated article topic:', topic);
+
 	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
 	const tags = com.earthapp.activity.ActivityType.values()
 		.sort(() => Math.random() - 0.5)
 		.slice(0, tagCount)
-		.map((t) => t.name.trim().toUpperCase());
+		.map((t) =>
+			t.name
+				.replace(/_/g, ' ')
+				.toLowerCase()
+				.replace(/\b\w/g, (c) => c.toUpperCase())
+				.trim()
+		);
 
 	// Search for articles on the topic
 	const searchResults = await findArticles(topic, bindings, 2);
@@ -194,7 +202,7 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 	for (const batch of batches) {
 		const contexts = batch
 			.filter((article) => article.abstract || article.content) // must have abstract or content
-			.filter((article) => article.title.match(/[^\x00-\x7F]+/gim)?.length || 0 < 5) // title must be mostly ASCII
+			.filter((article) => article.title.match(/[^\x00-\x7F]+/gim)?.length || 0 === 0) // title must be only ascii
 			.map((article) => ({
 				text:
 					(article.title || '') +
@@ -234,6 +242,27 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 	const bestArticle = allArticles[best.id].ocean;
 	if (!bestArticle) {
 		throw new Error('Best article data not found: index ' + best.id + ' of ' + allArticles.length);
+	}
+
+	// Sanitize keywords
+	const keywords: string[] = [];
+	for (const kw of bestArticle.keywords || []) {
+		if (keywords.length >= 25) break;
+
+		const cleaned = kw.trim().split(/\. +/g); // sometimes keywords are split by ". "
+		for (const c of cleaned) {
+			if (keywords.length >= 25) break;
+
+			const c2 = c.trim();
+			if (c2.length > 0 && c2.length < 35 && !keywords.includes(c2)) {
+				keywords.push(c2);
+			}
+		}
+	}
+
+	// Remove 'type' tag from bestArticle
+	if ((bestArticle as any).type) {
+		delete (bestArticle as any).type;
 	}
 
 	return [bestArticle, tags];
@@ -321,11 +350,9 @@ export async function createArticle(
 			ocean,
 			tags,
 			title: title,
-			description: summary.substring(0, 25) + '...',
-			author_id: '0', // 0 - cloud
+			description: summary.substring(0, 256) + '...',
 			color: ocean.theme_color || '#ffffff',
-			content: summary,
-			created_at: new Date().toISOString()
+			content: summary
 		};
 	} catch (error) {
 		console.error('Error creating article:', error);

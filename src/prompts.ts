@@ -618,7 +618,9 @@ INSTRUCTIONS:
 - Focus on key findings and their significance
 - Make it accessible to a general audience
 - Consider the publication date for relevance context
-- Length: 150-300 words`;
+- Length: 150-300 words
+- Tone: Informative yet approachable
+- When including the tags, integrate them naturally into the text in a way that makes sense contextually`;
 };
 
 // Prompts Prompts
