@@ -174,6 +174,7 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 
 	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
 	const tags = com.earthapp.activity.ActivityType.values()
+		.filter((t) => t !== com.earthapp.activity.ActivityType.OTHER)
 		.sort(() => Math.random() - 0.5)
 		.slice(0, tagCount)
 		.map((t) =>
