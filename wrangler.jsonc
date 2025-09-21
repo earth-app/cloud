@@ -16,8 +16,8 @@
 	"send_metrics": false,
 	"triggers": {
 		"crons": [
-			"0 * * * *" // Every hour
-			// "0 */5 * * *" // Every 5 hours
+			"0 * * * *", // Every hour
+			"0 */5 * * *" // Every 5 hours
 		]
 	},
 	"ai": {
