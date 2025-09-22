@@ -386,7 +386,7 @@ export function validateArticleSummary(summaryResponse: string, originalTitle: s
 			throw new Error('Generated article summary too short');
 		}
 
-		if (wordCount > 400) {
+		if (wordCount > 500) {
 			logAIFailure(
 				'ArticleSummary',
 				originalTitle,
