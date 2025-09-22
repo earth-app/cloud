@@ -391,6 +391,96 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 	return data;
 }
 
+export async function recommendArticles(
+	pool: Article[],
+	activities: string[],
+	limit: number,
+	ai: Ai
+): Promise<Article[]> {
+	if (pool.length === 0 || activities.length === 0) {
+		throw new Error('No articles or activities provided for recommendation');
+	}
+
+	const rankQuery = prompts.articleRecommendationQuery(activities);
+	const contexts = pool.map((article) => ({
+		text:
+			(article.title || '') +
+			' | Tags: ' +
+			(article.tags || []).join(', ') +
+			'\n' +
+			(article.description || '').substring(0, 500),
+		original: article // store original for later retrieval
+	}));
+
+	const ranked = await ai.run(articleRankerModel, {
+		query: rankQuery,
+		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+	});
+
+	if (!ranked || !ranked.response) {
+		throw new Error('Failed to rank articles: ' + JSON.stringify(ranked));
+	}
+
+	const allRanked: { id: number; score: number }[] = ranked.response
+		.filter((r) => r.id !== undefined)
+		.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+	// Get top N articles based on score
+	const topRanked = allRanked
+		.sort((a, b) => b.score - a.score)
+		.slice(0, limit)
+		.map((r) => contexts[r.id].original);
+
+	return topRanked;
+}
+
+export async function recommendSimilarArticles(
+	article: Article,
+	pool: Article[],
+	limit: number,
+	ai: Ai
+) {
+	if (pool.length === 0) {
+		throw new Error('No articles provided for recommendation');
+	}
+
+	const rankQuery = prompts.articleSimilarityQuery(article);
+	const contexts = pool.map((a) => ({
+		text:
+			(a.title || '') +
+			' by ' +
+			(a.author || 'Unknown') +
+			' | Tags: ' +
+			(a.tags || []).join(', ') +
+			'\n' +
+			(a.content || '').substring(0, 500),
+		original: a // store original for later retrieval
+	}));
+
+	const ranked = await ai.run(articleRankerModel, {
+		query: rankQuery,
+		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+	});
+
+	if (!ranked || !ranked.response) {
+		throw new Error('Failed to rank articles: ' + JSON.stringify(ranked));
+	}
+
+	const allRanked: { id: number; score: number }[] = ranked.response
+		.filter((r) => r.id !== undefined)
+		.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+	// Get top N similar articles based on score
+	const topRanked = allRanked
+		.sort((a, b) => b.score - a.score)
+		.slice(0, limit)
+		.map((r) => contexts[r.id].original);
+
+	return topRanked;
+}
+
+// Prompt Endpoints
+
 export async function createPrompt(ai: Ai) {
 	let gen: {
 		output: {

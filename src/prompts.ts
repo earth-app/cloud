@@ -1,5 +1,5 @@
 import * as ocean from '@earth-app/ocean';
-import { Bindings, OceanArticle } from './types';
+import { Article, Bindings, OceanArticle } from './types';
 import { Ai } from '@cloudflare/workers-types';
 
 // Validation and sanitation functions for AI outputs
@@ -621,6 +621,28 @@ INSTRUCTIONS:
 - Length: 150-300 words
 - Tone: Informative yet approachable
 - When including the tags, integrate them naturally into the text in a way that makes sense contextually`;
+};
+
+export const articleRecommendationQuery = (activities: string[]): string => {
+	return `Recommend articles related to these activities: ${activities
+		.map((a) => `"${a}"`)
+		.join(
+			', '
+		)}. Focus on articles that provide insights, information, or context relevant to these activities.`;
+};
+
+export const articleSimilarityQuery = (article: Article): string => {
+	return `Find articles similar to this one based on its provided content and metadata:
+
+Title: "${article.title}"
+Author: ${article.author}
+Tags: ${article.tags.join(', ')}
+
+Excerpt:
+${article.content.length > 500 ? `${article.content.substring(0, 500)}... (truncated)` : article.content}
+
+Focus on articles that share similar themes, topics, or subject matter.
+`;
 };
 
 // Prompts Prompts
