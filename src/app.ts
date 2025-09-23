@@ -51,6 +51,7 @@ app.get('/activity/:id', async (c) => {
 });
 
 // Articles
+
 app.get('/articles/search', async (c) => {
 	const query = c.req.query('q')?.trim();
 	if (!query || query.length < 3) {
@@ -70,7 +71,39 @@ app.get('/articles/search', async (c) => {
 	}
 });
 
+app.post('/articles/recommend_similar_articles', async (c) => {
+	const body = await c.req.json<{
+		article: Article;
+		pool: Article[];
+		limit?: number;
+	}>();
+
+	if (!body.article || !body.pool) {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!Array.isArray(body.pool)) {
+		return c.text('Invalid request body format', 400);
+	}
+
+	if (body.pool.length === 0) {
+		return c.text('No articles provided', 400);
+	}
+
+	// default limit is 5, max 10
+	const limit = body.limit && body.limit > 0 && body.limit <= 10 ? body.limit : 5;
+
+	const recommended = await recommendArticles(
+		body.pool,
+		[body.article.title, body.article.description, ...(body.article.tags || [])],
+		limit,
+		c.env.AI
+	);
+	return c.json(recommended, 200);
+});
+
 // Users
+
 app.post('/users/recommend_activities', async (c) => {
 	const body = await c.req.json<{
 		all: {
@@ -206,37 +239,6 @@ app.post('/users/recommend_articles', async (c) => {
 	const limit = body.limit && body.limit > 0 && body.limit <= 25 ? body.limit : 10;
 
 	const recommended = await recommendArticles(body.pool, body.activities, limit, c.env.AI);
-	return c.json(recommended, 200);
-});
-
-app.post('/users/recommend_similar_articles', async (c) => {
-	const body = await c.req.json<{
-		article: Article;
-		pool: Article[];
-		limit?: number;
-	}>();
-
-	if (!body.article || !body.pool) {
-		return c.text('Invalid request body', 400);
-	}
-
-	if (!Array.isArray(body.pool)) {
-		return c.text('Invalid request body format', 400);
-	}
-
-	if (body.pool.length === 0) {
-		return c.text('No articles provided', 400);
-	}
-
-	// default limit is 5, max 10
-	const limit = body.limit && body.limit > 0 && body.limit <= 10 ? body.limit : 5;
-
-	const recommended = await recommendArticles(
-		body.pool,
-		[body.article.title, body.article.description, ...(body.article.tags || [])],
-		limit,
-		c.env.AI
-	);
 	return c.json(recommended, 200);
 });
 
