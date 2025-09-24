@@ -17,7 +17,7 @@
 	"triggers": {
 		"crons": [
 			"0 * * * *", // Every hour
-			"0 */5 * * *" // Every 5 hours
+			"0 */4 * * *" // Every 4 hours
 		]
 	},
 	"ai": {

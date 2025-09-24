@@ -23,7 +23,7 @@ export default async function scheduled(
 		return;
 	}
 
-	if (controller.cron === '0 */5 * * *') {
+	if (controller.cron === '0 */4 * * *') {
 		console.log('Running scheduled task: Create new article');
 		ctx.waitUntil(
 			(async () => {
