@@ -1,7 +1,13 @@
 import { com, kotlin } from '@earth-app/ocean';
 import { Hono } from 'hono';
 
-import { createActivityData, createArticle, findArticles, recommendArticles } from './boat';
+import {
+	createActivityData,
+	createArticle,
+	findArticles,
+	recommendArticles,
+	recommendSimilarArticles
+} from './boat';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 
@@ -93,12 +99,7 @@ app.post('/articles/recommend_similar_articles', async (c) => {
 	// default limit is 5, max 10
 	const limit = body.limit && body.limit > 0 && body.limit <= 10 ? body.limit : 5;
 
-	const recommended = await recommendArticles(
-		body.pool,
-		[body.article.title, body.article.description, ...(body.article.tags || [])],
-		limit,
-		c.env.AI
-	);
+	const recommended = await recommendSimilarArticles(body.article, body.pool, limit, c.env.AI);
 	return c.json(recommended, 200);
 });
 
