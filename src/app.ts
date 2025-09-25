@@ -14,6 +14,7 @@ import * as prompts from './prompts';
 import { Article, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
 import { toDataURL } from './util';
+import { tryCache } from './cache';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -34,7 +35,11 @@ app.get('/synonyms', async (c) => {
 		return c.text('Word must be at least 3 characters long', 400);
 	}
 
-	const synonyms = await getSynonyms(word);
+	const cacheKey = `cache:synonyms:${word.toLowerCase()}`;
+	const synonyms = await tryCache(cacheKey, c.env.CACHE, async () => {
+		return getSynonyms(word);
+	});
+
 	if (!synonyms || synonyms.length === 0) {
 		return c.json([], 200);
 	}
@@ -53,7 +58,14 @@ app.get('/activity/:id', async (c) => {
 	}
 
 	const activity = id.replace(/_/g, ' ');
-	return c.json(await createActivityData(id, activity, c.env.AI), 200);
+	const cacheKey = `cache:activity_data:${id}`;
+
+	return c.json(
+		await tryCache(cacheKey, c.env.CACHE, async () => {
+			return createActivityData(id, activity, c.env.AI);
+		}),
+		200
+	);
 });
 
 // Articles
@@ -96,11 +108,30 @@ app.post('/articles/recommend_similar_articles', async (c) => {
 		return c.text('No articles provided', 400);
 	}
 
+	if (body.pool.length > 20) {
+		return c.text('Article pool cannot exceed 20 articles', 400);
+	}
+
 	// default limit is 5, max 10
 	const limit = body.limit && body.limit > 0 && body.limit <= 10 ? body.limit : 5;
 
-	const recommended = await recommendSimilarArticles(body.article, body.pool, limit, c.env.AI);
-	return c.json(recommended, 200);
+	// Fast hash to keep cache key under 512 bytes
+	const poolIds = body.pool
+		.map((a) => a.id)
+		.sort()
+		.join(',');
+	let poolHash = 0;
+	for (let i = 0; i < poolIds.length; i++) {
+		poolHash = ((poolHash << 5) - poolHash + poolIds.charCodeAt(i)) & 0xffffffff;
+	}
+	const cacheKey = `cache:similar_articles:${body.article.id}:${Math.abs(poolHash).toString(36)}:${limit}`;
+
+	return c.json(
+		await tryCache(cacheKey, c.env.CACHE, async () => {
+			return recommendSimilarArticles(body.article, body.pool, limit, c.env.AI);
+		}),
+		200
+	);
 });
 
 // Users
@@ -186,7 +217,11 @@ app.get('/users/profile_photo/:id', async (c) => {
 		return c.text('Profile photo not found', 404);
 	}
 
-	return c.json({ data: toDataURL(photo) });
+	const cacheKey = `user:profile_photo:${id}`;
+	return c.json(
+		await tryCache(cacheKey, c.env.CACHE, async () => ({ data: toDataURL(photo) })),
+		200
+	);
 });
 
 app.put('/users/profile_photo/:id', async (c) => {
@@ -236,11 +271,45 @@ app.post('/users/recommend_articles', async (c) => {
 		return c.text('No articles or activities provided', 400);
 	}
 
+	if (body.pool.length > 20) {
+		return c.text('Article pool cannot exceed 20 articles', 400);
+	}
+
+	if (body.activities.length > 10) {
+		return c.text('Activities cannot exceed 10 items', 400);
+	}
+
 	// default limit is 10, max 25
 	const limit = body.limit && body.limit > 0 && body.limit <= 25 ? body.limit : 10;
 
-	const recommended = await recommendArticles(body.pool, body.activities, limit, c.env.AI);
-	return c.json(recommended, 200);
+	// Fast hashing to keep cache key under 512 bytes
+	const activities = body.activities
+		.map((a) => a.toLowerCase().trim())
+		.sort()
+		.join(',');
+	let activitiesHash = 0;
+	for (let i = 0; i < activities.length; i++) {
+		activitiesHash =
+			((activitiesHash << 5) - activitiesHash + activities.charCodeAt(i)) & 0xffffffff;
+	}
+
+	const poolIds = body.pool
+		.map((a) => a.id)
+		.sort()
+		.join(',');
+	let poolHash = 0;
+	for (let i = 0; i < poolIds.length; i++) {
+		poolHash = ((poolHash << 5) - poolHash + poolIds.charCodeAt(i)) & 0xffffffff;
+	}
+
+	const cacheKey = `cache:recommended_articles:${Math.abs(activitiesHash).toString(36)}:${Math.abs(poolHash).toString(36)}:${limit}`;
+
+	return c.json(
+		await tryCache(cacheKey, c.env.CACHE, async () => {
+			return recommendArticles(body.pool, body.activities, limit, c.env.AI);
+		}),
+		200
+	);
 });
 
 export default app;

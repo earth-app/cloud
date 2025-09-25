@@ -27,6 +27,13 @@
 	"observability": {
 		"enabled": true
 	},
+	"kv_namespaces": [
+		{
+			"binding": "CACHE",
+			"id": "322faefd5628471cb7cea08cf041804a",
+			"preview_id": "322faefd5628471cb7cea08cf041804a"
+		}
+	],
 	"r2_buckets": [
 		{
 			"binding": "R2",
