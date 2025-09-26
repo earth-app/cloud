@@ -339,7 +339,7 @@ export function validateArticleTitle(titleResponse: string, originalTitle: strin
 			throw new Error('Generated article title too short');
 		}
 
-		if (wordCount > 10) {
+		if (wordCount > 20) {
 			logAIFailure('ArticleTitle', originalTitle, title, `Title too long: ${wordCount} words`);
 			throw new Error('Generated article title too long');
 		}
@@ -386,7 +386,7 @@ export function validateArticleSummary(summaryResponse: string, originalTitle: s
 			throw new Error('Generated article summary too short');
 		}
 
-		if (wordCount > 500) {
+		if (wordCount > 1000) {
 			logAIFailure(
 				'ArticleSummary',
 				originalTitle,
@@ -436,7 +436,7 @@ export function validatePromptQuestion(questionResponse: string): string {
 			throw new Error('Generated prompt question too long');
 		}
 
-		if (wordCount > 15) {
+		if (wordCount > 25) {
 			logAIFailure('PromptQuestion', 'N/A', question, `Too many words: ${wordCount}`);
 			throw new Error('Generated prompt question too long');
 		}
