@@ -111,6 +111,19 @@ export function sanitizeAIOutput(
 		.replace(/\s*,\s*$/, '') // Remove trailing comma
 		.trim();
 
+	// Remove '(Note: ...)' suffix
+	cleaned = cleaned.replace(/\(Note:[^)]+\)\s*$/i, '').trim();
+
+	// Optionally preserve basic punctuation
+	if (opts.preserveBasicPunctuation) {
+		cleaned = cleaned.replace(/[^a-zA-Z0-9\s.,!?;:'"-]/g, ''); // Keep basic punctuation
+	} else {
+		cleaned = cleaned.replace(/[^a-zA-Z0-9\s]/g, ''); // Remove all punctuation
+	}
+
+	// Final trim
+	cleaned = cleaned.trim();
+
 	return cleaned;
 }
 
