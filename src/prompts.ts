@@ -111,8 +111,8 @@ export function sanitizeAIOutput(
 		.replace(/\s*,\s*$/, '') // Remove trailing comma
 		.trim();
 
-	// Remove '(Note: ...)' suffix
-	cleaned = cleaned.replace(/\(Note:[^)]+\)\s*$/i, '').trim();
+	// Remove '(Note: ...)' or 'Note: ...' suffix
+	cleaned = cleaned.replace(/\(Note:[^)]+\)\s*$/i, '').replace(/^\s*Note:\s*/i, '');
 
 	// Optionally preserve basic punctuation
 	if (opts.preserveBasicPunctuation) {
@@ -609,6 +609,7 @@ REQUIREMENTS:
 - Engaging and accessible tone
 - Reflect the article's content and the provided tags
 - No quotes or special formatting
+- No explanations or additional text other than the title
 
 OUTPUT: Title only, no explanations.`;
 };
@@ -633,7 +634,9 @@ INSTRUCTIONS:
 - Consider the publication date for relevance context
 - Length: 150-300 words
 - Tone: Informative yet approachable
-- When including the tags, integrate them naturally into the text in a way that makes sense contextually`;
+- When including the tags, integrate them naturally into the text in a way that makes sense contextually
+- No quotes, bullet points, special formatting, or additional text
+`;
 };
 
 export const articleRecommendationQuery = (activities: string[]): string => {
