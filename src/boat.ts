@@ -266,6 +266,11 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 		delete (bestArticle as any).type;
 	}
 
+	// Remove invalid favicon URLs
+	if (bestArticle.favicon && !bestArticle.favicon.startsWith('http')) {
+		delete bestArticle.favicon;
+	}
+
 	return [bestArticle, tags];
 }
 
