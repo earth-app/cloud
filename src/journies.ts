@@ -1,6 +1,6 @@
 import { KVNamespace } from '@cloudflare/workers-types';
 
-const journeyTypes = ['streak', 'activity', 'article', 'prompt'];
+const journeyTypes = ['article', 'prompt'];
 
 export async function getJourney(
 	id: string,
@@ -26,13 +26,37 @@ export async function incrementJourney(id: string, type: string, kv: KVNamespace
 	const newValue = value ? parseInt(value) + 1 : 1;
 
 	// 2 day expiration for streaks
-	const settings =
-		type !== 'activity' // activities are the only non-streak type
-			? { expirationTtl: 60 * 60 * 24 * 2, metadata: { lastWrite: Date.now() } }
-			: {};
-
-	await kv.put(key, newValue.toString(), settings);
+	await kv.put(key, newValue.toString(), {
+		expirationTtl: 60 * 60 * 24 * 2,
+		metadata: { lastWrite: Date.now() }
+	});
 	return newValue;
+}
+
+export async function addActivityToJourney(
+	id: string,
+	activity: string,
+	kv: KVNamespace
+): Promise<void> {
+	if (!journeyTypes.includes(activity)) throw new Error('Invalid journey type');
+
+	const key = `journey:activities:${id}`;
+	const activities = await kv.get(key);
+	let activityList: string[] = activities ? JSON.parse(activities) : [];
+	if (!activityList.includes(activity)) {
+		activityList.push(activity);
+		await kv.put(key, JSON.stringify(activityList), { metadata: { size: activityList.length } });
+	}
+}
+
+export async function getActivityJourneyCount(id: string, kv: KVNamespace): Promise<number> {
+	const key = `journey:activities:${id}`;
+	const count =
+		(await kv
+			.list<{ size: number }>({ prefix: key })
+			.then((list) => (list.keys.length === 0 ? 0 : list.keys[0].metadata?.size))) || 0;
+
+	return count;
 }
 
 export async function resetJourney(id: string, type: string, kv: KVNamespace): Promise<void> {

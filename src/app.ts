@@ -15,7 +15,13 @@ import { Article, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
 import { toDataURL } from './util';
 import { tryCache } from './cache';
-import { getJourney, incrementJourney, resetJourney } from './journies';
+import {
+	addActivityToJourney,
+	getActivityJourneyCount,
+	getJourney,
+	incrementJourney,
+	resetJourney
+} from './journies';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -313,7 +319,26 @@ app.post('/users/recommend_articles', async (c) => {
 	);
 });
 
-// User Journies
+// User Journeys
+app.get('/users/journey/activity/:id/count', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('Journey ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const count = await getActivityJourneyCount(id, c.env.KV);
+		return c.json({ count }, 200);
+	} catch (err) {
+		console.error(`Error getting activity journey for ID '${id}':`, err);
+		return c.text('Failed to get activity journey', 500);
+	}
+});
+
 app.get('/users/journey/:type/:id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
@@ -331,6 +356,28 @@ app.get('/users/journey/:type/:id', async (c) => {
 	} catch (err) {
 		console.error(`Error getting journey '${type}' for ID '${id}':`, err);
 		return c.text('Failed to get journey', 500);
+	}
+});
+
+app.post('/users/journey/activity/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const activity = c.req.query('activity')?.toLowerCase();
+	if (!id || !activity) {
+		return c.text('Journey ID and activity are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		// Run in background
+		c.executionCtx.waitUntil(addActivityToJourney(id, activity, c.env.KV));
+
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error adding activity '${activity}' to journey for ID '${id}':`, err);
+		return c.text('Failed to add activity to journey', 500);
 	}
 });
 
