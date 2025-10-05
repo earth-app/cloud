@@ -22,7 +22,7 @@ export async function incrementJourney(id: string, type: string, kv: KVNamespace
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 
 	const key = `journey:${type}:${id}`;
-	const value = await kv.get(key);
+	const value = await kv.get<string>(key);
 	const newValue = value ? parseInt(value) + 1 : 1;
 
 	// 2 day expiration for streaks
@@ -30,6 +30,7 @@ export async function incrementJourney(id: string, type: string, kv: KVNamespace
 		expirationTtl: 60 * 60 * 24 * 2,
 		metadata: { lastWrite: Date.now() }
 	});
+
 	return newValue;
 }
 
