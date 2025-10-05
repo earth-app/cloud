@@ -38,8 +38,6 @@ export async function addActivityToJourney(
 	activity: string,
 	kv: KVNamespace
 ): Promise<void> {
-	if (!journeyTypes.includes(activity)) throw new Error('Invalid journey type');
-
 	const key = `journey:activities:${id}`;
 	const activities = await kv.get(key);
 	let activityList: string[] = activities ? JSON.parse(activities) : [];
