@@ -114,6 +114,9 @@ export function sanitizeAIOutput(
 	// Remove '(Note: ...)' or 'Note: ...' suffix
 	cleaned = cleaned.replace(/\(Note:[^)]+\)\s*$/i, '').replace(/^\s*Note:\s*/i, '');
 
+	// Remove ' OR ' and similar conjunctions that indicate multiple options, choosing the first
+	cleaned = cleaned.split(/\s+or\s+/i)[0].trim();
+
 	// Optionally preserve basic punctuation
 	if (opts.preserveBasicPunctuation) {
 		cleaned = cleaned.replace(/[^a-zA-Z0-9\s.,!?;:'"-]/g, ''); // Keep basic punctuation
@@ -363,6 +366,12 @@ export function validateArticleTitle(titleResponse: string, originalTitle: strin
 			throw new Error('Generated article title contains invalid formatting');
 		}
 
+		// Check for alternative titles or multiple titles
+		if (/\s+or\s+/i.test(title)) {
+			logAIFailure('ArticleTitle', originalTitle, title, 'Contains alternative titles');
+			throw new Error('Generated article title contains alternative titles');
+		}
+
 		return title;
 	} catch (error) {
 		logAIFailure('ArticleTitle', originalTitle, titleResponse, `Validation failed: ${error}`);
@@ -610,6 +619,7 @@ REQUIREMENTS:
 - Reflect the article's content and the provided tags
 - No quotes or special formatting
 - No explanations or additional text other than the title
+- No alternative titles, only a singular title
 
 OUTPUT: Title only, no explanations.`;
 };
