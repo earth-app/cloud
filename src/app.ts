@@ -331,8 +331,8 @@ app.get('/users/journey/activity/:id/count', async (c) => {
 	}
 
 	try {
-		const count = await getActivityJourneyCount(id, c.env.KV);
-		return c.json({ count }, 200);
+		const activities = await getActivityJourney(id, c.env.KV);
+		return c.json({ count: activities.length }, 200);
 	} catch (err) {
 		console.error(`Error getting activity journey for ID '${id}':`, err);
 		return c.text('Failed to get activity journey', 500);
