@@ -15,6 +15,7 @@ import { Article, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
 import { toDataURL } from './util';
 import { tryCache } from './cache';
+import { getJourney, incrementJourney, resetJourney } from './journies';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -310,6 +311,67 @@ app.post('/users/recommend_articles', async (c) => {
 		}),
 		200
 	);
+});
+
+// User Journies
+app.get('/users/journey/:type/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const type = c.req.param('type')?.toLowerCase();
+	if (!id || !type) {
+		return c.text('Journey ID and type are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const [count, lastWrite] = await getJourney(id, type, c.env.KV);
+		return c.json({ count, lastWrite }, 200);
+	} catch (err) {
+		console.error(`Error getting journey '${type}' for ID '${id}':`, err);
+		return c.text('Failed to get journey', 500);
+	}
+});
+
+app.post('/users/journey/:type/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const type = c.req.param('type')?.toLowerCase();
+	if (!id || !type) {
+		return c.text('Journey ID and type are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const newCount = await incrementJourney(id, type, c.env.KV);
+		return c.json({ count: newCount }, 200);
+	} catch (err) {
+		console.error(`Error incrementing journey '${type}' for ID '${id}':`, err);
+		return c.text('Failed to increment journey', 500);
+	}
+});
+
+app.delete('/users/journey/:type/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const type = c.req.param('type')?.toLowerCase();
+	if (!id || !type) {
+		return c.text('Journey ID and type are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		await resetJourney(id, type, c.env.KV);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error resetting journey '${type}' for ID '${id}':`, err);
+		return c.text('Failed to reset journey', 500);
+	}
 });
 
 export default app;

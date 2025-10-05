@@ -30,6 +30,11 @@
 	"kv_namespaces": [
 		{
 			"binding": "CACHE",
+			"id": "c4a1aaf2a5fc4be98b91df2d0fc0faab",
+			"preview_id": "c4a1aaf2a5fc4be98b91df2d0fc0faab"
+		},
+		{
+			"binding": "KV",
 			"id": "322faefd5628471cb7cea08cf041804a",
 			"preview_id": "322faefd5628471cb7cea08cf041804a"
 		}

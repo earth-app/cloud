@@ -4,6 +4,7 @@ import { com } from '@earth-app/ocean';
 export type Bindings = {
 	R2: R2Bucket;
 	AI: Ai;
+	KV: KVNamespace;
 	CACHE: KVNamespace;
 	ASSETS: Fetcher;
 
