@@ -41,20 +41,17 @@ export async function addActivityToJourney(
 	const key = `journey:activities:${id}`;
 	const activities = await kv.get(key);
 	let activityList: string[] = activities ? JSON.parse(activities) : [];
+
+	// Only add if not already present
 	if (!activityList.includes(activity)) {
 		activityList.push(activity);
-		await kv.put(key, JSON.stringify(activityList), { metadata: { size: activityList.length } });
+		await kv.put(key, JSON.stringify(activityList));
 	}
 }
 
-export async function getActivityJourneyCount(id: string, kv: KVNamespace): Promise<number> {
+export async function getActivityJourney(id: string, kv: KVNamespace): Promise<string[]> {
 	const key = `journey:activities:${id}`;
-	const count =
-		(await kv
-			.list<{ size: number }>({ prefix: key })
-			.then((list) => (list.keys.length === 0 ? 0 : list.keys[0].metadata?.size))) || 0;
-
-	return count;
+	return (await kv.get(key)) ? JSON.parse((await kv.get(key)) as string) : [];
 }
 
 export async function resetJourney(id: string, type: string, kv: KVNamespace): Promise<void> {

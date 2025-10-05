@@ -17,7 +17,7 @@ import { toDataURL } from './util';
 import { tryCache } from './cache';
 import {
 	addActivityToJourney,
-	getActivityJourneyCount,
+	getActivityJourney,
 	getJourney,
 	incrementJourney,
 	resetJourney
@@ -372,7 +372,7 @@ app.post('/users/journey/activity/:id', async (c) => {
 
 	try {
 		// Calculate new count for response, run addition in background
-		const count = (await getActivityJourneyCount(id, c.env.KV)) + 1;
+		const count = (await getActivityJourney(id, c.env.KV)).length + 1;
 		c.executionCtx.waitUntil(addActivityToJourney(id, activity, c.env.KV));
 
 		return c.json({ count }, 200);
