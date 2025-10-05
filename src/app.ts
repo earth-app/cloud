@@ -371,10 +371,11 @@ app.post('/users/journey/activity/:id', async (c) => {
 	}
 
 	try {
-		// Run in background
+		// Calculate new count for response, run addition in background
+		const count = (await getActivityJourneyCount(id, c.env.KV)) + 1;
 		c.executionCtx.waitUntil(addActivityToJourney(id, activity, c.env.KV));
 
-		return c.body(null, 204);
+		return c.json({ count }, 200);
 	} catch (err) {
 		console.error(`Error adding activity '${activity}' to journey for ID '${id}':`, err);
 		return c.text('Failed to add activity to journey', 500);
