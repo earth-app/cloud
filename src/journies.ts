@@ -27,7 +27,7 @@ export async function incrementJourney(id: string, type: string, kv: KVNamespace
 
 	// 2 day expiration for streaks
 	const settings =
-		type === 'streak'
+		type !== 'activity' // activities are the only non-streak type
 			? { expirationTtl: 60 * 60 * 24 * 2, metadata: { lastWrite: Date.now() } }
 			: {};
 
