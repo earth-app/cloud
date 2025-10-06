@@ -387,7 +387,7 @@ app.post('/users/journey/activity/:id', async (c) => {
 	}
 });
 
-app.post('/users/journey/:type/:id', async (c) => {
+app.post('/users/journey/:type/:id/increment', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
@@ -407,7 +407,7 @@ app.post('/users/journey/:type/:id', async (c) => {
 	}
 });
 
-app.delete('/users/journey/:type/:id', async (c) => {
+app.delete('/users/journey/:type/:id/delete', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
