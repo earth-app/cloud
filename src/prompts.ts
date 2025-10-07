@@ -29,6 +29,7 @@ export function sanitizeAIOutput(
 		removeExtraWhitespace?: boolean;
 		removeBrackets?: boolean;
 		preserveBasicPunctuation?: boolean;
+		removeHTMLTags?: boolean;
 	} = {}
 ): string {
 	if (!text || typeof text !== 'string') {
@@ -44,6 +45,7 @@ export function sanitizeAIOutput(
 		removeExtraWhitespace: true,
 		removeBrackets: false,
 		preserveBasicPunctuation: true,
+		removeHTMLTags: true,
 		...options
 	};
 
@@ -124,6 +126,11 @@ export function sanitizeAIOutput(
 		cleaned = cleaned.replace(/[^a-zA-Z0-9\s]/g, ''); // Remove all punctuation
 	}
 
+	// Remove HTML tags if any
+	if (opts.removeHTMLTags) {
+		cleaned = cleaned.replace(/<\/?[^>]+(>|$)/g, '');
+	}
+
 	// Final trim
 	cleaned = cleaned.trim();
 
@@ -146,7 +153,8 @@ export function sanitizeForContentType(
 				removeMarkdown: true,
 				removeExtraWhitespace: true,
 				removeBrackets: false,
-				preserveBasicPunctuation: true
+				preserveBasicPunctuation: true,
+				removeHTMLTags: true
 			});
 			// Additional description-specific cleaning
 			cleaned = cleaned
@@ -161,7 +169,8 @@ export function sanitizeForContentType(
 				removeMarkdown: true,
 				removeExtraWhitespace: true,
 				removeBrackets: true,
-				preserveBasicPunctuation: true
+				preserveBasicPunctuation: true,
+				removeHTMLTags: true
 			});
 			// Remove title-specific artifacts
 			cleaned = cleaned.replace(/^(Title:|Article:|Study:)\s*/i, '');
@@ -173,7 +182,8 @@ export function sanitizeForContentType(
 				removeMarkdown: true,
 				removeExtraWhitespace: true,
 				removeBrackets: true,
-				preserveBasicPunctuation: false
+				preserveBasicPunctuation: false,
+				removeHTMLTags: true
 			});
 			// Keep only alphanumeric and spaces for topics
 			cleaned = cleaned.replace(/[^a-zA-Z0-9\s-]/g, '').trim();
@@ -185,7 +195,8 @@ export function sanitizeForContentType(
 				removeMarkdown: true,
 				removeExtraWhitespace: true,
 				removeBrackets: true,
-				preserveBasicPunctuation: true
+				preserveBasicPunctuation: true,
+				removeHTMLTags: true
 			});
 			// Clean up tag separators
 			cleaned = cleaned.replace(/[;|]/g, ',').replace(/\s*,\s*/g, ',');
@@ -197,7 +208,8 @@ export function sanitizeForContentType(
 				removeMarkdown: true,
 				removeExtraWhitespace: true,
 				removeBrackets: true,
-				preserveBasicPunctuation: true
+				preserveBasicPunctuation: true,
+				removeHTMLTags: true
 			});
 			// Ensure proper question format
 			if (!cleaned.endsWith('?') && !cleaned.endsWith('.')) {
