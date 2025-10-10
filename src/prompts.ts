@@ -156,11 +156,6 @@ export function sanitizeForContentType(
 				preserveBasicPunctuation: true,
 				removeHTMLTags: true
 			});
-			// Additional description-specific cleaning
-			cleaned = cleaned
-				.replace(/^(This activity|This is|It is|This involves)\s*/i, '')
-				.replace(/\s+(involves|is about|consists of)\s+/gi, ' ')
-				.replace(/em dash/g, ',');
 			break;
 
 		case 'title':
@@ -244,7 +239,7 @@ export function validateActivityDescription(description: string, activityName: s
 			throw new Error(`Generated description too short for activity: ${activityName}`);
 		}
 
-		if (wordCount > 300) {
+		if (wordCount > 350) {
 			logAIFailure(
 				'ActivityDescription',
 				activityName,
@@ -501,7 +496,8 @@ You are an expert in describing activities to a general audience.
 TASK: Generate a single paragraph description of the given activity.
 
 REQUIREMENTS:
-- Length: 150-250 words
+- Length: 150-250 words, approximately 1-2 minutes read
+- Focus: What the activity is, why people enjoy it, benefits, and interesting aspects
 - Format: Single paragraph, no bullet points, quotes, or special formatting
 - Tone: Informative yet lighthearted, engaging and accessible
 - Language: Simple, clear, avoid jargon
