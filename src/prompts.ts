@@ -501,7 +501,7 @@ You are an expert in describing activities to a general audience.
 TASK: Generate a single paragraph description of the given activity.
 
 REQUIREMENTS:
-- Length: 150-250 words (approximately 200-350 tokens)
+- Length: 150-250 words
 - Format: Single paragraph, no bullet points, quotes, or special formatting
 - Tone: Informative yet lighthearted, engaging and accessible
 - Language: Simple, clear, avoid jargon
@@ -521,7 +521,10 @@ Focus on:
 - How accessible it is to beginners
 
 Write in an engaging, friendly tone that makes the activity sound appealing.
-Do not use quotes, bullet points, or special formatting. Keep it under 250 words.`;
+Make sure that you remain gramatically correct, and keep the description to a single paragraph
+that neatly flows from start to finish. The activity should be described in a way that is easy
+to understand and inviting to someone who has never heard of it before.
+Do not use quotes, bullet points, or special formatting.`;
 };
 
 export const activityTagsSystemMessage = `
