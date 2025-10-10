@@ -23,7 +23,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 					{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
 					{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 				],
-				max_tokens: 350
+				max_tokens: 400
 			});
 		} catch (aiError) {
 			console.error('AI model failed for activity description', { activity, error: aiError });
@@ -32,7 +32,6 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 
 		const rawDesc = description?.response || '';
 		const desc = prompts.validateActivityDescription(rawDesc, activity);
-		// Note: sanitization now handled within validateActivityDescription
 
 		// Generate tags with error handling
 		let tagsResult;

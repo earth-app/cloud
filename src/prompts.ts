@@ -520,7 +520,8 @@ Focus on:
 - Benefits or interesting aspects
 - How accessible it is to beginners
 
-Write in an engaging, friendly tone that makes the activity sound appealing.`;
+Write in an engaging, friendly tone that makes the activity sound appealing.
+Do not use quotes, bullet points, or special formatting. Keep it under 250 words.`;
 };
 
 export const activityTagsSystemMessage = `
