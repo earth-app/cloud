@@ -632,6 +632,10 @@ REQUIREMENTS:
 - No quotes or special formatting
 - No explanations or additional text other than the title
 - No alternative titles, only a singular title
+- MUST be unique and creative - avoid generic titles
+- MUST be a complete, grammatically correct phrase
+- Transform the original title significantly to create something fresh and distinctive
+- Use specific, vivid language that captures the essence of the research
 
 OUTPUT: Title only, no explanations.`;
 };
@@ -658,6 +662,11 @@ INSTRUCTIONS:
 - Tone: Informative yet approachable
 - When including the tags, integrate them naturally into the text in a way that makes sense contextually
 - No quotes, bullet points, special formatting, or additional text
+- CRITICAL: Write complete, coherent sentences with proper grammar and punctuation
+- CRITICAL: End with a proper concluding sentence - do NOT leave the summary incomplete or cut off mid-sentence
+- Ensure every paragraph flows naturally and the entire summary reads as a polished, finished piece
+- Vary your writing style and vocabulary to create unique summaries that avoid repetitive patterns
+- Each summary should have its own distinct voice and structure
 `;
 };
 

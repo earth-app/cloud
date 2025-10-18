@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 
 import {
 	createActivityData,
-	createArticle,
 	findArticles,
 	recommendArticles,
 	recommendSimilarArticles
