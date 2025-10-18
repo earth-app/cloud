@@ -51,11 +51,49 @@ export function splitContent(content: string): string[] {
 		return [];
 	}
 
+	// Helper function to ensure proper punctuation
+	const ensurePunctuation = (sentence: string): string => {
+		const trimmed = sentence.trim();
+		if (!trimmed) return trimmed;
+
+		const lastChar = trimmed[trimmed.length - 1];
+		if (['.', '!', '?'].includes(lastChar)) {
+			return trimmed;
+		}
+
+		const questionStarters = [
+			'who',
+			'what',
+			'when',
+			'where',
+			'why',
+			'how',
+			'is',
+			'are',
+			'do',
+			'does',
+			'did',
+			'can',
+			'could',
+			'would',
+			'should',
+			'will'
+		];
+
+		const firstWord = trimmed.toLowerCase().split(/\s+/)[0];
+		if (questionStarters.includes(firstWord)) {
+			return trimmed + '?';
+		}
+
+		// Otherwise add a period
+		return trimmed + '.';
+	};
+
 	// Split into sentences using common sentence-ending patterns
 	const sentenceRegex = /[.!?]+(?=\s+[A-Z]|$)/g;
 	const sentences = content
 		.split(sentenceRegex)
-		.map((s) => s.trim())
+		.map((s) => ensurePunctuation(s.trim()))
 		.filter((s) => s.length > 0);
 
 	if (sentences.length === 0) {
@@ -170,6 +208,16 @@ export function splitContent(content: string): string[] {
 		paragraphs.push(currentParagraph.join(' '));
 	}
 
-	// Ensure we don't have any empty paragraphs
-	return paragraphs.filter((p) => p.trim().length > 0);
+	// Ensure we don't have any empty paragraphs and all paragraphs end with proper punctuation
+	return paragraphs
+		.filter((p) => p.trim().length > 0)
+		.map((p) => {
+			const trimmed = p.trim();
+			const lastChar = trimmed[trimmed.length - 1];
+			// Ensure paragraph ends with proper punctuation
+			if (!['.', '!', '?'].includes(lastChar)) {
+				return trimmed + '.';
+			}
+			return trimmed;
+		});
 }
