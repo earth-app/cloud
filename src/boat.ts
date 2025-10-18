@@ -4,7 +4,7 @@ import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
-import { chunkArray } from './util';
+import { chunkArray, splitContent } from './util';
 
 const activityModel = '@cf/meta/llama-3.2-11b-vision-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -322,7 +322,7 @@ export async function createArticle(
 					{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
 					{ role: 'user', content: ocean.title.trim() }
 				],
-				max_tokens: 24
+				max_tokens: 36
 			});
 		} catch (aiError) {
 			console.error('AI model failed for article title generation', {
@@ -342,7 +342,7 @@ export async function createArticle(
 					{ role: 'user', content: articleContent },
 					{ role: 'user', content: prompts.articleSummaryPrompt(ocean, tags).trim() }
 				],
-				max_tokens: 1000 // Add max_tokens limit for summary
+				max_tokens: 1500 // Add max_tokens limit for summary
 			});
 		} catch (aiError) {
 			console.error('AI model failed for article summary generation', {
@@ -353,6 +353,7 @@ export async function createArticle(
 		}
 
 		const summary = prompts.validateArticleSummary(summaryResult?.response || '', ocean.title);
+		const formattedSummary = splitContent(summary).join('\n\n');
 
 		return {
 			ocean,
@@ -360,7 +361,7 @@ export async function createArticle(
 			title: title,
 			description: summary.substring(0, 256) + '...',
 			color: ocean.theme_color || '#ffffff',
-			content: summary
+			content: formattedSummary
 		};
 	} catch (error) {
 		console.error('Error creating article:', error);
