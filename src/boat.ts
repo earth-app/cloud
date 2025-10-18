@@ -74,7 +74,10 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			'cib',
 			'carbon',
 			'solar',
-			'heroicons'
+			'heroicons',
+			'map',
+			'circum',
+			'nimbus'
 		]; // preferred icon sets in order
 
 		const searchUrl = `https://api.iconify.design/search?query=${encodeURIComponent(activity)}&prefixes=${preferredSets.join(',')}`;
