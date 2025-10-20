@@ -11,16 +11,15 @@
     "prepare": "husky install"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20251011.0",
-    "@earth-app/ocean": "1.0.0-d659241",
+    "@cloudflare/workers-types": "^4.20251014.0",
+    "@earth-app/ocean": "1.0.0-a752a2e",
     "@types/pako": "^2.0.4",
-    "hono": "^4.9.12",
-    "pako": "^2.1.0",
-    "undici": "^5.29.0"
+    "hono": "^4.10.1",
+    "pako": "^2.1.0"
   },
   "devDependencies": {
     "husky": "^9.1.7",
-    "lint-staged": "^16.2.4",
+    "lint-staged": "^16.2.5",
     "prettier": "^3.6.2",
     "wrangler": "^4.43.0"
   },
