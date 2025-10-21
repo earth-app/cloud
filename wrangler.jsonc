@@ -20,6 +20,9 @@
 			"0 */4 * * *" // Every 4 hours
 		]
 	},
+  "limits": {
+    "cpu_ms": 45000
+  },
 	"ai": {
 		"binding": "AI",
 		"remote": true
