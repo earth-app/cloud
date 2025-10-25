@@ -342,7 +342,7 @@ export async function createArticle(
 					{ role: 'user', content: articleContent },
 					{ role: 'user', content: prompts.articleSummaryPrompt(ocean, tags).trim() }
 				],
-				max_tokens: 1500 // Add max_tokens limit for summary
+				max_tokens: 2500 // Add max_tokens limit for summary
 			});
 		} catch (aiError) {
 			console.error('AI model failed for article summary generation', {

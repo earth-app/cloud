@@ -405,7 +405,7 @@ export function validateArticleSummary(summaryResponse: string, originalTitle: s
 		const summary = sanitized.trim();
 		const wordCount = summary.split(/\s+/).length;
 
-		if (summary.length < 100) {
+		if (summary.length < 400) {
 			logAIFailure(
 				'ArticleSummary',
 				originalTitle,
@@ -415,7 +415,7 @@ export function validateArticleSummary(summaryResponse: string, originalTitle: s
 			throw new Error('Generated article summary too short');
 		}
 
-		if (wordCount > 1000) {
+		if (wordCount > 900) {
 			logAIFailure(
 				'ArticleSummary',
 				originalTitle,
@@ -608,7 +608,7 @@ TASK: Write an engaging summary of the provided scientific article.
 
 REQUIREMENTS:
 - Incorporate the provided tags naturally into the summary
-- Length: 150-300 words
+- Length: 250-600 words, ensure cohesive flow and minimum is met
 - Tone: Informative yet accessible to general audiences
 - Format: Well-structured paragraphs, no special formatting
 - Focus: Key findings, implications, and relevance
@@ -658,7 +658,7 @@ INSTRUCTIONS:
 - Focus on key findings and their significance
 - Make it accessible to a general audience
 - Consider the publication date for relevance context
-- Length: 150-300 words
+- Length: 250-600 words, ensure cohesive flow and minimum is met
 - Tone: Informative yet approachable
 - When including the tags, integrate them naturally into the text in a way that makes sense contextually
 - No quotes, bullet points, special formatting, or additional text
