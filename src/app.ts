@@ -397,9 +397,14 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 		return c.text('Journey ID must be between 3 and 50 characters', 400);
 	}
 
+	const [value, lastWrite] = await getJourney(id, type, c.env.KV);
+	if (Date.now() - lastWrite < 60 * 60 * 24 * 1000) {
+		return c.json({ count: value }, 200);
+	}
+
 	try {
 		const newCount = await incrementJourney(id, type, c.env.KV);
-		return c.json({ count: newCount }, 200);
+		return c.json({ count: newCount }, 201);
 	} catch (err) {
 		console.error(`Error incrementing journey '${type}' for ID '${id}':`, err);
 		return c.text('Failed to increment journey', 500);
