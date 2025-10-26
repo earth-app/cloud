@@ -399,6 +399,15 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 
 	const [value, lastWrite] = await getJourney(id, type, c.env.KV);
 	if (Date.now() - lastWrite < 60 * 60 * 24 * 1000) {
+		// Bump expirationTtl
+		const key = `journey:${type}:${id}`;
+		c.executionCtx.waitUntil(
+			c.env.KV.put(key, value.toString(), {
+				expirationTtl: 60 * 60 * 24 * 2,
+				metadata: { lastWrite: Date.now() }
+			})
+		);
+
 		return c.json({ count: value }, 200);
 	}
 
