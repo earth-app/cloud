@@ -90,10 +90,35 @@ export function splitContent(content: string): string[] {
 	};
 
 	// Split into sentences using common sentence-ending patterns
+	// More nuanced approach that avoids splitting on:
+	// - Initials (e.g., "A. A. LastName", "Dr. Smith", "U.S.A.")
+	// - Common abbreviations (e.g., "Mr.", "Mrs.", "Inc.", "etc.")
+	// - Numbers with periods (e.g., "3.14", "v2.0")
+
+	// First, protect common patterns that shouldn't be split
+	const protectedContent = content
+		.replace(/\b([A-Z])\.\s+(?=[A-Z]\.)/g, '$1~INITIAL~')
+		.replace(
+			/\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|Inc|Corp|Ltd|Ave|St|Rd|Blvd|Ph\.D|M\.D|B\.A|M\.A)\.\s+/gi,
+			'$1~ABBREV~ '
+		)
+		.replace(/\b([A-Z])\.([A-Z])\.(?:[A-Z]\.)*\s+/g, (match) =>
+			match.replace(/\.\s*/g, '~ACRONYM~')
+		)
+		.replace(/\b(\d+)\.(\d+)\b/g, '$1~DECIMAL~$2');
+
 	const sentenceRegex = /[.!?]+(?=\s+[A-Z]|$)/g;
-	const sentences = content
+	const sentences = protectedContent
 		.split(sentenceRegex)
-		.map((s) => ensurePunctuation(s.trim()))
+		.map((s) => {
+			// Restore protected patterns
+			const restored = s
+				.replace(/~INITIAL~/g, '. ')
+				.replace(/~ABBREV~/g, '.')
+				.replace(/~ACRONYM~/g, '.')
+				.replace(/~DECIMAL~/g, '.');
+			return ensurePunctuation(restored.trim());
+		})
 		.filter((s) => s.length > 0);
 
 	if (sentences.length === 0) {
