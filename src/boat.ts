@@ -6,7 +6,7 @@ import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
 import { chunkArray, splitContent } from './util';
 
-const activityModel = '@cf/meta/llama-3.2-11b-vision-instruct';
+const activityModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
 const articleRankerModel = '@cf/baai/bge-reranker-base';
@@ -15,23 +15,51 @@ const promptModel = '@cf/openai/gpt-oss-120b';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
-		// Generate description with timeout and retry logic
-		let description;
-		try {
-			description = await ai.run(activityModel, {
-				messages: [
-					{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
-					{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
-				],
-				max_tokens: 400
-			});
-		} catch (aiError) {
-			console.error('AI model failed for activity description', { activity, error: aiError });
-			throw new Error(`AI model failed to generate description for activity: ${activity}`);
+		// Generate description with retry logic (3 attempts)
+		let desc: string | null = null;
+		let lastError: Error | null = null;
+		const maxRetries = 3;
+
+		for (let attempt = 1; attempt <= maxRetries; attempt++) {
+			try {
+				console.log(`Generating activity description, attempt ${attempt}/${maxRetries}`);
+
+				const description = await ai.run(activityModel, {
+					messages: [
+						{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
+						{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
+					],
+					max_tokens: 800
+				});
+
+				const rawDesc = description?.response || '';
+				// Validate with throwOnFailure=true to enable retry logic
+				desc = prompts.validateActivityDescription(rawDesc, activity, true);
+
+				// If we got here, validation succeeded
+				console.log(`Activity description generated successfully on attempt ${attempt}`);
+				break;
+			} catch (error) {
+				lastError = error instanceof Error ? error : new Error(String(error));
+				console.warn(
+					`Activity description attempt ${attempt}/${maxRetries} failed:`,
+					lastError.message
+				);
+
+				if (attempt === maxRetries) {
+					console.error('All attempts to generate valid activity description failed', {
+						activity,
+						error: lastError
+					});
+				}
+			}
 		}
 
-		const rawDesc = description?.response || '';
-		const desc = prompts.validateActivityDescription(rawDesc, activity);
+		if (!desc) {
+			throw new Error(
+				`Failed to generate valid description for activity "${activity}" after ${maxRetries} attempts: ${lastError?.message}`
+			);
+		}
 
 		// Generate tags with error handling
 		let tagsResult;

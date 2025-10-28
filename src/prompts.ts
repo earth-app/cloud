@@ -216,7 +216,11 @@ export function sanitizeForContentType(
 	return cleaned.trim();
 }
 
-export function validateActivityDescription(description: string, activityName: string): string {
+export function validateActivityDescription(
+	description: string,
+	activityName: string,
+	throwOnFailure: boolean = false
+): string {
 	try {
 		if (!description || typeof description !== 'string') {
 			logAIFailure('ActivityDescription', activityName, description, 'Invalid response type');
@@ -229,7 +233,7 @@ export function validateActivityDescription(description: string, activityName: s
 		const cleaned = sanitized.trim();
 		const wordCount = cleaned.split(/\s+/).length;
 
-		if (cleaned.length < 50) {
+		if (cleaned.length < 200) {
 			logAIFailure(
 				'ActivityDescription',
 				activityName,
@@ -239,7 +243,7 @@ export function validateActivityDescription(description: string, activityName: s
 			throw new Error(`Generated description too short for activity: ${activityName}`);
 		}
 
-		if (wordCount > 350) {
+		if (wordCount > 500) {
 			logAIFailure(
 				'ActivityDescription',
 				activityName,
@@ -257,9 +261,25 @@ export function validateActivityDescription(description: string, activityName: s
 			);
 		}
 
+		// Ensure ends in proper punctuation
+		if (!/[.!?]$/.test(cleaned)) {
+			logAIFailure(
+				'ActivityDescription',
+				activityName,
+				cleaned,
+				'Does not end with proper punctuation'
+			);
+			throw new Error(`Generated description does not end properly for activity: ${activityName}`);
+		}
+
 		return cleaned;
 	} catch (error) {
-		// If validation fails, we fail closed with a safe fallback
+		// If throwOnFailure is true, re-throw the error for retry logic
+		if (throwOnFailure) {
+			throw error;
+		}
+
+		// Otherwise, fail closed with a safe fallback
 		const fallback = `${activityName.replace(/_/g, ' ')} is an engaging activity that offers unique experiences and opportunities for personal growth.`;
 		logAIFailure(
 			'ActivityDescription',
@@ -498,13 +518,15 @@ TASK: Generate a single paragraph description of the given activity.
 REQUIREMENTS:
 - Length: 150-250 words, approximately 1-2 minutes read
 - Focus: What the activity is, why people enjoy it, benefits, and interesting aspects
-- Format: Single paragraph, no bullet points, quotes, or special formatting
+- Format: Single complete paragraph, no bullet points, quotes, or special formatting
 - Tone: Informative yet lighthearted, engaging and accessible
 - Language: Simple, clear, avoid jargon
 - Content: Include practical benefits and interesting facts
 - No emojis, special characters, or markdown formatting
+- CRITICAL: Must end with proper punctuation (period, exclamation mark, or question mark)
+- CRITICAL: Must form a complete, coherent paragraph with a clear beginning, middle, and end
 
-OUTPUT FORMAT: Return only the description text, nothing else.
+OUTPUT FORMAT: Return only the description text as a single complete paragraph ending with proper punctuation. Do not add any introductions, titles, or extra text.
 `;
 
 export const activityDescriptionPrompt = (activity: string): string => {
