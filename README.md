@@ -2,7 +2,11 @@
 
 > The Automaton behind The Earth App
 
-A sophisticated Cloudflare Workers-based microservice that powers The Earth App's AI-driven content generation, recommendation engine, and user journey tracking. Built with Hono.js, this service orchestrates multiple AI models, manages distributed caching, and provides a comprehensive REST API for activity discovery, article curation, and personalized recommendations.
+A sophisticated Cloudflare Workers-based microservice that powers The Earth App's
+AI-driven content generation, recommendation engine, and user journey tracking.
+Built with Hono.js, this service orchestrates multiple AI models, manages
+distributed caching, and provides a comprehensive REST API for activity
+discovery, article curation, and personalized recommendations.
 
 ## Table of Contents
 
@@ -19,7 +23,8 @@ A sophisticated Cloudflare Workers-based microservice that powers The Earth App'
 
 ## Architecture Overview
 
-The Cloud service is a serverless application running on Cloudflare Workers that implements a multi-layered architecture:
+The Cloud service is a serverless application running on Cloudflare Workers that
+implements a multi-layered architecture:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -359,46 +364,6 @@ All endpoints require Bearer authentication: `Authorization: Bearer {ADMIN_API_K
 | **Prompts**                  | `@cf/openai/gpt-oss-120b`                      | Reasoning capabilities, creativity     |
 | **Profile Photos**           | `@cf/bytedance/stable-diffusion-xl-lightning`  | Fast image generation (<5s)            |
 
-### Prompt Engineering Patterns
-
-**1. Structured System Messages**
-
-```typescript
-const systemMessage = `
-You are an expert in {domain}.
-
-TASK: {clear objective}
-
-REQUIREMENTS:
-- Length: {word/char limits}
-- Format: {output structure}
-- Tone: {voice guidelines}
-
-OUTPUT FORMAT: {exact format specification}
-`;
-```
-
-**2. Few-Shot Examples**
-
-```typescript
-const topicExamples = [
-  'self growth', 'perseverance', 'mental health', ...
-];
-const example = topicExamples[Math.floor(Math.random() * topicExamples.length)];
-```
-
-**3. Multi-Stage Validation**
-
-```typescript
-function validateActivityDescription(desc: string, throwOnFailure = false) {
-  1. Type check (string)
-  2. Sanitize AI artifacts (sanitizeForContentType)
-  3. Length validation (200-500 words)
-  4. Format check (no markdown, proper punctuation)
-  5. Retry or fallback (based on throwOnFailure)
-}
-```
-
 ### Output Sanitization
 
 Comprehensive cleaning pipeline (`prompts.ts:sanitizeAIOutput`):
@@ -417,7 +382,7 @@ Comprehensive cleaning pipeline (`prompts.ts:sanitizeAIOutput`):
 
 ### Multi-Tier Architecture
 
-```typescript
+```txt
 ┌──────────────────────────────────────┐
 │   HTTP Cache (Hono Middleware)      │
 │   Cache-Control: public, max-age=60 │
@@ -494,11 +459,9 @@ Configured via `wrangler.jsonc`:
 
 ### Hourly Task: Prompt Generation
 
-```typescript
 1. Generate question using GPT-4 model
 2. Validate (length, format, prohibited words)
 3. POST /v2/prompts (Mantle API)
-```
 
 **Example Output:**
 
@@ -513,14 +476,12 @@ Configured via `wrangler.jsonc`:
 
 ### 4-Hourly Task: Article Creation
 
-```typescript
 1. Generate topic (e.g., "mental health")
 2. Select 3-5 random tags (ActivityType enum)
 3. Search articles (PubMed + scrapers)
 4. Rank candidates (semantic similarity)
 5. Generate title + summary
 6. POST /v2/articles (Mantle API)
-```
 
 **Example Output:**
 
@@ -579,61 +540,6 @@ curl http://localhost:9898/v1/activity/hiking \
   -H "Authorization: Bearer YOUR_DEV_API_KEY"
 ```
 
-### Environment Setup
-
-Create `.dev.vars` in project root:
-
-```ini
-ADMIN_API_KEY=your_development_key
-NCBI_API_KEY=your_ncbi_key
-MANTLE_URL=http://localhost:8080  # Or staging URL
-```
-
-### Code Quality
-
-```bash
-# Format code
-bun run prettier
-
-# Check formatting
-bun run prettier:check
-```
-
-**Pre-commit Hook** (Husky + lint-staged):
-
-- Auto-formats `.{js,ts,json,yml,md}` files
-- Runs on `git commit`
-
-### Testing Strategies
-
-**Manual Testing:**
-
-```bash
-# Test activity generation
-curl -X GET "http://localhost:9898/v1/activity/surfing" \
-  -H "Authorization: Bearer YOUR_KEY"
-
-# Test article search
-curl -X GET "http://localhost:9898/v1/articles/search?q=climate+change" \
-  -H "Authorization: Bearer YOUR_KEY"
-
-# Test journey increment
-curl -X POST "http://localhost:9898/v1/users/journey/article/user123/increment" \
-  -H "Authorization: Bearer YOUR_KEY"
-```
-
-**Scheduled Task Testing:**
-
-```bash
-# Trigger hourly task manually (in wrangler dev)
-# Add temporary route:
-app.get('/test/hourly', async (c) => {
-  const ctrl = { cron: '0 * * * *' } as ScheduledController;
-  await scheduled(ctrl, c.env, c.executionCtx);
-  return c.text('Task triggered');
-});
-```
-
 ### Debugging AI Models
 
 Enable verbose logging:
@@ -665,114 +571,17 @@ bun run deploy
 # 4. Activates on cloud.earth-app.com
 ```
 
-### Configuration
-
-**`wrangler.jsonc`:**
-
-```jsonc
-{
-	"name": "earthapp-cloud",
-	"main": "src/index.ts",
-	"compatibility_date": "2025-04-28",
-	"compatibility_flags": ["nodejs_compat", "nodejs_zlib"],
-
-	"routes": [
-		{
-			"pattern": "cloud.earth-app.com",
-			"custom_domain": true
-		}
-	],
-
-	"limits": {
-		"cpu_ms": 45000 // 45 seconds (AI model execution)
-	},
-
-	"ai": {
-		"binding": "AI",
-		"remote": true // Offload to GPU fleet (no CPU limit)
-	}
-}
-```
-
-### Environment Variables
-
-Set via Wrangler CLI:
-
-```bash
-wrangler secret put ADMIN_API_KEY
-wrangler secret put NCBI_API_KEY
-wrangler secret put MANTLE_URL
-```
-
-Or via Cloudflare Dashboard:
-
-1. Navigate to Workers & Pages → earthapp-cloud
-2. Settings → Variables
-3. Add encrypted variables
-
-### Monitoring
-
-**Observability** (enabled in `wrangler.jsonc`):
-
-```jsonc
-"observability": {
-  "enabled": true
-}
-```
-
-**Metrics:**
-
-- Request rate (RPM)
-- CPU time (milliseconds)
-- KV read/write operations
-- AI model invocations
-- Error rate
-
-**Logs:**
-
-```bash
-# Tail production logs
-wrangler tail
-
-# Filter by log level
-wrangler tail --format json | jq 'select(.level == "error")'
-```
-
-### Rollback Strategy
-
-```bash
-# List deployments
-wrangler deployments list
-
-# Rollback to previous version
-wrangler rollback [deployment-id]
-```
-
-### Cost Optimization
-
-**Current Usage Estimates:**
-
-- **Workers Requests**: ~100K/day (free tier: 100K/day)
-- **KV Reads**: ~500K/day (free tier: 100K/day) ⚠️
-- **KV Writes**: ~50K/day (free tier: 1K/day) ⚠️
-- **R2 Storage**: ~5GB (free tier: 10GB)
-- **AI Invocations**: ~1K/day (paid: $0.011 per 1K requests)
-
-**Optimization Strategies:**
-
-1. **Increase Cache TTL**: 12h → 24h (reduce KV reads by 50%)
-2. **Batch KV Writes**: Group journey updates (reduce writes by 80%)
-3. **CDN Caching**: Enable Cloudflare Cache API for static responses
-4. **Rate Limiting**: Implement per-user quotas for expensive endpoints
-
 ---
 
 ## License
 
-Proprietary - The Earth App © 2025
+All Earth App components are available open-source.
+This repository is licensed under the Apache 2.0 License.
+
+The Earth App © 2025
 
 ## Contributors
 
 Maintained by the Earth App development team.
 
-For questions or support, contact: support@earth-app.com
+For questions or support, contact: [support@earth-app.com](mailto:support@earth-app.com)
