@@ -29,7 +29,8 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 						{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
 						{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 					],
-					max_tokens: 800
+					max_tokens: 800,
+					temperature: 0.15 + (attempt - 1) * 0.07 // increase temperature slightly on each retry
 				});
 
 				const rawDesc = description?.response || '';

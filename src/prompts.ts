@@ -542,7 +542,8 @@ Write in an engaging, friendly tone that makes the activity sound appealing.
 Make sure that you remain gramatically correct, and keep the description to a single paragraph
 that neatly flows from start to finish. The activity should be described in a way that is easy
 to understand and inviting to someone who has never heard of it before.
-Do not use quotes, bullet points, or special formatting.`;
+Do not use quotes, bullet points, or special formatting. Ensure that it ends with proper punctuation
+and is at least 150 words long but no more than 250 words.`;
 };
 
 export const activityTagsSystemMessage = `
