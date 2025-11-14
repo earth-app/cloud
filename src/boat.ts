@@ -18,7 +18,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 		// Generate description with retry logic (3 attempts)
 		let desc: string | null = null;
 		let lastError: Error | null = null;
-		const maxRetries = 3;
+		const maxRetries = 5;
 
 		for (let attempt = 1; attempt <= maxRetries; attempt++) {
 			try {
@@ -30,7 +30,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 						{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 					],
 					max_tokens: 800,
-					temperature: 0.15 + (attempt - 1) * 0.07 // increase temperature slightly on each retry
+					temperature: 0.15 + (attempt - 1) * 0.08 // increase temperature slightly on each retry
 				});
 
 				const rawDesc = description?.response || '';
@@ -50,6 +50,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 				if (attempt === maxRetries) {
 					console.error('All attempts to generate valid activity description failed', {
 						activity,
+						desc,
 						error: lastError
 					});
 				}
