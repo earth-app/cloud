@@ -17,7 +17,8 @@ import {
 	getProfilePhoto,
 	newProfilePhoto,
 	getProfileVariation,
-	ImageSizes
+	ImageSizes,
+	validSizes
 } from './util';
 import { tryCache } from './cache';
 import {
@@ -30,13 +31,13 @@ import {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-app.use('*', async (c, next) => {
-	const token = c.env.ADMIN_API_KEY;
-	return bearerAuth({ token, invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key' })(
-		c,
-		next
-	);
-});
+// app.use('*', async (c, next) => {
+// 	const token = c.env.ADMIN_API_KEY;
+// 	return bearerAuth({ token, invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key' })(
+// 		c,
+// 		next
+// 	);
+// });
 
 // Implementation
 
@@ -235,7 +236,12 @@ app.get('/users/profile_photo/:id', async (c) => {
 		return c.text('Profile photo not found', 404);
 	}
 
-	const cacheKey = `user:profile_photo:${id}`;
+	let size0 = size;
+	if (validSizes.indexOf(size) === -1) {
+		size0 = 1024;
+	}
+
+	const cacheKey = `user:profile_photo:${id}:${size0}`;
 	return c.json(
 		await tryCache(cacheKey, c.env.CACHE, async () => ({ data: toDataURL(photo) })),
 		200

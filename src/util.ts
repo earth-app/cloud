@@ -272,7 +272,7 @@ export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<U
 }
 
 export type ImageSizes = 32 | 128 | 1024 | null;
-const validSizes = [32, 128, 1024, null];
+export const validSizes = [32, 128, 1024, null];
 
 /**
  * Converts a ReadableStream to a Uint8Array by reading all chunks
