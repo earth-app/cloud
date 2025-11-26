@@ -234,7 +234,11 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 
 	for (const batch of batches) {
 		const contexts = batch
-			.filter((article) => article.abstract || article.content) // must have abstract or content
+			.filter(
+				(article) =>
+					(article.abstract && article.abstract.length >= 250) ||
+					(article.content && article.content.length >= 250)
+			) // must have abstract or content with at least 250 characters
 			.filter((article) => article.title.match(/[^\x00-\x7F]+/gim)?.length || 0 === 0) // title must be only ascii
 			.map((article) => ({
 				text:
