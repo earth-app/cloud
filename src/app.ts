@@ -224,7 +224,7 @@ app.get('/users/profile_photo/:id', async (c) => {
 		return c.text('Invalid User ID', 400);
 	}
 
-	const sizeParam = c.req.query('size');
+	const sizeParam = c.req.query('size') || '128';
 	const size = sizeParam ? (parseInt(sizeParam, 10) as ImageSizes) : undefined;
 	if (!size || size <= 0 || size > 1024 || isNaN(size)) {
 		return c.text('Invalid size parameter', 400);
