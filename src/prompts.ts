@@ -903,33 +903,3 @@ export async function generateProfilePhoto(
 
 	return imageBytes;
 }
-
-export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<Uint8Array> {
-	if (id === 1n) {
-		const resp = await bindings.ASSETS.fetch('https://assets.local/cloud.png');
-		const fallback = await resp!.arrayBuffer();
-		return new Uint8Array(fallback);
-	}
-
-	const profileImage = `users/${id}/profile.png`;
-
-	const obj = await bindings.R2.get(profileImage);
-	if (obj) {
-		const buf = await obj.arrayBuffer();
-		return new Uint8Array(buf);
-	}
-
-	const resp = await bindings.ASSETS.fetch('https://assets.local/earth-app.png');
-	const fallback = await resp!.arrayBuffer();
-	return new Uint8Array(fallback);
-}
-
-export async function newProfilePhoto(data: UserProfilePromptData, id: bigint, bindings: Bindings) {
-	const profileImage = `users/${id}/profile.png`;
-	const profile = await generateProfilePhoto(data, bindings.AI);
-	await bindings.R2.put(profileImage, profile, {
-		httpMetadata: { contentType: 'image/png' }
-	});
-
-	return profile;
-}

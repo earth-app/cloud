@@ -1,3 +1,7 @@
+import { ExecutionContext } from '@cloudflare/workers-types';
+import { generateProfilePhoto, UserProfilePromptData } from './prompts';
+import { Bindings } from './types';
+
 export function trimToByteLimit(str: string, byteLimit: number): string {
 	const encoder = new TextEncoder();
 	const chars = Array.from(str);
@@ -245,4 +249,155 @@ export function splitContent(content: string): string[] {
 			}
 			return trimmed;
 		});
+}
+
+export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<Uint8Array> {
+	if (id === 1n) {
+		const resp = await bindings.ASSETS.fetch('https://assets.local/cloud.png');
+		const fallback = await resp!.arrayBuffer();
+		return new Uint8Array(fallback);
+	}
+
+	const profileImage = `users/${id}/profile.png`;
+
+	const obj = await bindings.R2.get(profileImage);
+	if (obj) {
+		const buf = await obj.arrayBuffer();
+		return new Uint8Array(buf);
+	}
+
+	const resp = await bindings.ASSETS.fetch('https://assets.local/earth-app.png');
+	const fallback = await resp!.arrayBuffer();
+	return new Uint8Array(fallback);
+}
+
+export type ImageSizes = 32 | 128 | 1024 | null;
+const validSizes = [32, 128, 1024, null];
+
+/**
+ * Converts a ReadableStream to a Uint8Array by reading all chunks
+ * @param stream - The ReadableStream to convert
+ * @returns A Uint8Array containing all the data from the stream
+ */
+export async function streamToUint8Array(stream: ReadableStream): Promise<Uint8Array> {
+	const reader = stream.getReader();
+	const chunks: Uint8Array[] = [];
+	let totalLength = 0;
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			if (value) {
+				chunks.push(value);
+				totalLength += value.length;
+			}
+		}
+	} finally {
+		reader.releaseLock();
+	}
+
+	// Combine all chunks into a single Uint8Array
+	const result = new Uint8Array(totalLength);
+	let offset = 0;
+	for (const chunk of chunks) {
+		result.set(chunk, offset);
+		offset += chunk.length;
+	}
+
+	return result;
+}
+
+export async function newProfilePhoto(
+	data: UserProfilePromptData,
+	id: bigint,
+	bindings: Bindings,
+	ctx: ExecutionContext
+) {
+	const profileImage = `users/${id}/profile.png`;
+	const profile = await generateProfilePhoto(data, bindings.AI);
+
+	// put original image and schedule variations to be created in background
+	ctx.waitUntil(
+		Promise.all([
+			bindings.R2.put(profileImage, profile, {
+				httpMetadata: { contentType: 'image/png' }
+			}),
+			createPhotoVariation(128, profile, id, bindings, ctx),
+			createPhotoVariation(32, profile, id, bindings, ctx)
+		])
+	);
+
+	return profile;
+}
+
+export async function getProfileVariation(
+	id: bigint,
+	size: ImageSizes,
+	bindings: Bindings,
+	ctx: ExecutionContext
+) {
+	if (id === 1n) {
+		const resp = await bindings.ASSETS.fetch('https://assets.local/cloud.png');
+		const fallback = await resp!.arrayBuffer();
+		return new Uint8Array(fallback);
+	}
+
+	if (!size || size === 1024) return await getProfilePhoto(id, bindings); // original size requested
+	if (!validSizes.includes(size)) return await getProfilePhoto(id, bindings); // fallback to original on invalid size
+
+	const profileImage = `users/${id}/profile_${size}.png`;
+	const obj = await bindings.R2.get(profileImage);
+
+	if (obj) {
+		const buf = await obj.arrayBuffer();
+		return new Uint8Array(buf);
+	} else {
+		const profileImageOriginal = `users/${id}/profile.png`;
+		const originalObj = await bindings.R2.get(profileImageOriginal);
+		if (!originalObj) {
+			const resp = await bindings.ASSETS.fetch('https://assets.local/earth-app.png');
+			const fallback = await resp!.arrayBuffer();
+			return new Uint8Array(fallback);
+		}
+		const buf = await originalObj.arrayBuffer();
+		const profile = new Uint8Array(buf);
+
+		return await createPhotoVariation(size, profile, id, bindings, ctx);
+	}
+}
+
+async function createPhotoVariation(
+	size: ImageSizes,
+	profile: Uint8Array,
+	id: bigint,
+	bindings: Bindings,
+	ctx: ExecutionContext
+): Promise<Uint8Array> {
+	if (!size) return await getProfilePhoto(id, bindings);
+
+	// create stream from profile data
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(profile);
+			controller.close();
+		}
+	});
+
+	const profileImage = `users/${id}/profile_${size}.png`;
+	const transformedStream = (
+		await bindings.IMAGES.input(stream)
+			.transform({ width: size, height: size })
+			.output({ format: 'image/png' })
+	).image();
+
+	const transformedImage = await streamToUint8Array(transformedStream);
+
+	ctx.waitUntil(
+		bindings.R2.put(profileImage, transformedImage, {
+			httpMetadata: { contentType: 'image/png' }
+		})
+	);
+
+	return transformedImage;
 }

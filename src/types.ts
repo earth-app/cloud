@@ -1,4 +1,4 @@
-import { Ai, KVNamespace, R2Bucket } from '@cloudflare/workers-types';
+import { Ai, KVNamespace, R2Bucket, Fetcher } from '@cloudflare/workers-types';
 import { com } from '@earth-app/ocean';
 
 export type Bindings = {
@@ -7,6 +7,7 @@ export type Bindings = {
 	KV: KVNamespace;
 	CACHE: KVNamespace;
 	ASSETS: Fetcher;
+	IMAGES: ImagesBinding;
 
 	ADMIN_API_KEY: string;
 	NCBI_API_KEY: string;

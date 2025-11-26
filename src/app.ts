@@ -12,7 +12,13 @@ import * as prompts from './prompts';
 
 import { Article, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
-import { toDataURL } from './util';
+import {
+	toDataURL,
+	getProfilePhoto,
+	newProfilePhoto,
+	getProfileVariation,
+	ImageSizes
+} from './util';
 import { tryCache } from './cache';
 import {
 	addActivityToJourney,
@@ -218,7 +224,13 @@ app.get('/users/profile_photo/:id', async (c) => {
 		return c.text('Invalid User ID', 400);
 	}
 
-	const photo = await prompts.getProfilePhoto(id, c.env);
+	const sizeParam = c.req.query('size');
+	const size = sizeParam ? (parseInt(sizeParam, 10) as ImageSizes) : undefined;
+	if (!size || size <= 0 || size > 1024 || isNaN(size)) {
+		return c.text('Invalid size parameter', 400);
+	}
+
+	const photo = await getProfileVariation(id, size, c.env, c.executionCtx);
 	if (!photo) {
 		return c.text('Profile photo not found', 404);
 	}
@@ -250,7 +262,7 @@ app.put('/users/profile_photo/:id', async (c) => {
 		return c.text('Invalid request body', 400);
 	}
 
-	const photo = await prompts.newProfilePhoto(body, id, c.env);
+	const photo = await newProfilePhoto(body, id, c.env, c.executionCtx);
 	if (!photo) {
 		return c.text('Failed to update profile photo', 500);
 	}
