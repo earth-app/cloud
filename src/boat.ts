@@ -518,7 +518,7 @@ export async function recommendSimilarArticles(
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
 
-	return topRanked;
+	return topRanked.filter((a) => a.id !== article.id); // exclude the original article
 }
 
 // Prompt Endpoints
