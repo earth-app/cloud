@@ -116,12 +116,10 @@ export function sanitizeAIOutput(
 	// Remove '(Note: ...)' or 'Note: ...' suffix
 	cleaned = cleaned.replace(/\(Note:[^)]+\)\s*$/i, '').replace(/^\s*Note:\s*/i, '');
 
-	// Remove ' OR ' and similar conjunctions that indicate multiple options, choosing the first
-	cleaned = cleaned.split(/\s+or\s+/i)[0].trim();
-
 	// Optionally preserve basic punctuation
 	if (opts.preserveBasicPunctuation) {
-		cleaned = cleaned.replace(/[^a-zA-Z0-9\s.,!?;:'"-]/g, ''); // Keep basic punctuation
+		// More permissive for descriptions - keep parentheses and other common punctuation
+		cleaned = cleaned.replace(/[^\w\s.,!?;:'"()\-–—&%$#@]/g, ''); // Keep wider range of punctuation
 	} else {
 		cleaned = cleaned.replace(/[^a-zA-Z0-9\s]/g, ''); // Remove all punctuation
 	}
