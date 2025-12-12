@@ -95,21 +95,25 @@ export function splitContent(content: string): string[] {
 
 	// Split into sentences using common sentence-ending patterns
 	// More nuanced approach that avoids splitting on:
-	// - Initials (e.g., "A. A. LastName", "Dr. Smith", "U.S.A.")
+	// - Initials (e.g., "A. A. LastName", "J. Smith", "U.S.A.")
 	// - Common abbreviations (e.g., "Mr.", "Mrs.", "Inc.", "etc.")
 	// - Numbers with periods (e.g., "3.14", "v2.0")
 
 	// First, protect common patterns that shouldn't be split
 	const protectedContent = content
-		.replace(/\b([A-Z])\.\s+(?=[A-Z]\.)/g, '$1~INITIAL~')
+		// Protect single capital letter followed by period and space (initials in names)
+		.replace(/\b([A-Z])\.\s+/g, '$1~INITIAL~ ')
+		// Protect common titles and abbreviations
 		.replace(
-			/\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|Inc|Corp|Ltd|Ave|St|Rd|Blvd|Ph\.D|M\.D|B\.A|M\.A)\.\s+/gi,
+			/\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|Ph|Esq|Rev|Hon|Capt|Lt|Col|Gen|Sgt|vs|viz|etc|Inc|Corp|Co|Ltd|LLC|Ave|St|Rd|Blvd|Dept|Vol|No|Fig|Ph\.D|M\.D|B\.A|M\.A|B\.S|M\.S|D\.D\.S|J\.D|Ed\.D|Psy\.D)\.\s+/gi,
 			'$1~ABBREV~ '
 		)
-		.replace(/\b([A-Z])\.([A-Z])\.(?:[A-Z]\.)*\s+/g, (match) =>
-			match.replace(/\.\s*/g, '~ACRONYM~')
-		)
-		.replace(/\b(\d+)\.(\d+)\b/g, '$1~DECIMAL~$2');
+		// Protect acronyms (e.g., U.S.A., N.A.S.A.)
+		.replace(/\b([A-Z])\.([A-Z])\.(?:[A-Z]\.)*\b/g, (match) => match.replace(/\./g, '~ACRONYM~'))
+		// Protect decimal numbers
+		.replace(/\b(\d+)\.(\d+)\b/g, '$1~DECIMAL~$2')
+		// Protect common Latin abbreviations
+		.replace(/\b(e\.g|i\.e|et al|cf|ca|viz)\.\s+/gi, '$1~LATIN~ ');
 
 	const sentenceRegex = /[.!?]+(?=\s+[A-Z]|$)/g;
 	const sentences = protectedContent
@@ -117,10 +121,11 @@ export function splitContent(content: string): string[] {
 		.map((s) => {
 			// Restore protected patterns
 			const restored = s
-				.replace(/~INITIAL~/g, '. ')
+				.replace(/~INITIAL~/g, '.')
 				.replace(/~ABBREV~/g, '.')
 				.replace(/~ACRONYM~/g, '.')
-				.replace(/~DECIMAL~/g, '.');
+				.replace(/~DECIMAL~/g, '.')
+				.replace(/~LATIN~/g, '.');
 			return ensurePunctuation(restored.trim());
 		})
 		.filter((s) => s.length > 0);
