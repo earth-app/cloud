@@ -12,7 +12,7 @@
   },
   "dependencies": {
     "@cloudflare/workers-types": "^4.20251115.0",
-    "@earth-app/ocean": "1.0.0-a752a2e",
+    "@earth-app/ocean": "1.0.0",
     "@types/pako": "^2.0.4",
     "hono": "^4.10.6",
     "pako": "^2.1.0"

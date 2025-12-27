@@ -5,17 +5,17 @@
     "": {
       "name": "@earth-app/cloud",
       "dependencies": {
-        "@cloudflare/workers-types": "^4.20251014.0",
-        "@earth-app/ocean": "1.0.0-a752a2e",
+        "@cloudflare/workers-types": "^4.20251115.0",
+        "@earth-app/ocean": "1.0.0",
         "@types/pako": "^2.0.4",
-        "hono": "^4.10.3",
+        "hono": "^4.10.6",
         "pako": "^2.1.0",
       },
       "devDependencies": {
         "husky": "^9.1.7",
         "lint-staged": "^16.2.6",
         "prettier": "^3.6.2",
-        "wrangler": "^4.45.2",
+        "wrangler": "^4.47.0",
       },
     },
   },
@@ -38,7 +38,7 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@earth-app/ocean": ["@earth-app/ocean@1.0.0-a752a2e", "https://npm.pkg.github.com/download/@earth-app/ocean/1.0.0-a752a2e/6e005c701c838b12ff99d843a889132a1287e3d4", { "dependencies": { "rss-parser": "^3.13.0", "ws": "8.18.0" } }, "sha512-mqy+ODzn/hVB4E1tJR2R99DNPJycwT9VTciKPa+tXtMBBkAOS0+MsfQL16K7r3Jk+morxc+c1QqlWwTCoYEp3g=="],
+    "@earth-app/ocean": ["@earth-app/ocean@1.0.0", "https://npm.pkg.github.com/download/@earth-app/ocean/1.0.0/04671722502553cd322415cc593951877cd82ea4", { "dependencies": { "rss-parser": "^3.13.0", "ws": "8.18.0" } }, "sha512-gjTNuP1fq2F9EZG/+DEM3H9/tlk5L5VZsf0DpuP+BsPUk/Xwm3eBKre0lJPa/qK+SCQctKMo4yzqPryohRhb+w=="],
 
     "@emnapi/runtime": ["@emnapi/runtime@1.4.5", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-++LApOtY0pEEz1zrd9vy1/zXVaVJJ/EbAF3u0fXIzPJEDtnITsBGbbK0EkM72amhl/R5b+5xx0Y/QhcVOpuulg=="],
 
