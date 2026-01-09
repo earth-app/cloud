@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "The Automaton behind The Earth App",
   "scripts": {
-    "dev": "bunx wrangler dev --port 9898",
+    "dev": "bunx wrangler dev --port 9898 --test-scheduled",
     "deploy": "bunx wrangler deploy --minify",
     "prettier": "bunx prettier --write .",
     "prettier:check": "bunx prettier --check .",

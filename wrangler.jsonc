@@ -21,7 +21,7 @@
 		]
 	},
 	"limits": {
-		"cpu_ms": 45000
+		"cpu_ms": 90000
 	},
 	"ai": {
 		"binding": "AI",
