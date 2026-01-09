@@ -11,7 +11,7 @@
     "prepare": "husky install"
   },
   "dependencies": {
-    "@cloudflare/workers-types": "^4.20260108.0",
+    "@cloudflare/workers-types": "^4.20260109.0",
     "@earth-app/ocean": "1.0.0",
     "@types/pako": "^2.0.4",
     "hono": "^4.11.3",
