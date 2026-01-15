@@ -302,7 +302,6 @@ export async function streamToUint8Array(stream: ReadableStream): Promise<Uint8A
 		reader.releaseLock();
 	}
 
-	// Combine all chunks into a single Uint8Array
 	const result = new Uint8Array(totalLength);
 	let offset = 0;
 	for (const chunk of chunks) {
@@ -405,4 +404,50 @@ async function createPhotoVariation(
 	);
 
 	return transformedImage;
+}
+
+export async function getEventThumbnail(
+	eventId: bigint,
+	bindings: Bindings
+): Promise<Uint8Array | null> {
+	const thumbnailPath = `events/${eventId}/thumbnail.webp`;
+	const obj = await bindings.R2.get(thumbnailPath);
+	if (obj) {
+		const buf = await obj.arrayBuffer();
+		return new Uint8Array(buf);
+	}
+	return null;
+}
+
+export async function uploadEventThumbnail(
+	eventId: bigint,
+	image: Uint8Array,
+	bindings: Bindings,
+	ctx: ExecutionContext,
+	convertToWebP = true
+) {
+	let image0 = image;
+	if (convertToWebP) {
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(image);
+				controller.close();
+			}
+		});
+
+		const transformedStream = (
+			await bindings.IMAGES.input(stream)
+				.transform({ width: 256, fit: 'scale-down' })
+				.output({ format: 'image/webp', quality: 80 })
+		).image();
+
+		image0 = await streamToUint8Array(transformedStream);
+	}
+
+	const thumbnailPath = `events/${eventId}/thumbnail.webp`;
+	ctx.waitUntil(
+		bindings.R2.put(thumbnailPath, image0, {
+			httpMetadata: { contentType: 'image/webp' }
+		})
+	);
 }

@@ -18,7 +18,9 @@ import {
 	newProfilePhoto,
 	getProfileVariation,
 	ImageSizes,
-	validSizes
+	validSizes,
+	getEventThumbnail,
+	uploadEventThumbnail
 } from './util';
 import { tryCache } from './cache';
 import {
@@ -336,7 +338,8 @@ app.post('/users/recommend_articles', async (c) => {
 	);
 });
 
-// User Journeys
+/// User Journeys
+
 app.get('/users/journey/activity/:id/count', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	if (!id) {
@@ -456,6 +459,59 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 		console.error(`Error resetting journey '${type}' for ID '${id}':`, err);
 		return c.text('Failed to reset journey', 500);
 	}
+});
+
+// Events
+
+app.get('/events/thumbnail/:id', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const image = await getEventThumbnail(id, c.env);
+	if (!image) {
+		return c.text('Event thumbnail not found', 404);
+	}
+
+	return c.body(new Uint8Array(image), 200, {
+		'Content-Type': 'image/png',
+		'Content-Length': image.length.toString(),
+		'Content-Disposition': `inline; filename="event_${id}_thumbnail.png"`,
+		'Cache-Control': 'public, max-age=31536000, immutable'
+	});
+});
+
+app.post('/events/thumbnail/:id', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const contentType = c.req.header('Content-Type') || '';
+	if (!contentType.startsWith('image/')) {
+		return c.text('Content-Type must be an image type', 400);
+	}
+
+	const body = await c.req.arrayBuffer();
+
+	const imageData = new Uint8Array(body);
+	if (imageData.length === 0) {
+		return c.text('Image data is required', 400);
+	}
+
+	await uploadEventThumbnail(id, imageData, c.env, c.executionCtx);
+	return c.body(null, 204);
 });
 
 export default app;
