@@ -480,9 +480,9 @@ app.get('/events/thumbnail/:id', async (c) => {
 	}
 
 	return c.body(new Uint8Array(image), 200, {
-		'Content-Type': 'image/png',
+		'Content-Type': 'image/webp',
 		'Content-Length': image.length.toString(),
-		'Content-Disposition': `inline; filename="event_${id}_thumbnail.png"`,
+		'Content-Disposition': `inline; filename="event_${id}_thumbnail.webp"`,
 		'Cache-Control': 'public, max-age=31536000, immutable'
 	});
 });
@@ -499,6 +499,8 @@ app.post('/events/thumbnail/:id', async (c) => {
 	}
 
 	const contentType = c.req.header('Content-Type') || '';
+
+	// content will be converted to webp, but must be an image type
 	if (!contentType.startsWith('image/')) {
 		return c.text('Content-Type must be an image type', 400);
 	}
