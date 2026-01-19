@@ -451,3 +451,12 @@ export async function uploadEventThumbnail(
 		})
 	);
 }
+
+export async function deleteEventThumbnail(
+	eventId: bigint,
+	bindings: Bindings,
+	ctx: ExecutionContext
+) {
+	const thumbnailPath = `events/${eventId}/thumbnail.webp`;
+	ctx.waitUntil(bindings.R2.delete(thumbnailPath));
+}
