@@ -20,7 +20,8 @@ import {
 	ImageSizes,
 	validSizes,
 	getEventThumbnail,
-	uploadEventThumbnail
+	uploadEventThumbnail,
+	deleteEventThumbnail
 } from './util';
 import { tryCache } from './cache';
 import {
@@ -33,13 +34,13 @@ import {
 
 const app = new Hono<{ Bindings: Bindings }>();
 
-// app.use('*', async (c, next) => {
-// 	const token = c.env.ADMIN_API_KEY;
-// 	return bearerAuth({ token, invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key' })(
-// 		c,
-// 		next
-// 	);
-// });
+app.use('*', async (c, next) => {
+	const token = c.env.ADMIN_API_KEY;
+	return bearerAuth({ token, invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key' })(
+		c,
+		next
+	);
+});
 
 // Implementation
 
@@ -513,6 +514,21 @@ app.post('/events/thumbnail/:id', async (c) => {
 	}
 
 	await uploadEventThumbnail(id, imageData, c.env, c.executionCtx);
+	return c.body(null, 204);
+});
+
+app.delete('/events/thumbnail/:id', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	await deleteEventThumbnail(id, c.env, c.executionCtx);
 	return c.body(null, 204);
 });
 
