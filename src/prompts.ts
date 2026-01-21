@@ -70,7 +70,7 @@ export function sanitizeAIOutput(
 	if (opts.removeQuotes) {
 		cleaned = cleaned
 			.replace(/^["'`]+|["'`]+$/g, '') // Remove leading/trailing quotes
-			.replace(/["'"'""`]/g, '') // Remove fancy quotes and backticks
+			.replace(/[""''`]/g, '') // Remove fancy quotes and backticks only (preserve apostrophes)
 			.trim();
 	}
 
@@ -507,6 +507,70 @@ export function validatePromptQuestion(questionResponse: string): string {
 	}
 }
 
+export function validateEventDescription(
+	description: string,
+	name: string,
+	throwOnFailure: boolean = false
+): string {
+	try {
+		if (!description || typeof description !== 'string') {
+			logAIFailure('EventDescription', name, description, 'Invalid response type');
+			throw new Error(`Failed to generate valid description for event: ${name}`);
+		}
+
+		// Sanitize the description first
+		const sanitized = sanitizeForContentType(description, 'description');
+
+		const cleaned = sanitized.trim();
+		const wordCount = cleaned.split(/\s+/).length;
+
+		if (cleaned.length < 200) {
+			logAIFailure(
+				'EventDescription',
+				name,
+				cleaned,
+				`Description too short: ${cleaned.length} chars`
+			);
+			throw new Error(`Generated description too short for event: ${name}`);
+		}
+
+		if (wordCount > 700) {
+			logAIFailure('EventDescription', name, cleaned, `Description too long: ${wordCount} words`);
+			throw new Error(`Generated description too long for event: ${name}`);
+		}
+
+		// Check for remaining unwanted formatting after sanitization
+		if (cleaned.includes('```') || cleaned.includes('**') || cleaned.includes('##')) {
+			logAIFailure('EventDescription', name, cleaned, 'Contains markdown formatting');
+			throw new Error(`Generated description contains invalid formatting for event: ${name}`);
+		}
+
+		// Ensure ends in proper punctuation
+		if (!/[.!?]$/.test(cleaned)) {
+			logAIFailure('EventDescription', name, cleaned, 'Does not end with proper punctuation');
+			throw new Error(`Generated description does not end properly for event: ${name}`);
+		}
+
+		return cleaned;
+	} catch (error) {
+		// If throwOnFailure is true, re-throw the error for retry logic
+		if (throwOnFailure) {
+			throw error;
+		}
+
+		// Otherwise, fail closed with a safe fallback
+		const fallback = `The event "${name}" is an exciting occasion that brings people together to celebrate and engage in unique experiences.`;
+		logAIFailure(
+			'EventDescription',
+			name,
+			description,
+			`Validation failed, using fallback: ${error}`
+		);
+
+		return fallback;
+	}
+}
+
 // Activity Prompts
 
 export const activityDescriptionSystemMessage = `
@@ -848,6 +912,8 @@ TASK: Generate a concise, engaging description for the given an event title and 
 
 REQUIREMENTS:
 - Focus: What the event is about, key highlights, fun facts about the event, things to expect, why to attend
+- Bounds: There is no guarentee that any in-person attendance or online organization exists; assume it is an unknown online event
+and focus on the history of the event itself
 - Tone: Inviting and informative, including facts to pique interest
 - Format: Single paragraph, no bullet points or special formatting, complete sentences
 

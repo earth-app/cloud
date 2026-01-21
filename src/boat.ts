@@ -12,8 +12,7 @@ import {
 	getEntriesInNextWeeks
 } from '@earth-app/moho';
 
-const activityModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
-const eventModel = '@cf/ibm-granite/granite-4.0-h-micro';
+const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
 const articleRankerModel = '@cf/baai/bge-reranker-base';
@@ -31,7 +30,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			try {
 				console.log(`Generating activity description, attempt ${attempt}/${maxRetries}`);
 
-				const description = await ai.run(activityModel, {
+				const description = await ai.run(descriptionModel, {
 					messages: [
 						{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
 						{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
@@ -614,11 +613,38 @@ export function retrieveEvents() {
 	return events;
 }
 
-export async function createEvent(entry: Entry, date: Date, ai: Ai) {
+export async function createEvent(entry: Entry, date: Date, bindings: Bindings) {
 	let name = entry.name;
 	if (!name) {
 		console.warn('Event entry has no name, skipping event creation', { entry });
 		return null;
+	}
+
+	const ai = bindings.AI;
+	const root = bindings.MANTLE_URL || 'https://api.earth-app.com';
+	const id = `${name}-${date.toISOString()}`;
+
+	// check if exists based on moho_id
+	const searchUrl = `${root}/v2/events?search=${encodeURIComponent(id)}`;
+	const searchRes = await fetch(searchUrl, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+		}
+	});
+
+	if (searchRes.ok) {
+		const searchData = await searchRes.json<{ total: number }>();
+		if (searchData.total > 0) {
+			console.log(`Event already exists for moho_id=${id}, skipping creation`);
+			return null;
+		}
+	} else {
+		const errorText = await searchRes.text();
+		console.error(
+			`Failed to search for existing event: ${searchRes.status} ${searchRes.statusText} - ${errorText}`
+		);
 	}
 
 	// Format birthday titles with ordinal numbers
@@ -632,7 +658,7 @@ export async function createEvent(entry: Entry, date: Date, ai: Ai) {
 
 	let descriptionResult;
 	try {
-		descriptionResult = await ai.run(eventModel, {
+		descriptionResult = await ai.run(descriptionModel, {
 			messages: [
 				{ role: 'system', content: prompts.eventDescriptionSystemMessage.trim() },
 				{
@@ -652,6 +678,7 @@ export async function createEvent(entry: Entry, date: Date, ai: Ai) {
 	}
 
 	const description = descriptionResult?.response || '';
+	const validatedDescription = prompts.validateEventDescription(description, name);
 
 	let tagsResult;
 	try {
@@ -671,14 +698,14 @@ export async function createEvent(entry: Entry, date: Date, ai: Ai) {
 
 	const event = {
 		name,
-		description,
+		description: validatedDescription,
 		type: 'ONLINE',
 		date: date.getTime(),
 		end_date: date.getTime() + 24 * 60 * 60 * 1000, // 24 hours later
 		visibility: 'PUBLIC',
 		activities,
 		fields: {
-			moho_id: `${name}-${date.toISOString()}`
+			moho_id: id
 		}
 	};
 
@@ -698,32 +725,6 @@ export async function postEvent(
 	}
 
 	const root = bindings.MANTLE_URL || 'https://api.earth-app.com';
-
-	// check if exists based on moho_id
-	const mohoId = event.fields?.moho_id;
-	if (mohoId) {
-		const searchUrl = `${root}/v2/events?search=${encodeURIComponent(mohoId)}`;
-		const searchRes = await fetch(searchUrl, {
-			method: 'GET',
-			headers: {
-				'Content-Type': 'application/json',
-				Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
-			}
-		});
-
-		if (searchRes.ok) {
-			const searchData = await searchRes.json<{ events: any[] }>();
-			if (searchData.events && searchData.events.length > 0) {
-				console.warn('Event already exists, skipping creation', { mohoId });
-				return searchData.events[0];
-			}
-		} else {
-			const errorText = await searchRes.text();
-			console.error(
-				`Failed to search for existing event: ${searchRes.status} ${searchRes.statusText} - ${errorText}`
-			);
-		}
-	}
 
 	const url = `${root}/v2/events`;
 	const res = await fetch(url, {
