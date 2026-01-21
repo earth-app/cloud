@@ -1,6 +1,7 @@
 import * as ocean from '@earth-app/ocean';
 import { Article, Bindings, OceanArticle } from './types';
 import { Ai } from '@cloudflare/workers-types';
+import { Entry } from '@earth-app/moho';
 
 // Validation and sanitation functions for AI outputs
 
@@ -809,7 +810,26 @@ const topics = [
 	'curiosity',
 	'open-mindedness',
 	'critical thinking',
-	'emotional intelligence'
+	'emotional intelligence',
+	'collaboration',
+	'problem-solving',
+	'adaptability',
+	'innovation strategies',
+	'creative processes',
+	'goal setting',
+	'time management',
+	'decision making',
+	'conflict resolution',
+	'stress management',
+	'career development',
+	'real estate',
+	'investing',
+	'motorsports',
+	'photography',
+	'gardening',
+	'cooking',
+	'language learning',
+	'public speaking'
 ];
 
 export const promptsQuestionPrompt = () => {
@@ -817,6 +837,41 @@ export const promptsQuestionPrompt = () => {
 	const topic = topics[Math.floor(Math.random() * topics.length)];
 
 	return `Create a question with the prefix '${prefix}' about '${topic}' that is open-ended, engaging, and thought-provoking.`;
+};
+
+// Events
+
+export const eventDescriptionSystemMessage = `
+You are an expert event describer.
+
+TASK: Generate a concise, engaging description for the given an event title and metadata.
+
+REQUIREMENTS:
+- Focus: What the event is about, key highlights, fun facts about the event, things to expect, why to attend
+- Tone: Inviting and informative, including facts to pique interest
+- Format: Single paragraph, no bullet points or special formatting, complete sentences
+
+OUTPUT FORMAT: Return only the description text as a single complete paragraph.
+`;
+
+export const eventDescriptionPrompt = (entry: Entry, date: Date): string => {
+	const isBirthday = entry.name.includes('Birthday');
+
+	return `Describe the event titled "${entry.name}" happening on ${date.toISOString()}. There is no location and will be
+observed online.
+
+${isBirthday ? 'IMPORTANT: This is a birthday of a PLACE (such as a country, town, city, or region), NOT a person or animal. The name provided is a shorthand (e.g., "Jackson", "Cook County", "Botswana"). Focus on the geographic/political entity and its history.\n\n' : ''}
+Focus on:
+- What the event is about
+- Key highlights or attractions
+- Fun facts or interesting aspects
+- What attendees can expect
+- Why people should attend
+
+Write in an engaging, friendly tone that makes the event sound appealing.
+Keep the description to a single paragraph that flows neatly from start to finish.
+Do not use quotes, bullet points, or special formatting. Ensure that it ends with proper punctuation
+and has complete sentences.`;
 };
 
 // User Profile Photo

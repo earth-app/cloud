@@ -4,9 +4,16 @@ import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
-import { chunkArray, splitContent } from './util';
+import { chunkArray, splitContent, toOrdinal } from './util';
+import {
+	Entry,
+	ExactDateWithYearEntry,
+	getAllEntries,
+	getEntriesInNextWeeks
+} from '@earth-app/moho';
 
 const activityModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
+const eventModel = '@cf/ibm-granite/granite-4.0-h-micro';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
 const articleRankerModel = '@cf/baai/bge-reranker-base';
@@ -594,6 +601,148 @@ export async function postPrompt(prompt: string, bindings: Bindings): Promise<Pr
 	const data = await res.json<Prompt>();
 	if (!data || !data.id) {
 		throw new Error('Failed to create prompt, no ID returned');
+	}
+
+	return data;
+}
+
+// Event Endpoints
+
+export function retrieveEvents() {
+	const allEntries = getAllEntries('/bundle/data');
+	const events = getEntriesInNextWeeks(allEntries, 2);
+	return events;
+}
+
+export async function createEvent(entry: Entry, date: Date, ai: Ai) {
+	let name = entry.name;
+	if (!name) {
+		console.warn('Event entry has no name, skipping event creation', { entry });
+		return null;
+	}
+
+	// Format birthday titles with ordinal numbers
+	if (entry instanceof ExactDateWithYearEntry && name.includes("'s Birthday")) {
+		const yearsSince = entry.getYearsSince(date);
+		if (yearsSince > 0) {
+			const placeName = name.replace("'s Birthday", '');
+			name = `${placeName}'s ${toOrdinal(yearsSince)} Birthday`;
+		}
+	}
+
+	let descriptionResult;
+	try {
+		descriptionResult = await ai.run(eventModel, {
+			messages: [
+				{ role: 'system', content: prompts.eventDescriptionSystemMessage.trim() },
+				{
+					role: 'user',
+					content: prompts.eventDescriptionPrompt(entry, date).trim()
+				}
+			],
+			max_tokens: 500,
+			temperature: 0.25
+		});
+	} catch (aiError) {
+		console.error('AI model failed for event description generation', {
+			name: entry.name,
+			error: aiError
+		});
+		throw new Error('Failed to generate event description using AI model');
+	}
+
+	const description = descriptionResult?.response || '';
+
+	let tagsResult;
+	try {
+		tagsResult = await ai.run(tagsModel, {
+			messages: [
+				{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
+				{ role: 'user', content: `'${name}'` }
+			]
+		});
+	} catch (aiError) {
+		console.error('AI model failed for activity tags', { name, error: aiError });
+		// Continue with default tags rather than failing completely
+		tagsResult = { response: 'OTHER' };
+	}
+
+	const activities = prompts.validateActivityTags(tagsResult?.response || '', name);
+
+	const event = {
+		name,
+		description,
+		type: 'ONLINE',
+		date: date.getTime(),
+		end_date: date.getTime() + 24 * 60 * 60 * 1000, // 24 hours later
+		visibility: 'PUBLIC',
+		activities,
+		fields: {
+			moho_id: `${name}-${date.toISOString()}`
+		}
+	};
+
+	return event;
+}
+
+export async function postEvent(
+	event: Awaited<ReturnType<typeof createEvent>>,
+	bindings: Bindings
+) {
+	if (!event) {
+		throw new Error('No event data to post');
+	}
+
+	if (!event.name || !event.description) {
+		throw new Error('Event must have name and description');
+	}
+
+	const root = bindings.MANTLE_URL || 'https://api.earth-app.com';
+
+	// check if exists based on moho_id
+	const mohoId = event.fields?.moho_id;
+	if (mohoId) {
+		const searchUrl = `${root}/v2/events?search=${encodeURIComponent(mohoId)}`;
+		const searchRes = await fetch(searchUrl, {
+			method: 'GET',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+			}
+		});
+
+		if (searchRes.ok) {
+			const searchData = await searchRes.json<{ events: any[] }>();
+			if (searchData.events && searchData.events.length > 0) {
+				console.warn('Event already exists, skipping creation', { mohoId });
+				return searchData.events[0];
+			}
+		} else {
+			const errorText = await searchRes.text();
+			console.error(
+				`Failed to search for existing event: ${searchRes.status} ${searchRes.statusText} - ${errorText}`
+			);
+		}
+	}
+
+	const url = `${root}/v2/events`;
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+		},
+		body: JSON.stringify(event)
+	});
+
+	if (!res.ok) {
+		const errorText = await res.text();
+		throw new Error(`Failed to post event: ${res.status} ${res.statusText} - ${errorText}`);
+	}
+
+	const data = await res.json<any>();
+	if (!data || !data.id) {
+		throw new Error(`Failed to create event, no ID returned: ${JSON.stringify(data)}`);
 	}
 
 	return data;

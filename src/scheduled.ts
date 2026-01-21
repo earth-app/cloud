@@ -1,4 +1,13 @@
-import { createArticle, createPrompt, findArticle, postArticle, postPrompt } from './boat';
+import {
+	createArticle,
+	createEvent,
+	createPrompt,
+	findArticle,
+	postArticle,
+	postEvent,
+	postPrompt,
+	retrieveEvents
+} from './boat';
 import { Bindings } from './types';
 
 export default async function scheduled(
@@ -39,6 +48,37 @@ export default async function scheduled(
 					`"${created.title}" | `,
 					created.content?.slice(0, 100) + '...'
 				);
+
+				console.log('Finished at', new Date().toISOString());
+			})()
+		);
+
+		return;
+	}
+
+	if (controller.cron === '0 0 */14 * *') {
+		console.log('Running scheduled task: Event creation from calendar');
+		ctx.waitUntil(
+			(async () => {
+				console.log('Started at', new Date().toISOString());
+
+				const entries = retrieveEvents();
+				const promises = entries.map(async (entry) => {
+					const event = await createEvent(entry.entry, entry.date, env.AI);
+					if (!event) return null;
+					return await postEvent(event, env);
+				});
+
+				const events = await Promise.all(promises);
+				for (const event of events) {
+					if (!event) continue;
+
+					console.log(
+						'Created new event:',
+						`"${event.name}" | `,
+						event.description?.slice(0, 100) + '...'
+					);
+				}
 
 				console.log('Finished at', new Date().toISOString());
 			})()

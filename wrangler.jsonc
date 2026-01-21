@@ -9,6 +9,15 @@
 			"custom_domain": true
 		}
 	],
+	"find_additional_modules": true,
+	"base_dir": "./node_modules/@earth-app/moho/src",
+	"rules": [
+		{
+			"type": "Text",
+			"globs": ["data/**/*.csv"],
+			"fallthrough": true
+		}
+	],
 	"assets": {
 		"directory": "public",
 		"binding": "ASSETS"
@@ -17,7 +26,8 @@
 	"triggers": {
 		"crons": [
 			"0 * * * *", // Every hour
-			"0 */4 * * *" // Every 4 hours
+			"0 */4 * * *", // Every 4 hours
+			"0 0 */14 * *" // Every 2 weeks
 		]
 	},
 	"limits": {
