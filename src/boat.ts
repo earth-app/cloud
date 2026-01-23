@@ -4,7 +4,7 @@ import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
-import { chunkArray, splitContent, toOrdinal } from './util';
+import { chunkArray, splitContent, toOrdinal, uploadEventThumbnail } from './util';
 import {
 	Entry,
 	ExactDateWithYearEntry,
@@ -712,6 +712,96 @@ export async function createEvent(entry: Entry, date: Date, bindings: Bindings) 
 	return event;
 }
 
+// returns [imageData, authorName]
+export async function findPlaceThumbnail(
+	name: string,
+	bindings: Bindings
+): Promise<[Uint8Array | null, string | null]> {
+	const cleanedName = name.replace(/\s*\(([^)]+)\)\s*/g, ', $1').trim();
+
+	const places = await fetch('https://places.googleapis.com/v1/places:search', {
+		method: 'POST',
+		body: JSON.stringify({
+			textQuery: cleanedName,
+			includedType: 'locality',
+			maxResultCount: 1
+		}),
+		headers: {
+			'Content-Type': 'application/json',
+			'X-Goog-Api-Key': bindings.MAPS_API_KEY,
+			'X-Goog-FieldMask': 'places.name'
+		}
+	}).then((res) => res.json<{ places: { name: string }[] }>());
+
+	if (!places.places || places.places.length === 0) {
+		console.warn('No places found for thumbnail search', { name, cleanedName });
+		return [null, null];
+	}
+
+	const placeName = places.places[0].name;
+
+	const data = await fetch(`https://places.googleapis.com/v1/${placeName}`, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			'X-Goog-Api-Key': bindings.MAPS_API_KEY,
+			'X-Goog-FieldMask': 'photos'
+		}
+	}).then((res) =>
+		res.json<{
+			photos: {
+				name: string;
+				authorAttributions: {
+					displayName: string;
+				}[];
+			}[];
+		}>()
+	);
+
+	if (!data.photos || data.photos.length === 0) {
+		console.warn('No photos found for place thumbnail', { name, placeName });
+		return [null, null];
+	}
+
+	const { name: photoName, authorAttributions: author } = data.photos[0];
+
+	const photoData = await fetch(
+		`https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=480&maxWidthPx=800&key=${bindings.MAPS_API_KEY}`
+	);
+
+	if (!photoData.ok) {
+		console.error('Failed to fetch place photo media', {
+			name,
+			placeName,
+			photoName,
+			status: photoData.status,
+			statusText: photoData.statusText
+		});
+		return [null, null];
+	}
+
+	const blob = await photoData.blob();
+	const arrayBuffer = await blob.arrayBuffer();
+	return [new Uint8Array(arrayBuffer), author?.[0]?.displayName || null];
+}
+
+export async function uploadPlaceThumbnail(
+	name: string,
+	eventId: bigint,
+	bindings: Bindings,
+	ctx: ExecutionContext
+): Promise<[Uint8Array | null, string | null]> {
+	const [image0, author] = await findPlaceThumbnail(name, bindings);
+	if (!image0) {
+		console.warn('No thumbnail image found for event place', { name, eventId });
+		return [null, null];
+	}
+
+	await uploadEventThumbnail(eventId, image0, author || 'Unknown', bindings, ctx);
+
+	return [image0, author || 'Unknown'];
+}
+
 export async function postEvent(
 	event: Awaited<ReturnType<typeof createEvent>>,
 	bindings: Bindings
@@ -744,6 +834,15 @@ export async function postEvent(
 	const data = await res.json<any>();
 	if (!data || !data.id) {
 		throw new Error(`Failed to create event, no ID returned: ${JSON.stringify(data)}`);
+	}
+
+	const birthdayMatch = event.name.match(/^(.+)'s Birthday$/i);
+	if (birthdayMatch && birthdayMatch[1]) {
+		const locationName = birthdayMatch[1].trim();
+		console.log(`Generating thumbnail for birthday event: ${locationName}`);
+		await uploadPlaceThumbnail(locationName, BigInt(data.id), bindings, null as any);
+	} else {
+		console.log(`Skipping thumbnail generation for non-birthday event: ${event.name}`);
 	}
 
 	return data;

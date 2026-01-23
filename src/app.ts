@@ -4,8 +4,10 @@ import { Hono } from 'hono';
 import {
 	createActivityData,
 	findArticles,
+	findPlaceThumbnail,
 	recommendArticles,
-	recommendSimilarArticles
+	recommendSimilarArticles,
+	uploadPlaceThumbnail
 } from './boat';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
@@ -475,12 +477,13 @@ app.get('/events/thumbnail/:id', async (c) => {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	const image = await getEventThumbnail(id, c.env);
+	const [image, author] = await getEventThumbnail(id, c.env);
 	if (!image) {
 		return c.text('Event thumbnail not found', 404);
 	}
 
 	return c.body(new Uint8Array(image), 200, {
+		'X-Event-Thumbnail-Author': author || 'Unknown',
 		'Content-Type': 'image/webp',
 		'Content-Length': image.length.toString(),
 		'Content-Disposition': `inline; filename="event_${id}_thumbnail.webp"`,
@@ -513,8 +516,38 @@ app.post('/events/thumbnail/:id', async (c) => {
 		return c.text('Image data is required', 400);
 	}
 
-	await uploadEventThumbnail(id, imageData, c.env, c.executionCtx);
+	await uploadEventThumbnail(id, imageData, '<user>', c.env, c.executionCtx);
 	return c.body(null, 204);
+});
+
+app.post('/events/thumbnail/:id/generate', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const location = c.req.query('location')?.trim();
+	if (!location || location.length < 3) {
+		return c.text('Location is required to generate thumbnail', 400);
+	}
+
+	const [image, author] = await uploadPlaceThumbnail(location, id, c.env, c.executionCtx);
+	if (!image) {
+		return c.text('No thumbnail found for specified location', 404);
+	}
+
+	return c.body(new Uint8Array(image), 200, {
+		'X-Event-Thumbnail-Author': author || 'Unknown',
+		'Content-Type': 'image/webp',
+		'Content-Length': image.length.toString(),
+		'Content-Disposition': `inline; filename="event_${id}_thumbnail.webp"`,
+		'Cache-Control': 'public, max-age=31536000, immutable'
+	});
 });
 
 app.delete('/events/thumbnail/:id', async (c) => {

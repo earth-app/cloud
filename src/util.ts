@@ -333,6 +333,8 @@ export async function streamToUint8Array(stream: ReadableStream): Promise<Uint8A
 	return result;
 }
 
+// profile photos
+
 export async function newProfilePhoto(
 	data: UserProfilePromptData,
 	id: bigint,
@@ -427,22 +429,30 @@ async function createPhotoVariation(
 	return transformedImage;
 }
 
+// event thumbnails
+
 export async function getEventThumbnail(
 	eventId: bigint,
 	bindings: Bindings
-): Promise<Uint8Array | null> {
+): Promise<[Uint8Array | null, string | null]> {
 	const thumbnailPath = `events/${eventId}/thumbnail.webp`;
-	const obj = await bindings.R2.get(thumbnailPath);
+	const [obj, author] = await Promise.all([
+		bindings.R2.get(thumbnailPath),
+		bindings.KV.get(`event:${eventId}:thumbnail:author`)
+	]);
+
 	if (obj) {
 		const buf = await obj.arrayBuffer();
-		return new Uint8Array(buf);
+		return [new Uint8Array(buf), author];
 	}
-	return null;
+
+	return [null, null];
 }
 
 export async function uploadEventThumbnail(
 	eventId: bigint,
 	image: Uint8Array,
+	author: string,
 	bindings: Bindings,
 	ctx: ExecutionContext,
 	convertToWebP = true
@@ -467,9 +477,12 @@ export async function uploadEventThumbnail(
 
 	const thumbnailPath = `events/${eventId}/thumbnail.webp`;
 	ctx.waitUntil(
-		bindings.R2.put(thumbnailPath, image0, {
-			httpMetadata: { contentType: 'image/webp' }
-		})
+		Promise.allSettled([
+			bindings.R2.put(thumbnailPath, image0, {
+				httpMetadata: { contentType: 'image/webp' }
+			}),
+			bindings.KV.put(`event:${eventId}:thumbnail:author`, author)
+		])
 	);
 }
 
@@ -479,5 +492,10 @@ export async function deleteEventThumbnail(
 	ctx: ExecutionContext
 ) {
 	const thumbnailPath = `events/${eventId}/thumbnail.webp`;
-	ctx.waitUntil(bindings.R2.delete(thumbnailPath));
+	ctx.waitUntil(
+		Promise.allSettled([
+			bindings.R2.delete(thumbnailPath),
+			bindings.KV.delete(`event:${eventId}:thumbnail:author`)
+		])
+	);
 }
