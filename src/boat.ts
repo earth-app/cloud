@@ -712,6 +712,26 @@ export async function createEvent(entry: Entry, date: Date, bindings: Bindings) 
 	return event;
 }
 
+/**
+ * Extracts the searchable location name from a full event name.
+ * Only works for birthday events (names ending with "'s Birthday").
+ * Converts parenthetical state/country codes to comma format for better disambiguation.
+ * @param eventName - Full event name (e.g., "Springfield (IL)'s Birthday")
+ * @returns Searchable location name (e.g., "Springfield, IL") or null if not a birthday event
+ */
+export function extractLocationFromEventName(eventName: string): string | null {
+	const birthdayMatch = eventName.match(/^(.+)'s Birthday$/i);
+	if (!birthdayMatch || !birthdayMatch[1]) {
+		return null;
+	}
+
+	const locationName = birthdayMatch[1].trim();
+	// Convert parenthetical state/country codes to comma format
+	// e.g., "Arlington (TX)" -> "Arlington, TX" for better place disambiguation
+	// e.g., "Springfield (IL)" -> "Springfield, IL"
+	return locationName.replace(/\s*\(([^)]+)\)\s*/g, ', $1').trim();
+}
+
 // returns [imageData, authorName]
 export async function findPlaceThumbnail(
 	name: string,

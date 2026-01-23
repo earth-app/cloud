@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 
 import {
 	createActivityData,
+	extractLocationFromEventName,
 	findArticles,
 	findPlaceThumbnail,
 	recommendArticles,
@@ -531,9 +532,14 @@ app.post('/events/thumbnail/:id/generate', async (c) => {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	const location = c.req.query('location')?.trim();
-	if (!location || location.length < 3) {
-		return c.text('Location is required to generate thumbnail', 400);
+	const name = c.req.query('name')?.trim();
+	if (!name || name.length < 3) {
+		return c.text('Event name is required to generate thumbnail', 400);
+	}
+
+	const location = extractLocationFromEventName(name);
+	if (!location) {
+		return c.text("Only birthday events (ending with 's Birthday) are allowed", 400);
 	}
 
 	const [image, author] = await uploadPlaceThumbnail(location, id, c.env, c.executionCtx);
