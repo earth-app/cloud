@@ -468,7 +468,7 @@ export async function uploadEventThumbnail(
 
 		const transformedStream = (
 			await bindings.IMAGES.input(stream)
-				.transform({ width: 256, fit: 'scale-down' })
+				.transform({ height: 720, fit: 'scale-down' })
 				.output({ format: 'image/webp', quality: 80 })
 		).image();
 

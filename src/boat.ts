@@ -743,7 +743,7 @@ export async function findPlaceThumbnail(
 ): Promise<[Uint8Array | null, string | null]> {
 	const cleanedName = name.replace(/\s*\(([^)]+)\)\s*/g, ', $1').trim();
 
-	const places = await fetch('https://places.googleapis.com/v1/places:search', {
+	const search = await fetch('https://places.googleapis.com/v1/places:searchText', {
 		method: 'POST',
 		body: JSON.stringify({
 			textQuery: cleanedName,
@@ -755,7 +755,21 @@ export async function findPlaceThumbnail(
 			'X-Goog-Api-Key': bindings.MAPS_API_KEY,
 			'X-Goog-FieldMask': 'places.name'
 		}
-	}).then((res) => res.json<{ places: { name: string }[] }>());
+	});
+
+	if (!search.ok) {
+		console.error('Failed to search for place thumbnail', {
+			name,
+			cleanedName,
+			status: search.status,
+			statusText: search.statusText,
+			body: await search.text()
+		});
+
+		throw new Error('Place search request failed');
+	}
+
+	const places = await search.json<{ places: { name: string }[] }>();
 
 	if (!places.places || places.places.length === 0) {
 		console.warn('No places found for thumbnail search', { name, cleanedName });
@@ -790,7 +804,7 @@ export async function findPlaceThumbnail(
 	const { name: photoName, authorAttributions: author } = data.photos[0];
 
 	const photoData = await fetch(
-		`https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=480&maxWidthPx=800&key=${bindings.MAPS_API_KEY}`
+		`https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=720&maxWidthPx=1280&key=${bindings.MAPS_API_KEY}`
 	);
 
 	if (!photoData.ok) {
