@@ -714,18 +714,22 @@ export async function createEvent(entry: Entry, date: Date, bindings: Bindings) 
 
 /**
  * Extracts the searchable location name from a full event name.
- * Only works for birthday events (names ending with "'s Birthday").
+ * Only works for birthday events (names ending with "'s Birthday" or "'s [ordinal] Birthday").
  * Converts parenthetical state/country codes to comma format for better disambiguation.
- * @param eventName - Full event name (e.g., "Springfield (IL)'s Birthday")
- * @returns Searchable location name (e.g., "Springfield, IL") or null if not a birthday event
+ * @param eventName - Full event name (e.g., "Springfield (IL)'s Birthday", "Vallejo's 158th Birthday")
+ * @returns Searchable location name (e.g., "Springfield, IL", "Vallejo") or null if not a birthday event
  */
 export function extractLocationFromEventName(eventName: string): string | null {
-	const birthdayMatch = eventName.match(/^(.+)'s Birthday$/i);
+	// Match: "Location's Birthday" or "Location's 158th Birthday"
+	// Capture group 1: the location name (non-greedy)
+	// Optional non-capturing group: ordinal number like "158th"
+	const birthdayMatch = eventName.match(/^(.+?)'s(?:\s+\d+(?:st|nd|rd|th))?\s+Birthday$/i);
 	if (!birthdayMatch || !birthdayMatch[1]) {
 		return null;
 	}
 
 	const locationName = birthdayMatch[1].trim();
+
 	// Convert parenthetical state/country codes to comma format
 	// e.g., "Arlington (TX)" -> "Arlington, TX" for better place disambiguation
 	// e.g., "Springfield (IL)" -> "Springfield, IL"
