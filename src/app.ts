@@ -492,6 +492,31 @@ app.get('/events/thumbnail/:id', async (c) => {
 	});
 });
 
+app.get('/events/thumbnail/:id/metadata', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const [image, author] = await getEventThumbnail(id, c.env);
+	if (!image) {
+		return c.text('Event thumbnail not found', 404);
+	}
+
+	return c.json(
+		{
+			author: author || 'Unknown',
+			size: image.length
+		},
+		200
+	);
+});
+
 app.post('/events/thumbnail/:id', async (c) => {
 	const idParam = c.req.param('id');
 	if (!idParam || !/^\d+$/.test(idParam)) {
