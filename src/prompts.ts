@@ -2,6 +2,7 @@ import * as ocean from '@earth-app/ocean';
 import { Article, Bindings, OceanArticle } from './types';
 import { Ai } from '@cloudflare/workers-types';
 import { Entry } from '@earth-app/moho';
+import { createEvent } from './boat';
 
 // Validation and sanitation functions for AI outputs
 
@@ -938,6 +939,30 @@ Write in an engaging, friendly tone that makes the event sound appealing.
 Keep the description to a single paragraph that flows neatly from start to finish.
 Do not use quotes, bullet points, or special formatting. Ensure that it ends with proper punctuation
 and has complete sentences.`;
+};
+
+export const eventRecommendationQuery = (activities: string[]): string => {
+	return `Recommend events related to these activities: ${activities
+		.map((a) => `"${a}"`)
+		.join(
+			', '
+		)}. Focus on events that provide insights, information, or context relevant to these events and activities.`;
+};
+
+export const eventSimilarityQuery = (
+	event: NonNullable<Awaited<ReturnType<typeof createEvent>>>
+): string => {
+	return `Find events similar to this one based on its provided content and metadata:
+
+Name: "${event.name}"
+Date: ${event.date}
+Activities: ${event.activities.join(', ')}
+
+Excerpt:
+${event.description.length > 500 ? `${event.description.substring(0, 500)}... (truncated)` : event.description}
+
+Focus on events that share similar themes, topics, or subject matter.
+`;
 };
 
 // User Profile Photo

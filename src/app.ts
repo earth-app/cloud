@@ -3,11 +3,14 @@ import { Hono } from 'hono';
 
 import {
 	createActivityData,
+	createEvent,
 	extractLocationFromEventName,
 	findArticles,
-	findPlaceThumbnail,
+	Mantle2Event,
 	recommendArticles,
+	recommendEvents,
 	recommendSimilarArticles,
+	recommendSimilarEvents,
 	uploadPlaceThumbnail
 } from './boat';
 import { getSynonyms } from './lang';
@@ -17,7 +20,6 @@ import { Article, Bindings } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
-	getProfilePhoto,
 	newProfilePhoto,
 	getProfileVariation,
 	ImageSizes,
@@ -594,6 +596,111 @@ app.delete('/events/thumbnail/:id', async (c) => {
 
 	await deleteEventThumbnail(id, c.env, c.executionCtx);
 	return c.body(null, 204);
+});
+
+app.post('/users/recommend_events', async (c) => {
+	const body = await c.req.json<{
+		pool: Mantle2Event[];
+		activities: string[];
+		limit?: number;
+	}>();
+
+	if (!body.pool || !body.activities) {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!Array.isArray(body.pool) || !Array.isArray(body.activities)) {
+		return c.text('Invalid request body format', 400);
+	}
+
+	if (body.pool.length === 0 || body.activities.length === 0) {
+		return c.text('No events or activities provided', 400);
+	}
+
+	if (body.pool.length > 20) {
+		return c.text('Event pool cannot exceed 20 events', 400);
+	}
+
+	if (body.activities.length > 10) {
+		return c.text('Activities cannot exceed 10 items', 400);
+	}
+
+	// default limit is 10, max 25
+	const limit = body.limit && body.limit > 0 && body.limit <= 25 ? body.limit : 10;
+
+	// Fast hashing to keep cache key under 512 bytes
+	const activities = body.activities
+		.map((a) => a.toLowerCase().trim())
+		.sort()
+		.join(',');
+	let activitiesHash = 0;
+	for (let i = 0; i < activities.length; i++) {
+		activitiesHash =
+			((activitiesHash << 5) - activitiesHash + activities.charCodeAt(i)) & 0xffffffff;
+	}
+
+	const poolIds = body.pool
+		.map((e) => e.id)
+		.sort()
+		.join(',');
+	let poolHash = 0;
+	for (let i = 0; i < poolIds.length; i++) {
+		poolHash = ((poolHash << 5) - poolHash + poolIds.charCodeAt(i)) & 0xffffffff;
+	}
+
+	const cacheKey = `cache:recommended_events:${Math.abs(activitiesHash).toString(36)}:${Math.abs(poolHash).toString(36)}:${limit}`;
+
+	return c.json(
+		await tryCache(cacheKey, c.env.CACHE, async () => {
+			return recommendEvents(body.pool, body.activities, limit, c.env.AI);
+		}),
+		200
+	);
+});
+
+app.post('/events/recommend_similar_events', async (c) => {
+	const body = await c.req.json<{
+		event: Mantle2Event;
+		pool: Mantle2Event[];
+		limit?: number;
+	}>();
+
+	if (!body.event || !body.pool) {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!Array.isArray(body.pool)) {
+		return c.text('Invalid request body format', 400);
+	}
+
+	if (body.pool.length === 0) {
+		return c.text('No events provided', 400);
+	}
+
+	if (body.pool.length > 20) {
+		return c.text('Event pool cannot exceed 20 events', 400);
+	}
+
+	// default limit is 5, max 10
+	const limit = body.limit && body.limit > 0 && body.limit <= 10 ? body.limit : 5;
+
+	// Fast hash to keep cache key under 512 bytes
+	const poolIds = body.pool
+		.map((e) => e.id)
+		.sort()
+		.join(',');
+	let poolHash = 0;
+	for (let i = 0; i < poolIds.length; i++) {
+		poolHash = ((poolHash << 5) - poolHash + poolIds.charCodeAt(i)) & 0xffffffff;
+	}
+	const cacheKey = `cache:similar_events:${body.event.id}:${Math.abs(poolHash).toString(36)}:${limit}`;
+
+	return c.json(
+		await tryCache(cacheKey, c.env.CACHE, async () => {
+			return recommendSimilarEvents(body.event, body.pool, limit, c.env.AI);
+		}),
+		200
+	);
 });
 
 export default app;

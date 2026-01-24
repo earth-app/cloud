@@ -15,7 +15,7 @@ import {
 const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
-const articleRankerModel = '@cf/baai/bge-reranker-base';
+const rankerModel = '@cf/baai/bge-reranker-base';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const promptModel = '@cf/openai/gpt-oss-120b';
 
@@ -260,7 +260,7 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 		allArticles.push(...contexts);
 
 		// Rank this batch
-		const ranked = await ai.run(articleRankerModel, {
+		const ranked = await ai.run(rankerModel, {
 			query: rankQuery,
 			contexts: contexts.map((c) => ({ text: c.text })) // remove 'ocean' field for ranking
 		});
@@ -460,7 +460,7 @@ export async function recommendArticles(
 		original: article // store original for later retrieval
 	}));
 
-	const ranked = await ai.run(articleRankerModel, {
+	const ranked = await ai.run(rankerModel, {
 		query: rankQuery,
 		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
 	});
@@ -505,7 +505,7 @@ export async function recommendSimilarArticles(
 		original: a // store original for later retrieval
 	}));
 
-	const ranked = await ai.run(articleRankerModel, {
+	const ranked = await ai.run(rankerModel, {
 		query: rankQuery,
 		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
 	});
@@ -712,6 +712,8 @@ export async function createEvent(entry: Entry, date: Date, bindings: Bindings) 
 	return event;
 }
 
+export type Mantle2Event = NonNullable<Awaited<ReturnType<typeof createEvent>>> & { id: string };
+
 /**
  * Extracts the searchable location name from a full event name.
  * Only works for birthday events (names ending with "'s Birthday" or "'s [ordinal] Birthday").
@@ -840,6 +842,93 @@ export async function uploadPlaceThumbnail(
 	return [image0, author || 'Unknown'];
 }
 
+export async function recommendEvents(
+	pool: Mantle2Event[],
+	activities: string[],
+	limit: number,
+	ai: Ai
+): Promise<Mantle2Event[]> {
+	if (pool.length === 0 || activities.length === 0) {
+		throw new Error('No events or activities provided for recommendation');
+	}
+
+	const rankQuery = prompts.eventRecommendationQuery(activities);
+
+	const contexts = pool.map((event) => ({
+		text:
+			(event.name || '') +
+			' | Activities: ' +
+			(event.activities || []).join(', ') +
+			'\n' +
+			(event.description || '').substring(0, 500),
+		original: event // store original for later retrieval
+	}));
+
+	const ranked = await ai.run(rankerModel, {
+		query: rankQuery,
+		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+	});
+
+	if (!ranked || !ranked.response) {
+		throw new Error('Failed to rank events: ' + JSON.stringify(ranked));
+	}
+
+	const allRanked: { id: number; score: number }[] = ranked.response
+		.filter((r) => r.id !== undefined)
+		.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+	// Get top N events based on score
+	const topRanked = allRanked
+		.sort((a, b) => b.score - a.score)
+		.slice(0, limit)
+		.map((r) => contexts[r.id].original);
+
+	return topRanked;
+}
+
+export async function recommendSimilarEvents(
+	event: Mantle2Event,
+	pool: Mantle2Event[],
+	limit: number,
+	ai: Ai
+) {
+	if (pool.length === 0) {
+		throw new Error('No events provided for recommendation');
+	}
+
+	const rankQuery = prompts.eventSimilarityQuery(event);
+	const contexts = pool.map((e) => ({
+		text:
+			(e.name || '') +
+			' | Activities: ' +
+			(e.activities || []).join(', ') +
+			'\n' +
+			(e.description || '').substring(0, 500),
+		original: e // store original for later retrieval
+	}));
+
+	const ranked = await ai.run(rankerModel, {
+		query: rankQuery,
+		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+	});
+
+	if (!ranked || !ranked.response) {
+		throw new Error('Failed to rank events: ' + JSON.stringify(ranked));
+	}
+
+	const allRanked: { id: number; score: number }[] = ranked.response
+		.filter((r) => r.id !== undefined)
+		.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+	// Get top N similar events based on score
+	const topRanked = allRanked
+		.sort((a, b) => b.score - a.score)
+		.slice(0, limit)
+		.map((r) => contexts[r.id].original);
+
+	return topRanked.filter((e) => e.name !== event.name); // exclude the original event
+}
+
 export async function postEvent(
 	event: Awaited<ReturnType<typeof createEvent>>,
 	bindings: Bindings
@@ -874,9 +963,11 @@ export async function postEvent(
 		throw new Error(`Failed to create event, no ID returned: ${JSON.stringify(data)}`);
 	}
 
-	const birthdayMatch = event.name.match(/^(.+)'s Birthday$/i);
-	if (birthdayMatch && birthdayMatch[1]) {
-		const locationName = birthdayMatch[1].trim();
+	// Only generate thumbnails for birthday events (location-based)
+	// This includes countries, cities, and other places with birthdays
+	// Extract location name from "Location's Birthday" or "Location's 158th Birthday" format
+	const locationName = extractLocationFromEventName(event.name);
+	if (locationName) {
 		console.log(`Generating thumbnail for birthday event: ${locationName}`);
 		await uploadPlaceThumbnail(locationName, BigInt(data.id), bindings, null as any);
 	} else {
