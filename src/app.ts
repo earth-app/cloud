@@ -6,7 +6,6 @@ import {
 	createEvent,
 	extractLocationFromEventName,
 	findArticles,
-	Mantle2Event,
 	recommendArticles,
 	recommendEvents,
 	recommendSimilarArticles,
@@ -16,7 +15,7 @@ import {
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 
-import { Article, Bindings } from './types';
+import { Article, Bindings, Event } from './types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
@@ -600,7 +599,7 @@ app.delete('/events/thumbnail/:id', async (c) => {
 
 app.post('/users/recommend_events', async (c) => {
 	const body = await c.req.json<{
-		pool: Mantle2Event[];
+		pool: Event[];
 		activities: string[];
 		limit?: number;
 	}>();
@@ -660,8 +659,8 @@ app.post('/users/recommend_events', async (c) => {
 
 app.post('/events/recommend_similar_events', async (c) => {
 	const body = await c.req.json<{
-		event: Mantle2Event;
-		pool: Mantle2Event[];
+		event: Event;
+		pool: Event[];
 		limit?: number;
 	}>();
 

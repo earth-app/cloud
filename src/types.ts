@@ -65,3 +65,34 @@ export type Prompt = {
 	created_at: Date;
 	updated_at?: Date;
 };
+
+export type EventActivity =
+	| {
+			type: 'activity_type';
+			value: typeof com.earthapp.activity.ActivityType.prototype.name;
+	  }
+	| ({
+			type: 'activity';
+	  } & Activity);
+
+export type Event = {
+	id: string;
+	name: string;
+	description: string;
+	type: 'ONLINE' | 'IN_PERSON' | 'HYBRID';
+	date: number;
+	end_date?: number;
+	visibility: typeof com.earthapp.account.Privacy.prototype.name;
+	activities: EventActivity[];
+	location?: {
+		latitude: number;
+		longitude: number;
+	};
+	fields: {
+		[key: string]: string;
+	};
+};
+
+export type EventData = Omit<Event, 'id' | 'activities'> & {
+	activities: (string | typeof com.earthapp.activity.ActivityType.prototype.name)[];
+};

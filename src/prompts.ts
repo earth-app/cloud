@@ -1,5 +1,5 @@
 import * as ocean from '@earth-app/ocean';
-import { Article, Bindings, OceanArticle } from './types';
+import { Article, Bindings, EventData, OceanArticle } from './types';
 import { Ai } from '@cloudflare/workers-types';
 import { Entry } from '@earth-app/moho';
 import { createEvent } from './boat';
@@ -941,6 +941,18 @@ Do not use quotes, bullet points, or special formatting. Ensure that it ends wit
 and has complete sentences.`;
 };
 
+export const eventActivitySelectionQuery = (
+	eventName: string,
+	eventDescription: string
+): string => {
+	return `Select the most relevant activities for this event:
+
+Event: "${eventName}"
+Description: ${eventDescription.substring(0, 300)}
+
+Choose activities that closely match the event's theme, purpose, and expected attendees.`;
+};
+
 export const eventRecommendationQuery = (activities: string[]): string => {
 	return `Recommend events related to these activities: ${activities
 		.map((a) => `"${a}"`)
@@ -949,9 +961,7 @@ export const eventRecommendationQuery = (activities: string[]): string => {
 		)}. Focus on events that provide insights, information, or context relevant to these events and activities.`;
 };
 
-export const eventSimilarityQuery = (
-	event: NonNullable<Awaited<ReturnType<typeof createEvent>>>
-): string => {
+export const eventSimilarityQuery = (event: EventData): string => {
 	return `Find events similar to this one based on its provided content and metadata:
 
 Name: "${event.name}"

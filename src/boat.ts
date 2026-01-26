@@ -1,6 +1,6 @@
 import { com } from '@earth-app/ocean';
 
-import { Activity, Article, Bindings, OceanArticle, Prompt } from './types';
+import { Activity, Article, Bindings, Event, EventData, OceanArticle, Prompt } from './types';
 import { getSynonyms } from './lang';
 import * as prompts from './prompts';
 import { Ai } from '@cloudflare/workers-types';
@@ -607,13 +607,115 @@ export async function postPrompt(prompt: string, bindings: Bindings): Promise<Pr
 
 // Event Endpoints
 
+export async function retrieveActivities(bindings: Bindings): Promise<Activity[]> {
+	const root = bindings.MANTLE_URL || 'https://api.earth-app.com';
+	const limit = 100;
+	let page = 1;
+	const allActivities: Activity[] = [];
+
+	// Fetch first page to get total count
+	const firstUrl = `${root}/v2/activities?limit=${limit}&page=${page}`;
+	const firstRes = await fetch(firstUrl, {
+		method: 'GET',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+		}
+	});
+
+	if (!firstRes.ok) {
+		const errorText = await firstRes.text();
+		console.error(
+			`Failed to retrieve activities: ${firstRes.status} ${firstRes.statusText} - ${errorText}`
+		);
+		return [];
+	}
+
+	const firstData = await firstRes.json<{ items: Activity[]; total: number; page: number }>();
+	allActivities.push(...(firstData.items || []));
+	const total = firstData.total || 0;
+	const totalPages = Math.ceil(total / limit);
+
+	// Fetch remaining pages if needed
+	page++;
+	while (page <= totalPages) {
+		const url = `${root}/v2/activities?limit=${limit}&page=${page}`;
+		const res = await fetch(url, {
+			method: 'GET',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+			}
+		});
+
+		if (!res.ok) {
+			console.error(`Failed to fetch activities page ${page}`);
+			break;
+		}
+
+		const data = await res.json<{ items: Activity[] }>();
+		allActivities.push(...(data.items || []));
+		page++;
+	}
+
+	console.log(`Retrieved ${allActivities.length} total activities`);
+	return allActivities;
+}
+
+export async function rankActivitiesForEvent(
+	eventName: string,
+	eventDescription: string,
+	activitiesPool: Activity[],
+	ai: Ai,
+	limit: number = 2
+): Promise<string[]> {
+	if (activitiesPool.length === 0) {
+		console.warn('No activities provided for ranking');
+		return [];
+	}
+
+	const rankQuery = prompts.eventActivitySelectionQuery(eventName, eventDescription);
+	const contexts = activitiesPool.map((activity) => ({
+		text: `${activity.name} - ${activity.description.substring(0, 200)}`,
+		original: activity
+	}));
+
+	const ranked = await ai.run(rankerModel, {
+		query: rankQuery,
+		contexts: contexts.map((c) => ({ text: c.text }))
+	});
+
+	if (!ranked || !ranked.response) {
+		console.warn('Failed to rank activities for event');
+		return [];
+	}
+
+	const allRanked: { id: number; score: number }[] = ranked.response
+		.filter((r) => r.id !== undefined)
+		.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+	// Filter by score threshold (0.5 or higher indicates good relevance)
+	const scoreThreshold = 0.5;
+	const topRanked = allRanked
+		.filter((r) => r.score >= scoreThreshold)
+		.sort((a, b) => b.score - a.score)
+		.slice(0, limit)
+		.map((r) => contexts[r.id].original.id);
+
+	return topRanked;
+}
+
 export function retrieveEvents() {
 	const allEntries = getAllEntries('/bundle/data');
 	const events = getEntriesInNextWeeks(allEntries, 2);
 	return events;
 }
 
-export async function createEvent(entry: Entry, date: Date, bindings: Bindings) {
+export async function createEvent(
+	entry: Entry,
+	date: Date,
+	bindings: Bindings
+): Promise<EventData | null> {
 	let name = entry.name;
 	if (!name) {
 		console.warn('Event entry has no name, skipping event creation', { entry });
@@ -694,7 +796,20 @@ export async function createEvent(entry: Entry, date: Date, bindings: Bindings) 
 		tagsResult = { response: 'OTHER' };
 	}
 
-	const activities = prompts.validateActivityTags(tagsResult?.response || '', name);
+	const activityTypes = prompts.validateActivityTags(tagsResult?.response || '', name);
+
+	// Fetch and rank activities from the API
+	const activitiesPool = await retrieveActivities(bindings);
+	const rankedActivityIds = await rankActivitiesForEvent(
+		name,
+		validatedDescription,
+		activitiesPool,
+		ai,
+		2 // Get top 2 activities
+	);
+
+	// Combine activity types and ranked activity IDs
+	const activities = [...activityTypes, ...rankedActivityIds];
 
 	const event = {
 		name,
@@ -707,12 +822,10 @@ export async function createEvent(entry: Entry, date: Date, bindings: Bindings) 
 		fields: {
 			moho_id: id
 		}
-	};
+	} satisfies EventData;
 
 	return event;
 }
-
-export type Mantle2Event = NonNullable<Awaited<ReturnType<typeof createEvent>>> & { id: string };
 
 /**
  * Extracts the searchable location name from a full event name.
@@ -843,26 +956,37 @@ export async function uploadPlaceThumbnail(
 }
 
 export async function recommendEvents(
-	pool: Mantle2Event[],
+	pool: Event[],
 	activities: string[],
 	limit: number,
 	ai: Ai
-): Promise<Mantle2Event[]> {
+): Promise<Event[]> {
 	if (pool.length === 0 || activities.length === 0) {
 		throw new Error('No events or activities provided for recommendation');
 	}
 
 	const rankQuery = prompts.eventRecommendationQuery(activities);
 
-	const contexts = pool.map((event) => ({
-		text:
-			(event.name || '') +
-			' | Activities: ' +
-			(event.activities || []).join(', ') +
-			'\n' +
-			(event.description || '').substring(0, 500),
-		original: event // store original for later retrieval
-	}));
+	const contexts = pool.map((event) => {
+		// Extract activity names/types from EventActivity objects
+		const activityStrings = (event.activities || []).map((a) => {
+			if (a.type === 'activity_type') {
+				return a.value;
+			} else {
+				return a.name || '';
+			}
+		});
+
+		return {
+			text:
+				(event.name || '') +
+				' | Activities: ' +
+				activityStrings.join(', ') +
+				'\n' +
+				(event.description || '').substring(0, 500),
+			original: event
+		};
+	});
 
 	const ranked = await ai.run(rankerModel, {
 		query: rankQuery,
@@ -886,26 +1010,50 @@ export async function recommendEvents(
 	return topRanked;
 }
 
-export async function recommendSimilarEvents(
-	event: Mantle2Event,
-	pool: Mantle2Event[],
-	limit: number,
-	ai: Ai
-) {
+export async function recommendSimilarEvents(event: Event, pool: Event[], limit: number, ai: Ai) {
 	if (pool.length === 0) {
 		throw new Error('No events provided for recommendation');
 	}
 
-	const rankQuery = prompts.eventSimilarityQuery(event);
-	const contexts = pool.map((e) => ({
-		text:
-			(e.name || '') +
-			' | Activities: ' +
-			(e.activities || []).join(', ') +
-			'\n' +
-			(e.description || '').substring(0, 500),
-		original: e // store original for later retrieval
-	}));
+	// Convert event to EventData format for the query
+	const eventData: EventData = {
+		name: event.name,
+		description: event.description,
+		type: event.type,
+		date: event.date,
+		end_date: event.end_date,
+		visibility: event.visibility,
+		activities: event.activities.map((a) => {
+			if (a.type === 'activity_type') {
+				return a.value;
+			} else {
+				return a.id || a.name || '';
+			}
+		}),
+		fields: event.fields
+	};
+
+	const rankQuery = prompts.eventSimilarityQuery(eventData);
+	const contexts = pool.map((e) => {
+		// Extract activity names/types from EventActivity objects
+		const activityStrings = (e.activities || []).map((a) => {
+			if (a.type === 'activity_type') {
+				return a.value;
+			} else {
+				return a.name || '';
+			}
+		});
+
+		return {
+			text:
+				(e.name || '') +
+				' | Activities: ' +
+				activityStrings.join(', ') +
+				'\n' +
+				(e.description || '').substring(0, 500),
+			original: e
+		};
+	});
 
 	const ranked = await ai.run(rankerModel, {
 		query: rankQuery,
