@@ -27,7 +27,7 @@
 		"crons": [
 			"0 * * * *", // Every hour
 			"0 */4 * * *", // Every 4 hours
-			"0 0 */14 * *" // Every 2 weeks
+			"0 0 */7 * *" // Every week
 		]
 	},
 	"limits": {
