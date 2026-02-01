@@ -33,7 +33,8 @@ import {
 	getActivityJourney,
 	getJourney,
 	incrementJourney,
-	resetJourney
+	resetJourney,
+	retrieveLeaderboardRank
 } from './journies';
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -377,7 +378,8 @@ app.get('/users/journey/:type/:id', async (c) => {
 
 	try {
 		const [count, lastWrite] = await getJourney(id, type, c.env.KV);
-		return c.json({ count, lastWrite }, 200);
+		const rank = await retrieveLeaderboardRank(id, type, c.env.KV, c.env.CACHE);
+		return c.json({ count, lastWrite, rank }, 200);
 	} catch (err) {
 		console.error(`Error getting journey '${type}' for ID '${id}':`, err);
 		return c.text('Failed to get journey', 500);

@@ -8,6 +8,7 @@ import {
 	postPrompt,
 	retrieveEvents
 } from './boat';
+import { retrieveLeaderboard } from './journies';
 import { Bindings } from './types';
 
 export default async function scheduled(
@@ -47,6 +48,23 @@ export default async function scheduled(
 					'Created new article:',
 					`"${created.title}" | `,
 					created.content?.slice(0, 100) + '...'
+				);
+
+				console.log('Finished at', new Date().toISOString());
+			})()
+		);
+
+		console.log('Running scheduled task: Cache journies leaderboard');
+		ctx.waitUntil(
+			(async () => {
+				console.log('Started at', new Date().toISOString());
+
+				const types = ['article', 'prompt', 'event'];
+				Promise.all(
+					types.map(async (type) => {
+						await retrieveLeaderboard(type, env.KV, env.CACHE);
+						console.log(`Cached leaderboard for journey type: ${type}`);
+					})
 				);
 
 				console.log('Finished at', new Date().toISOString());

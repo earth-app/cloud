@@ -1,6 +1,7 @@
 import { KVNamespace } from '@cloudflare/workers-types';
+import { cache, tryCache } from './cache';
 
-const journeyTypes = ['article', 'prompt'];
+const journeyTypes = ['article', 'prompt', 'event'];
 
 export async function getJourney(
 	id: string,
@@ -10,28 +11,106 @@ export async function getJourney(
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 
 	const key = `journey:${type}:${id}`;
-	const streak = await kv.getWithMetadata<{ lastWrite: number }>(key);
+	const result = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(key);
 
-	if (!streak.value) return [0, 0];
-	if (!streak.metadata?.lastWrite) return [parseInt(streak.value), 0];
+	if (!result.metadata) return [0, 0];
 
-	return streak ? [parseInt(streak.value), streak.metadata.lastWrite] : [0, 0];
+	return [result.metadata.streak || 0, result.metadata.lastWrite || 0];
 }
 
 export async function incrementJourney(id: string, type: string, kv: KVNamespace): Promise<number> {
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 
 	const key = `journey:${type}:${id}`;
-	const value = await kv.get<string>(key);
-	const newValue = value ? parseInt(value) + 1 : 1;
+	const result = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(key);
+	const currentStreak = result.metadata?.streak || 0;
+	const newValue = currentStreak + 1;
 
 	// 2 day expiration for streaks
 	await kv.put(key, newValue.toString(), {
 		expirationTtl: 60 * 60 * 24 * 2,
-		metadata: { lastWrite: Date.now() }
+		metadata: { lastWrite: Date.now(), streak: newValue }
 	});
 
 	return newValue;
+}
+
+export const TOP_LEADERBOARD_COUNT = 250;
+
+export async function retrieveLeaderboard(
+	type: string,
+	kv: KVNamespace,
+	cacheKv: KVNamespace
+): Promise<Array<{ id: string; streak: number }>> {
+	return await tryCache(
+		`leaderboard:${type}`,
+		cacheKv,
+		async () => {
+			if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
+
+			const leaderboard: Array<{ id: string; streak: number }> = [];
+			const prefix = `journey:${type}:`;
+
+			let page = await kv.list<{ lastWrite: number; streak: number }>({
+				prefix,
+				limit: 1000
+			});
+
+			for (const key of page.keys) {
+				const id = key.name.replace(prefix, '');
+				const streak = key.metadata?.streak || 0;
+				if (streak > 0) {
+					leaderboard.push({ id, streak });
+				}
+			}
+
+			while (!page.list_complete && page.cursor) {
+				page = await kv.list<{ lastWrite: number; streak: number }>({
+					prefix,
+					limit: 1000,
+					cursor: page.cursor
+				});
+
+				for (const key of page.keys) {
+					const id = key.name.replace(prefix, '');
+					const streak = key.metadata?.streak || 0;
+					if (streak > 0) {
+						leaderboard.push({ id, streak });
+					}
+				}
+			}
+
+			leaderboard.sort((a, b) => b.streak - a.streak);
+			return leaderboard.slice(0, TOP_LEADERBOARD_COUNT);
+		},
+		14400 // cache for 4 hours
+	);
+}
+
+// 0 = unranked/outside top, 1 = first place, etc.
+export async function retrieveLeaderboardRank(
+	id: string,
+	type: string,
+	kv: KVNamespace,
+	cacheKv: KVNamespace
+): Promise<number> {
+	const [userStreak] = await getJourney(id, type, kv);
+	if (userStreak === 0) return 0;
+
+	const leaderboard = await retrieveLeaderboard(type, kv, cacheKv);
+	const rank = leaderboard.findIndex((entry) => entry.id === id);
+	if (rank >= 0) return rank + 1; // retrieve is 0-based
+
+	// not found in top leaderboard
+	if (leaderboard.length === TOP_LEADERBOARD_COUNT) {
+		const lowestInTop = leaderboard[TOP_LEADERBOARD_COUNT - 1].streak;
+
+		// cache is stale, return 0 for now
+		if (userStreak >= lowestInTop) return 0;
+	}
+
+	// outside top
+	return 0;
 }
 
 export async function addActivityToJourney(

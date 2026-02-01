@@ -2,7 +2,12 @@ import { KVNamespace } from '@cloudflare/workers-types';
 
 const CACHE_TTL = 60 * 60 * 12; // 12 hours in seconds
 
-export async function cache(id: string, value: any, kv: KVNamespace) {
+export async function cache(
+	id: string,
+	value: any,
+	kv: KVNamespace,
+	ttl: number = CACHE_TTL
+): Promise<void> {
 	if (!value) return;
 
 	try {
@@ -13,7 +18,7 @@ export async function cache(id: string, value: any, kv: KVNamespace) {
 			}
 			return val;
 		});
-		return kv.put(id, serializedValue, { expirationTtl: CACHE_TTL });
+		return kv.put(id, serializedValue, { expirationTtl: ttl });
 	} catch (error) {
 		console.error(`Failed to cache data for ${id}:`, error);
 		throw error;
@@ -47,7 +52,8 @@ export async function checkCacheExists(id: string, kv: KVNamespace): Promise<boo
 export async function tryCache<T>(
 	id: string,
 	kv: KVNamespace,
-	fallback: () => Promise<T>
+	fallback: () => Promise<T>,
+	ttl: number = CACHE_TTL
 ): Promise<T> {
 	if (!id) throw new Error('Cache ID cannot be empty');
 	if (!kv) throw new Error('KV Namespace is undefined');
@@ -58,7 +64,7 @@ export async function tryCache<T>(
 	} else {
 		// Cache miss, call fallback
 		const obj = await fallback();
-		cache(id, obj, kv).catch((err) => {
+		cache(id, obj, kv, ttl).catch((err) => {
 			console.error(`Failed to cache data for ${id}:`, err);
 		});
 		return obj;
