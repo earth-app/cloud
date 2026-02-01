@@ -3,7 +3,6 @@ import { Hono } from 'hono';
 
 import {
 	createActivityData,
-	createEvent,
 	extractLocationFromEventName,
 	findArticles,
 	recommendArticles,
@@ -11,11 +10,11 @@ import {
 	recommendSimilarArticles,
 	recommendSimilarEvents,
 	uploadPlaceThumbnail
-} from './boat';
-import { getSynonyms } from './lang';
-import * as prompts from './prompts';
+} from './content/boat';
+import { getSynonyms } from './util/dictionary';
+import * as prompts from './util/ai';
 
-import { Article, Bindings, Event } from './types';
+import { Article, Bindings, Event } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
@@ -26,8 +25,8 @@ import {
 	getEventThumbnail,
 	uploadEventThumbnail,
 	deleteEventThumbnail
-} from './util';
-import { tryCache } from './cache';
+} from './util/util';
+import { tryCache } from './util/cache';
 import {
 	addActivityToJourney,
 	getActivityJourney,
@@ -35,7 +34,7 @@ import {
 	incrementJourney,
 	resetJourney,
 	retrieveLeaderboardRank
-} from './journies';
+} from './user/journies';
 
 const app = new Hono<{ Bindings: Bindings }>();
 

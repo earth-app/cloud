@@ -9,12 +9,14 @@ import app from './app';
 import scheduled from './scheduled';
 
 import * as packageJson from '../package.json';
-import { Bindings } from './types';
+import { Bindings } from './util/types';
+import { poweredBy } from 'hono/powered-by';
 
 const main = new Hono<{ Bindings: Bindings }>();
 
 // Middleware
 
+main.use(poweredBy()); // X-Powered-By middleware
 main.use(secureHeaders()); // Secure headers middleware
 main.use(logger()); // Logger middleware
 main.use(

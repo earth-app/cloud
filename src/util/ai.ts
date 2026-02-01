@@ -1,8 +1,7 @@
 import * as ocean from '@earth-app/ocean';
-import { Article, Bindings, EventData, OceanArticle } from './types';
+import { Article, EventData, OceanArticle } from './types';
 import { Ai } from '@cloudflare/workers-types';
 import { Entry } from '@earth-app/moho';
-import { createEvent } from './boat';
 
 // Validation and sanitation functions for AI outputs
 

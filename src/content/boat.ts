@@ -1,10 +1,10 @@
 import { com } from '@earth-app/ocean';
 
-import { Activity, Article, Bindings, Event, EventData, OceanArticle, Prompt } from './types';
-import { getSynonyms } from './lang';
-import * as prompts from './prompts';
+import { Activity, Article, Bindings, Event, EventData, OceanArticle, Prompt } from '../util/types';
+import { getSynonyms } from '../util/dictionary';
+import * as prompts from '../util/ai';
 import { Ai } from '@cloudflare/workers-types';
-import { chunkArray, splitContent, toOrdinal, uploadEventThumbnail } from './util';
+import { chunkArray, splitContent, toOrdinal, uploadEventThumbnail } from '../util/util';
 import {
 	Entry,
 	ExactDateWithYearEntry,

@@ -7,9 +7,9 @@ import {
 	postEvent,
 	postPrompt,
 	retrieveEvents
-} from './boat';
-import { retrieveLeaderboard } from './journies';
-import { Bindings } from './types';
+} from './content/boat';
+import { retrieveLeaderboard } from './user/journies';
+import { Bindings } from './util/types';
 
 export default async function scheduled(
 	controller: ScheduledController,

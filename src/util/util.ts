@@ -1,5 +1,5 @@
 import { ExecutionContext } from '@cloudflare/workers-types';
-import { generateProfilePhoto, UserProfilePromptData } from './prompts';
+import { generateProfilePhoto, UserProfilePromptData } from './ai';
 import { Bindings } from './types';
 
 export function trimToByteLimit(str: string, byteLimit: number): string {

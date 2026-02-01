@@ -1,5 +1,5 @@
 import { KVNamespace } from '@cloudflare/workers-types';
-import { cache, tryCache } from './cache';
+import { cache, tryCache } from '../util/cache';
 
 const journeyTypes = ['article', 'prompt', 'event'];
 
