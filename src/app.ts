@@ -35,6 +35,24 @@ import {
 	resetJourney,
 	retrieveLeaderboardRank
 } from './user/journies';
+import {
+	badges,
+	getBadgeProgress,
+	addBadgeProgress,
+	grantBadge,
+	isBadgeGranted,
+	getBadgeMetadata,
+	getGrantedBadges,
+	revokeBadge,
+	resetBadgeProgress,
+	checkAndGrantBadges
+} from './user/badges';
+import {
+	getImpactPoints,
+	addImpactPoints,
+	removeImpactPoints,
+	setImpactPoints
+} from './user/points';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -464,6 +482,365 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 	} catch (err) {
 		console.error(`Error resetting journey '${type}' for ID '${id}':`, err);
 		return c.text('Failed to reset journey', 500);
+	}
+});
+
+// User Badges
+
+app.get('/users/badges/:id/:badge_id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) {
+		return c.text('Badge not found', 404);
+	}
+
+	try {
+		const granted = await isBadgeGranted(id, badgeId, c.env.KV);
+		const metadata = await getBadgeMetadata(id, badgeId, c.env.KV);
+		const progress = await getBadgeProgress(id, badgeId, c.env.KV);
+
+		return c.json(
+			{
+				badge_id: badgeId,
+				granted,
+				granted_at: metadata?.granted_at || null,
+				progress
+			},
+			200
+		);
+	} catch (err) {
+		console.error(`Error getting badge '${badgeId}' for user '${id}':`, err);
+		return c.text('Failed to get badge', 500);
+	}
+});
+
+app.get('/users/badges/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const grantedBadgeIds = await getGrantedBadges(id, c.env.KV);
+		const grantedSet = new Set(grantedBadgeIds);
+
+		const allBadges = await Promise.all(
+			badges.map(async (badge) => {
+				const granted = grantedSet.has(badge.id);
+				const metadata = granted ? await getBadgeMetadata(id, badge.id, c.env.KV) : null;
+				const progress = await getBadgeProgress(id, badge.id, c.env.KV);
+
+				return {
+					badge_id: badge.id,
+					granted,
+					granted_at: metadata?.granted_at || null,
+					progress
+				};
+			})
+		);
+
+		return c.json(allBadges, 200);
+	} catch (err) {
+		console.error(`Error getting badges for user '${id}':`, err);
+		return c.text('Failed to get badges', 500);
+	}
+});
+
+app.post('/users/badges/:id/:badge_id/grant', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) {
+		return c.text('Badge not found', 404);
+	}
+
+	// Only allow granting badges without progress function (one-time badges)
+	if (badge.progress) {
+		return c.text('Cannot manually grant progress-based badges', 400);
+	}
+
+	try {
+		const alreadyGranted = await isBadgeGranted(id, badgeId, c.env.KV);
+		if (alreadyGranted) {
+			return c.text('Badge already granted', 409);
+		}
+
+		await grantBadge(id, badgeId, c.env.KV);
+		const metadata = await getBadgeMetadata(id, badgeId, c.env.KV);
+
+		return c.json(
+			{
+				badge_id: badgeId,
+				granted: true,
+				granted_at: metadata?.granted_at || null,
+				progress: 1
+			},
+			201
+		);
+	} catch (err) {
+		console.error(`Error granting badge '${badgeId}' to user '${id}':`, err);
+		return c.text('Failed to grant badge', 500);
+	}
+});
+
+app.post('/users/badges/:id/track', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const body = await c.req.json<{ tracker_id: string; value: string }>();
+	if (!body.tracker_id || !body.value) {
+		return c.text('tracker_id and value are required', 400);
+	}
+
+	try {
+		// Add to tracker
+		await addBadgeProgress(id, body.tracker_id, body.value, c.env.KV);
+
+		// Check and auto-grant all badges using this tracker
+		const newlyGranted = await checkAndGrantBadges(id, body.tracker_id, c.env.KV);
+
+		return c.json(
+			{
+				tracker_id: body.tracker_id,
+				value: body.value,
+				newly_granted: newlyGranted
+			},
+			200
+		);
+	} catch (err) {
+		console.error(
+			`Error tracking progress for tracker '${body.tracker_id}' for user '${id}':`,
+			err
+		);
+		return c.text('Failed to track badge progress', 500);
+	}
+});
+
+app.post('/users/badges/:id/:badge_id/progress', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) {
+		return c.text('Badge not found', 404);
+	}
+
+	if (!badge.tracker_id) {
+		return c.text('Badge does not have a tracker', 400);
+	}
+
+	const body = await c.req.json<{ value: string }>();
+	if (!body.value) {
+		return c.text('Value is required', 400);
+	}
+
+	try {
+		await addBadgeProgress(id, badge.tracker_id, body.value, c.env.KV);
+		const progress = await getBadgeProgress(id, badgeId, c.env.KV);
+
+		// Auto-grant if progress reaches 100%
+		if (progress >= 1 && !(await isBadgeGranted(id, badgeId, c.env.KV))) {
+			await grantBadge(id, badgeId, c.env.KV);
+		}
+
+		const granted = await isBadgeGranted(id, badgeId, c.env.KV);
+		const metadata = await getBadgeMetadata(id, badgeId, c.env.KV);
+
+		return c.json(
+			{
+				badge_id: badgeId,
+				granted,
+				granted_at: metadata?.granted_at || null,
+				progress
+			},
+			200
+		);
+	} catch (err) {
+		console.error(`Error adding progress to badge '${badgeId}' for user '${id}':`, err);
+		return c.text('Failed to add badge progress', 500);
+	}
+});
+
+app.delete('/users/badges/:id/:badge_id/revoke', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) {
+		return c.text('Badge not found', 404);
+	}
+
+	try {
+		await revokeBadge(id, badgeId, c.env.KV);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error revoking badge '${badgeId}' from user '${id}':`, err);
+		return c.text('Failed to revoke badge', 500);
+	}
+});
+
+app.delete('/users/badges/:id/:badge_id/reset', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) {
+		return c.text('Badge not found', 404);
+	}
+
+	try {
+		await resetBadgeProgress(id, badgeId, c.env.KV);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error resetting badge '${badgeId}' for user '${id}':`, err);
+		return c.text('Failed to reset badge', 500);
+	}
+});
+
+// User Impact Points
+
+app.get('/users/impact_points/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const points = await getImpactPoints(id, c.env.KV);
+		return c.json({ points }, 200);
+	} catch (err) {
+		console.error(`Error getting impact points for user '${id}':`, err);
+		return c.text('Failed to get impact points', 500);
+	}
+});
+
+app.post('/users/impact_points/:id/add', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const body = await c.req.json<{ points: number }>();
+	if (!body.points || body.points <= 0) {
+		return c.text('Points must be a positive number', 400);
+	}
+
+	try {
+		const newPoints = await addImpactPoints(id, body.points, c.env.KV);
+
+		// Track for badge progress
+		c.executionCtx.waitUntil(
+			addBadgeProgress(id, 'impact_points_earned', newPoints.toString(), c.env.KV)
+		);
+
+		return c.json({ points: newPoints }, 200);
+	} catch (err) {
+		console.error(`Error adding impact points for user '${id}':`, err);
+		return c.text('Failed to add impact points', 500);
+	}
+});
+
+app.post('/users/impact_points/:id/remove', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const body = await c.req.json<{ points: number }>();
+	if (!body.points || body.points <= 0) {
+		return c.text('Points must be a positive number', 400);
+	}
+
+	try {
+		const newPoints = await removeImpactPoints(id, body.points, c.env.KV);
+		return c.json({ points: newPoints }, 200);
+	} catch (err) {
+		console.error(`Error removing impact points for user '${id}':`, err);
+		return c.text('Failed to remove impact points', 500);
+	}
+});
+
+app.put('/users/impact_points/:id/set', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const body = await c.req.json<{ points: number }>();
+	if (typeof body.points !== 'number' || body.points < 0) {
+		return c.text('Points must be a non-negative number', 400);
+	}
+
+	try {
+		await setImpactPoints(id, body.points, c.env.KV);
+		return c.json({ points: body.points }, 200);
+	} catch (err) {
+		console.error(`Error setting impact points for user '${id}':`, err);
+		return c.text('Failed to set impact points', 500);
 	}
 });
 

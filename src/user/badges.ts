@@ -1,0 +1,519 @@
+import type { KVNamespace } from '@cloudflare/workers-types';
+
+export type Badge = {
+	id: string;
+	name?: string; // if not provided, normalized id is used
+	description: string;
+	icon: string;
+	rarity: 'normal' | 'rare' | 'amazing' | 'green';
+	// on request, badges are either granted automatically or based on this function; args are passed from the request
+	progress?: (...args: any[]) => Promise<number> | number;
+	tracker_id?: string; // if provided, links to a tracker in KV, an array of { date: number, value: string }
+};
+
+// use function instead of constant to avoid loading at import time
+export const badges = (
+	[
+		// normal badges
+		{
+			id: 'getting_started',
+			description: 'Add an activity to your profile',
+			icon: 'mdi:rocket-launch',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'activities_added'
+		},
+		{
+			id: 'activist',
+			description: 'Retrieve your first impact points',
+			icon: 'mdi:account-star',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'impact_points_earned'
+		},
+		{
+			id: 'philosopher',
+			description: 'Respond to a prompt activity',
+			icon: 'mdi:brain',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'prompts_responded'
+		},
+		{
+			id: 'event_planner',
+			description: 'Create your first event',
+			icon: 'mdi:calendar-star',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'events_created'
+		},
+		{
+			id: 'verified',
+			description: 'Verify your email address',
+			icon: 'mdi:check-decagram',
+			rarity: 'normal'
+		},
+		{
+			id: 'article_enthusiast',
+			description: 'Read 10 articles',
+			icon: 'mdi:book-open-page-variant',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'articles_read'
+		},
+		{
+			id: 'social_butterfly',
+			description: 'Attend 5 events',
+			icon: 'mdi:account-group',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 5),
+			tracker_id: 'events_attended'
+		},
+		{
+			id: 'impacter',
+			description: 'Achieve 100 impact points',
+			icon: 'mdi:earth-arrow-right',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 100),
+			tracker_id: 'impact_points_earned'
+		},
+		{
+			id: 'going_outside',
+			description: 'Submit your first image to an event',
+			icon: 'mdi:camera-outline',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'event_images_submitted'
+		},
+		{
+			id: 'collaborator',
+			description: 'Add your first friend',
+			icon: 'mdi:account-multiple-plus',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'friends_added'
+		},
+		{
+			id: 'curious_mind',
+			description: 'Explore the activities of 5 different types',
+			icon: 'mdi:magnify',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 5),
+			tracker_id: 'activity_types_explored'
+		},
+		// rare badges
+		{
+			id: 'avid_reader',
+			description: 'Read 50 unique articles',
+			icon: 'mdi:book-open-variant',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 50),
+			tracker_id: 'articles_read'
+		},
+		{
+			id: 'networker',
+			description: 'Attend an online and in-person event',
+			icon: 'mdi:handshake',
+			rarity: 'rare',
+			progress: (...args: any[]) => {
+				const typesAttended = args[0] as string[];
+				if (!Array.isArray(typesAttended)) return 0;
+
+				const hasOnline = typesAttended.includes('ONLINE');
+				const hasInPerson = typesAttended.includes('IN_PERSON');
+
+				if (hasOnline && hasInPerson) return 1;
+				if (hasOnline || hasInPerson) return 0.5;
+				return 0;
+			},
+			tracker_id: 'event_types_attended'
+		},
+		{
+			id: 'event_attendee',
+			description: 'Attend 20 events',
+			icon: 'mdi:account-multiple',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 20),
+			tracker_id: 'events_attended'
+		},
+		{
+			id: 'event_organizer',
+			description: 'Organize 10 different events',
+			icon: 'mdi:calendar-multiple',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'events_created'
+		},
+		{
+			id: 'prompt_engineer',
+			description: 'Create 20 prompts',
+			icon: 'mdi:code-braces',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 20),
+			tracker_id: 'prompts_created'
+		},
+		{
+			id: 'rich_in_spirit',
+			description: 'Add 10 activities to your profile',
+			icon: 'mdi:star-four-points',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'activities_added'
+		},
+		{
+			id: 'big_impact',
+			description: 'Achieve 1,000 impact points',
+			icon: 'mdi:earth',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 1000),
+			tracker_id: 'impact_points_earned'
+		},
+		{
+			id: 'storyteller',
+			description: 'Create 5 articles',
+			icon: 'mdi:book-edit',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 5),
+			tracker_id: 'articles_created'
+		},
+		{
+			id: 'adventurer',
+			description: 'Submit images to 10 different events',
+			icon: 'mdi:map',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'event_images_submitted'
+		},
+		{
+			id: 'writer',
+			description: 'Create 10 articles',
+			icon: 'mdi:feather',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'articles_created'
+		},
+		{
+			id: 'explorer',
+			description: 'Submit images to 5 different events',
+			icon: 'mdi:compass',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 5),
+			tracker_id: 'event_images_submitted'
+		},
+		{
+			id: 'invested',
+			description: 'Read activity pages fro a combined total of 1 hour',
+			icon: 'mdi:clock-outline',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 60),
+			tracker_id: 'activity_pages_read_time'
+		},
+		{
+			id: 'night_owl',
+			description: 'Sign up for an event between 12 AM and 4 AM local time',
+			icon: 'mdi:owl',
+			rarity: 'rare'
+		},
+		{
+			id: 'early_adopter',
+			description: 'Have an account older than 6 months',
+			icon: 'mdi:calendar-star',
+			rarity: 'rare',
+			progress: (...args: any[]) => {
+				const createdAt = args[0] as Date;
+				if (!(createdAt instanceof Date)) return 0;
+
+				const daysSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+				return Math.min(daysSinceCreation / 182.5, 1);
+			}
+		},
+		{
+			id: 'dedicated_reader',
+			description: 'Read 200 unique articles',
+			icon: 'mdi:book-multiple',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 200),
+			tracker_id: 'articles_read'
+		},
+		{
+			id: 'article_nerd',
+			description: 'Get 100% on an article quiz',
+			icon: 'mdi:school',
+			rarity: 'rare'
+		},
+		// amazing badges
+		{
+			id: 'journey_master',
+			description: 'Maintain a 30-day streak on any journey',
+			icon: 'mdi:medal',
+			rarity: 'amazing'
+		},
+		{
+			id: 'old_account',
+			name: '1 Year Ago',
+			description: 'Have an account older than 1 year',
+			icon: 'mdi:calendar-clock',
+			rarity: 'amazing',
+			progress: (...args: any[]) => {
+				const createdAt = args[0] as Date;
+				if (!(createdAt instanceof Date)) return 0;
+
+				const daysSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+				return Math.min(daysSinceCreation / 365, 1);
+			}
+		},
+		{
+			id: 'dedicated_creator',
+			description: 'Create 100 prompts',
+			icon: 'mdi:pencil',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 100),
+			tracker_id: 'prompts_created'
+		},
+		{
+			id: 'huge_impact',
+			description: 'Achieve 10,000 impact points',
+			icon: 'mdi:earth-plus',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 10000),
+			tracker_id: 'impact_points_earned'
+		},
+		{
+			id: 'master_writer',
+			description: 'Create 50 articles',
+			icon: 'mdi:book-open-variant-outline',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 50),
+			tracker_id: 'articles_created'
+		},
+		{
+			id: 'world_explorer',
+			description: 'Submit images to 30 different events',
+			icon: 'mdi:earth-arrow-up',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 30),
+			tracker_id: 'event_images_submitted'
+		},
+		{
+			id: 'early_bird',
+			description: 'Sign up for an event between 4 AM and 9 AM local time',
+			icon: 'mdi:bird',
+			rarity: 'amazing'
+		},
+		{
+			id: 'socialite',
+			description: 'Attend 100 events',
+			icon: 'mdi:party-popper',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 100),
+			tracker_id: 'events_attended'
+		},
+		// green badges
+		{
+			id: 'old_account_2',
+			name: '3 Years Ago',
+			description: 'Have an account older than 3 years',
+			icon: 'mdi:calendar-clock',
+			rarity: 'green',
+			progress: (...args: any[]) => {
+				const createdAt = args[0] as Date;
+				if (!(createdAt instanceof Date)) return 0;
+
+				const daysSinceCreation = (Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24);
+				return Math.min(daysSinceCreation / 1095, 1);
+			}
+		},
+		{
+			id: 'ultimate_adventurer',
+			description: 'Maintain a 365-day streak on any journey',
+			icon: 'mdi:trophy-award',
+			rarity: 'green'
+		},
+		{
+			id: 'crazy_impact',
+			description: 'Achieve 100,000 impact points',
+			icon: 'mdi:shovel',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 100000),
+			tracker_id: 'impact_points_earned'
+		},
+		{
+			id: 'you_know_ball',
+			description: 'Become friends with an administrator',
+			icon: 'mdi:shield-star',
+			rarity: 'green'
+		}
+	] as (Badge & { name?: string })[]
+).map((badge) => {
+	if (!badge.name) {
+		// normalize id to name
+		badge.name = badge.id
+			.split('_')
+			.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+			.join(' ');
+	}
+
+	return badge;
+});
+
+// progress helper functions (returns value between 0 and 1
+
+function min(args: any[], min: number): number {
+	if (Array.isArray(args[0])) {
+		const value = args[0].length;
+		return Math.min(value, min) / min;
+	}
+
+	if (typeof args[0] === 'number') {
+		const value = args[0];
+		return Math.min(value, min) / min;
+	}
+
+	const value = parseInt(args[0]);
+	return isNaN(value) ? 0 : Math.min(value, min) / min;
+}
+
+// storage functions
+
+type TrackerEntry = {
+	date: number;
+	value: string;
+};
+
+type BadgeMetadata = {
+	granted_at: number;
+};
+
+export async function getBadgeProgress(
+	userId: string,
+	badgeId: string,
+	kv: KVNamespace,
+	...progressArgs: any[]
+): Promise<number> {
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) return 0;
+
+	if (!badge.progress) {
+		const isGranted = await isBadgeGranted(userId, badgeId, kv);
+		return isGranted ? 1 : 0;
+	}
+
+	if (badge.tracker_id) {
+		const trackerKey = `user:badge_tracker:${userId}:${badge.tracker_id}`;
+		const trackerData = await kv.get(trackerKey, 'json');
+		const tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
+
+		const uniqueValues = Array.from(new Set(tracker.map((t) => t.value)));
+		return await badge.progress(uniqueValues, ...progressArgs);
+	}
+
+	return await badge.progress(...progressArgs);
+}
+
+export async function addBadgeProgress(
+	userId: string,
+	trackerId: string,
+	value: string,
+	kv: KVNamespace
+): Promise<void> {
+	const trackerKey = `user:badge_tracker:${userId}:${trackerId}`;
+	const trackerData = await kv.get(trackerKey, 'json');
+	const tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
+
+	tracker.push({
+		date: Date.now(),
+		value
+	});
+
+	await kv.put(trackerKey, JSON.stringify(tracker));
+}
+
+export async function grantBadge(userId: string, badgeId: string, kv: KVNamespace): Promise<void> {
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) return;
+
+	const metadataKey = `user:badge:${userId}:${badgeId}`;
+	const metadata: BadgeMetadata = {
+		granted_at: Date.now()
+	};
+
+	await kv.put(metadataKey, JSON.stringify(metadata));
+}
+
+export async function isBadgeGranted(
+	userId: string,
+	badgeId: string,
+	kv: KVNamespace
+): Promise<boolean> {
+	const metadataKey = `user:badge:${userId}:${badgeId}`;
+	const metadata = await kv.get(metadataKey);
+	return metadata !== null;
+}
+
+export async function getBadgeMetadata(
+	userId: string,
+	badgeId: string,
+	kv: KVNamespace
+): Promise<BadgeMetadata | null> {
+	const metadataKey = `user:badge:${userId}:${badgeId}`;
+	const metadata = await kv.get(metadataKey, 'json');
+	return metadata ? (metadata as BadgeMetadata) : null;
+}
+
+export async function getGrantedBadges(userId: string, kv: KVNamespace): Promise<string[]> {
+	const prefix = `user:badge:${userId}:`;
+	const list = await kv.list({ prefix });
+
+	return list.keys.map((key) => key.name.replace(prefix, ''));
+}
+
+export async function getNonGrantedBadges(userId: string, kv: KVNamespace): Promise<string[]> {
+	const grantedBadges = await getGrantedBadges(userId, kv);
+	const grantedSet = new Set(grantedBadges);
+
+	return badges.filter((b) => !grantedSet.has(b.id)).map((b) => b.id);
+}
+
+export async function revokeBadge(userId: string, badgeId: string, kv: KVNamespace): Promise<void> {
+	const metadataKey = `user:badge:${userId}:${badgeId}`;
+	await kv.delete(metadataKey);
+}
+
+export async function resetBadgeProgress(
+	userId: string,
+	badgeId: string,
+	kv: KVNamespace
+): Promise<void> {
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge || !badge.tracker_id) return;
+
+	const trackerKey = `user:badge_tracker:${userId}:${badge.tracker_id}`;
+	await kv.delete(trackerKey);
+
+	// revoke the badge if granted
+	await revokeBadge(userId, badgeId, kv);
+}
+
+export async function checkAndGrantBadges(
+	userId: string,
+	trackerId: string,
+	kv: KVNamespace
+): Promise<string[]> {
+	// Find all badges that use this tracker
+	const relevantBadges = badges.filter((b) => b.tracker_id === trackerId);
+	const newlyGranted: string[] = [];
+
+	for (const badge of relevantBadges) {
+		if (await isBadgeGranted(userId, badge.id, kv)) {
+			continue;
+		}
+
+		const progress = await getBadgeProgress(userId, badge.id, kv);
+		if (progress >= 1) {
+			await grantBadge(userId, badge.id, kv);
+			newlyGranted.push(badge.id);
+		}
+	}
+
+	return newlyGranted;
+}
