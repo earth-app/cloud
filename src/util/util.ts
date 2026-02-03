@@ -1,4 +1,4 @@
-import { ExecutionContext } from '@cloudflare/workers-types';
+import { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
 import { generateProfilePhoto, UserProfilePromptData } from './ai';
 import { Bindings } from './types';
 
@@ -40,6 +40,100 @@ export function toDataURL(image: Uint8Array | ArrayBuffer, type = 'image/png'): 
 	}
 
 	return `data:${type};base64,` + btoa(binary);
+}
+
+/**
+ * Normalize a potentially zero-padded numeric ID.
+ * Converts to BigInt and back to string to strip leading zeros.
+ * Returns the original string if it's not a valid numeric ID.
+ */
+export function normalizeId(id: string): string {
+	if (!/^\d+$/.test(id)) return id;
+	try {
+		return BigInt(id).toString();
+	} catch {
+		return id;
+	}
+}
+
+export function isLegacyPaddedId(id: string): boolean {
+	return /^0{5,}\d+$/.test(id);
+}
+
+export async function migrateLegacyKey(
+	oldKey: string,
+	newKey: string,
+	kv: KVNamespace
+): Promise<boolean> {
+	const result = await kv.getWithMetadata(oldKey);
+	if (!result.value) return false;
+
+	const metadata = result.metadata || undefined;
+	await kv.put(newKey, result.value, { metadata });
+
+	await kv.delete(oldKey);
+	return true;
+}
+
+export async function migrateAllLegacyKeys(kv: KVNamespace): Promise<number> {
+	const prefixes = ['journey:', 'user:badge:', 'user:badge_tracker:', 'user:impact_points:'];
+	let migratedCount = 0;
+
+	for (const prefix of prefixes) {
+		let page = await kv.list({ prefix, limit: 1000 });
+
+		for (const key of page.keys) {
+			const keyName = key.name;
+			const parts = keyName.split(':');
+
+			let needsMigration = false;
+			const newParts = parts.map((part) => {
+				if (isLegacyPaddedId(part)) {
+					needsMigration = true;
+					return normalizeId(part);
+				}
+				return part;
+			});
+
+			if (needsMigration) {
+				const newKey = newParts.join(':');
+				const migrated = await migrateLegacyKey(keyName, newKey, kv);
+				if (migrated) {
+					migratedCount++;
+					console.log(`Migrated: ${keyName} -> ${newKey}`);
+				}
+			}
+		}
+
+		while (!page.list_complete && page.cursor) {
+			page = await kv.list({ prefix, limit: 1000, cursor: page.cursor });
+
+			for (const key of page.keys) {
+				const keyName = key.name;
+				const parts = keyName.split(':');
+
+				let needsMigration = false;
+				const newParts = parts.map((part) => {
+					if (isLegacyPaddedId(part)) {
+						needsMigration = true;
+						return normalizeId(part);
+					}
+					return part;
+				});
+
+				if (needsMigration) {
+					const newKey = newParts.join(':');
+					const migrated = await migrateLegacyKey(keyName, newKey, kv);
+					if (migrated) {
+						migratedCount++;
+						console.log(`Migrated: ${keyName} -> ${newKey}`);
+					}
+				}
+			}
+		}
+	}
+
+	return migratedCount;
 }
 
 export function chunkArray<T>(arr: T[], size: number): Array<T[]> {

@@ -1,5 +1,6 @@
 import { KVNamespace } from '@cloudflare/workers-types';
 import { cache, tryCache } from '../util/cache';
+import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
 
 const journeyTypes = ['article', 'prompt', 'event'];
 
@@ -10,8 +11,18 @@ export async function getJourney(
 ): Promise<[number, number]> {
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 
-	const key = `journey:${type}:${id}`;
-	const result = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(key);
+	const normalizedId = normalizeId(id);
+	const key = `journey:${type}:${normalizedId}`;
+	let result = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(key);
+
+	if (!result.metadata && isLegacyPaddedId(id)) {
+		const legacyKey = `journey:${type}:${id}`;
+		const legacyResult = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(legacyKey);
+		if (legacyResult.metadata) {
+			await migrateLegacyKey(legacyKey, key, kv);
+			result = legacyResult;
+		}
+	}
 
 	if (!result.metadata) return [0, 0];
 
@@ -21,8 +32,18 @@ export async function getJourney(
 export async function incrementJourney(id: string, type: string, kv: KVNamespace): Promise<number> {
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 
-	const key = `journey:${type}:${id}`;
-	const result = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(key);
+	const normalizedId = normalizeId(id);
+	const key = `journey:${type}:${normalizedId}`;
+	let result = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(key);
+
+	if (!result.metadata && isLegacyPaddedId(id)) {
+		const legacyKey = `journey:${type}:${id}`;
+		const legacyResult = await kv.getWithMetadata<{ lastWrite: number; streak: number }>(legacyKey);
+		if (legacyResult.metadata) {
+			await kv.delete(legacyKey);
+			result = legacyResult;
+		}
+	}
 	const currentStreak = result.metadata?.streak || 0;
 	const newValue = currentStreak + 1;
 
@@ -57,7 +78,8 @@ export async function retrieveLeaderboard(
 			});
 
 			for (const key of page.keys) {
-				const id = key.name.replace(prefix, '');
+				const rawId = key.name.replace(prefix, '');
+				const id = normalizeId(rawId);
 				const streak = key.metadata?.streak || 0;
 				if (streak > 0) {
 					leaderboard.push({ id, streak });
@@ -72,7 +94,8 @@ export async function retrieveLeaderboard(
 				});
 
 				for (const key of page.keys) {
-					const id = key.name.replace(prefix, '');
+					const rawId = key.name.replace(prefix, '');
+					const id = normalizeId(rawId);
 					const streak = key.metadata?.streak || 0;
 					if (streak > 0) {
 						leaderboard.push({ id, streak });
@@ -94,11 +117,12 @@ export async function retrieveLeaderboardRank(
 	kv: KVNamespace,
 	cacheKv: KVNamespace
 ): Promise<number> {
-	const [userStreak] = await getJourney(id, type, kv);
+	const normalizedId = normalizeId(id);
+	const [userStreak] = await getJourney(normalizedId, type, kv);
 	if (userStreak === 0) return 0;
 
 	const leaderboard = await retrieveLeaderboard(type, kv, cacheKv);
-	const rank = leaderboard.findIndex((entry) => entry.id === id);
+	const rank = leaderboard.findIndex((entry) => entry.id === normalizedId);
 	if (rank >= 0) return rank + 1; // retrieve is 0-based
 
 	// not found in top leaderboard
@@ -118,7 +142,8 @@ export async function addActivityToJourney(
 	activity: string,
 	kv: KVNamespace
 ): Promise<void> {
-	const key = `journey:activities:${id}`;
+	const normalizedId = normalizeId(id);
+	const key = `journey:activities:${normalizedId}`;
 	const activities = await kv.get(key);
 	let activityList: string[] = activities ? JSON.parse(activities) : [];
 
@@ -130,13 +155,26 @@ export async function addActivityToJourney(
 }
 
 export async function getActivityJourney(id: string, kv: KVNamespace): Promise<string[]> {
-	const key = `journey:activities:${id}`;
-	return (await kv.get(key)) ? JSON.parse((await kv.get(key)) as string) : [];
+	const normalizedId = normalizeId(id);
+	const key = `journey:activities:${normalizedId}`;
+	let value = await kv.get(key);
+
+	if (!value && isLegacyPaddedId(id)) {
+		const legacyKey = `journey:activities:${id}`;
+		const legacyValue = await kv.get(legacyKey);
+		if (legacyValue) {
+			await migrateLegacyKey(legacyKey, key, kv);
+			value = legacyValue;
+		}
+	}
+
+	return value ? JSON.parse(value as string) : [];
 }
 
 export async function resetJourney(id: string, type: string, kv: KVNamespace): Promise<void> {
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 
-	const key = `journey:${type}:${id}`;
+	const normalizedId = normalizeId(id);
+	const key = `journey:${type}:${normalizedId}`;
 	await kv.delete(key);
 }

@@ -1,4 +1,5 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
+import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
 
 export type Badge = {
 	id: string;
@@ -390,17 +391,30 @@ export async function getBadgeProgress(
 	kv: KVNamespace,
 	...progressArgs: any[]
 ): Promise<number> {
+	const normalizedUserId = normalizeId(userId);
 	const badge = badges.find((b) => b.id === badgeId);
 	if (!badge) return 0;
 
 	if (!badge.progress) {
-		const isGranted = await isBadgeGranted(userId, badgeId, kv);
+		const isGranted = await isBadgeGranted(normalizedUserId, badgeId, kv);
 		return isGranted ? 1 : 0;
 	}
 
 	if (badge.tracker_id) {
-		const trackerKey = `user:badge_tracker:${userId}:${badge.tracker_id}`;
-		const trackerData = await kv.get(trackerKey, 'json');
+		const trackerKey = `user:badge_tracker:${normalizedUserId}:${badge.tracker_id}`;
+		let trackerData = await kv.get(trackerKey, 'json');
+
+		// Fallback: check for legacy zero-padded key
+		if (!trackerData && isLegacyPaddedId(userId)) {
+			const legacyKey = `user:badge_tracker:${userId}:${badge.tracker_id}`;
+			const legacyData = await kv.get(legacyKey, 'json');
+			if (legacyData) {
+				// Migrate in background
+				await migrateLegacyKey(legacyKey, trackerKey, kv);
+				trackerData = legacyData;
+			}
+		}
+
 		const tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
 
 		const uniqueValues = Array.from(new Set(tracker.map((t) => t.value)));
@@ -416,7 +430,8 @@ export async function addBadgeProgress(
 	value: string,
 	kv: KVNamespace
 ): Promise<void> {
-	const trackerKey = `user:badge_tracker:${userId}:${trackerId}`;
+	const normalizedUserId = normalizeId(userId);
+	const trackerKey = `user:badge_tracker:${normalizedUserId}:${trackerId}`;
 	const trackerData = await kv.get(trackerKey, 'json');
 	const tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
 
@@ -429,10 +444,11 @@ export async function addBadgeProgress(
 }
 
 export async function grantBadge(userId: string, badgeId: string, kv: KVNamespace): Promise<void> {
+	const normalizedUserId = normalizeId(userId);
 	const badge = badges.find((b) => b.id === badgeId);
 	if (!badge) return;
 
-	const metadataKey = `user:badge:${userId}:${badgeId}`;
+	const metadataKey = `user:badge:${normalizedUserId}:${badgeId}`;
 	const metadata: BadgeMetadata = {
 		granted_at: Date.now()
 	};
@@ -445,7 +461,8 @@ export async function isBadgeGranted(
 	badgeId: string,
 	kv: KVNamespace
 ): Promise<boolean> {
-	const metadataKey = `user:badge:${userId}:${badgeId}`;
+	const normalizedUserId = normalizeId(userId);
+	const metadataKey = `user:badge:${normalizedUserId}:${badgeId}`;
 	const metadata = await kv.get(metadataKey);
 	return metadata !== null;
 }
@@ -455,27 +472,60 @@ export async function getBadgeMetadata(
 	badgeId: string,
 	kv: KVNamespace
 ): Promise<BadgeMetadata | null> {
-	const metadataKey = `user:badge:${userId}:${badgeId}`;
-	const metadata = await kv.get(metadataKey, 'json');
+	const normalizedUserId = normalizeId(userId);
+	const metadataKey = `user:badge:${normalizedUserId}:${badgeId}`;
+	let metadata = await kv.get(metadataKey, 'json');
+
+	// Fallback: check for legacy zero-padded key
+	if (!metadata && isLegacyPaddedId(userId)) {
+		const legacyKey = `user:badge:${userId}:${badgeId}`;
+		const legacyMetadata = await kv.get(legacyKey, 'json');
+		if (legacyMetadata) {
+			// Migrate in background
+			await migrateLegacyKey(legacyKey, metadataKey, kv);
+			metadata = legacyMetadata;
+		}
+	}
+
 	return metadata ? (metadata as BadgeMetadata) : null;
 }
 
 export async function getGrantedBadges(userId: string, kv: KVNamespace): Promise<string[]> {
-	const prefix = `user:badge:${userId}:`;
+	const normalizedUserId = normalizeId(userId);
+	const prefix = `user:badge:${normalizedUserId}:`;
 	const list = await kv.list({ prefix });
+	const badgeIds = list.keys.map((key) => key.name.replace(prefix, ''));
 
-	return list.keys.map((key) => key.name.replace(prefix, ''));
+	// Also check for legacy zero-padded keys
+	if (isLegacyPaddedId(userId)) {
+		const legacyPrefix = `user:badge:${userId}:`;
+		const legacyList = await kv.list({ prefix: legacyPrefix });
+
+		for (const key of legacyList.keys) {
+			const badgeId = key.name.replace(legacyPrefix, '');
+			if (!badgeIds.includes(badgeId)) {
+				badgeIds.push(badgeId);
+				// Migrate in background
+				const newKey = `user:badge:${normalizedUserId}:${badgeId}`;
+				await migrateLegacyKey(key.name, newKey, kv);
+			}
+		}
+	}
+
+	return badgeIds;
 }
 
 export async function getNonGrantedBadges(userId: string, kv: KVNamespace): Promise<string[]> {
-	const grantedBadges = await getGrantedBadges(userId, kv);
+	const normalizedUserId = normalizeId(userId);
+	const grantedBadges = await getGrantedBadges(normalizedUserId, kv);
 	const grantedSet = new Set(grantedBadges);
 
 	return badges.filter((b) => !grantedSet.has(b.id)).map((b) => b.id);
 }
 
 export async function revokeBadge(userId: string, badgeId: string, kv: KVNamespace): Promise<void> {
-	const metadataKey = `user:badge:${userId}:${badgeId}`;
+	const normalizedUserId = normalizeId(userId);
+	const metadataKey = `user:badge:${normalizedUserId}:${badgeId}`;
 	await kv.delete(metadataKey);
 }
 
@@ -484,14 +534,15 @@ export async function resetBadgeProgress(
 	badgeId: string,
 	kv: KVNamespace
 ): Promise<void> {
+	const normalizedUserId = normalizeId(userId);
 	const badge = badges.find((b) => b.id === badgeId);
 	if (!badge || !badge.tracker_id) return;
 
-	const trackerKey = `user:badge_tracker:${userId}:${badge.tracker_id}`;
+	const trackerKey = `user:badge_tracker:${normalizedUserId}:${badge.tracker_id}`;
 	await kv.delete(trackerKey);
 
 	// revoke the badge if granted
-	await revokeBadge(userId, badgeId, kv);
+	await revokeBadge(normalizedUserId, badgeId, kv);
 }
 
 export async function checkAndGrantBadges(
@@ -499,18 +550,19 @@ export async function checkAndGrantBadges(
 	trackerId: string,
 	kv: KVNamespace
 ): Promise<string[]> {
+	const normalizedUserId = normalizeId(userId);
 	// Find all badges that use this tracker
 	const relevantBadges = badges.filter((b) => b.tracker_id === trackerId);
 	const newlyGranted: string[] = [];
 
 	for (const badge of relevantBadges) {
-		if (await isBadgeGranted(userId, badge.id, kv)) {
+		if (await isBadgeGranted(normalizedUserId, badge.id, kv)) {
 			continue;
 		}
 
-		const progress = await getBadgeProgress(userId, badge.id, kv);
+		const progress = await getBadgeProgress(normalizedUserId, badge.id, kv);
 		if (progress >= 1) {
-			await grantBadge(userId, badge.id, kv);
+			await grantBadge(normalizedUserId, badge.id, kv);
 			newlyGranted.push(badge.id);
 		}
 	}

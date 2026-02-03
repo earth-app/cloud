@@ -27,7 +27,9 @@ import {
 	uploadEventThumbnail,
 	deleteEventThumbnail,
 	submitEventImage,
-	getEventImageSubmissions
+	getEventImageSubmissions,
+	normalizeId,
+	migrateAllLegacyKeys
 } from './util/util';
 import { tryCache } from './util/cache';
 import {
@@ -70,6 +72,18 @@ app.use('*', async (c, next) => {
 });
 
 // Implementation
+
+// Admin Migration
+
+app.post('/admin/migrate-legacy-keys', async (c) => {
+	try {
+		const count = await migrateAllLegacyKeys(c.env.KV);
+		return c.json({ message: 'Migration completed', migrated_count: count }, 200);
+	} catch (err) {
+		console.error('Error during legacy key migration:', err);
+		return c.text('Failed to migrate legacy keys', 500);
+	}
+});
 
 // Activities
 
@@ -494,7 +508,8 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 	const [value, lastWrite] = await getJourney(id, type, c.env.KV);
 	if (Date.now() - lastWrite < 60 * 60 * 24 * 1000) {
 		// Bump expirationTtl
-		const key = `journey:${type}:${id}`;
+		const normalizedId = normalizeId(id);
+		const key = `journey:${type}:${normalizedId}`;
 		c.executionCtx.waitUntil(
 			c.env.KV.put(key, value.toString(), {
 				expirationTtl: 60 * 60 * 24 * 2,
