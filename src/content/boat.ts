@@ -1,3 +1,5 @@
+// boat - ai content generation
+
 import { com } from '@earth-app/ocean';
 
 import { Activity, Article, Bindings, Event, EventData, OceanArticle, Prompt } from '../util/types';
@@ -17,6 +19,7 @@ const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
 const rankerModel = '@cf/baai/bge-reranker-base';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
+const quizModel = '@hf/nousresearch/hermes-2-pro-mistral-7b';
 const promptModel = '@cf/openai/gpt-oss-120b';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
@@ -35,8 +38,8 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 						{ role: 'system', content: prompts.activityDescriptionSystemMessage.trim() },
 						{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 					],
-					max_tokens: 800,
-					temperature: 0.15 + (attempt - 1) * 0.08 // increase temperature slightly on each retry
+					max_tokens: 512,
+					temperature: 0.1 + (attempt - 1) * 0.05 // gentler temperature increase for faster convergence
 				});
 
 				const rawDesc = description?.response || '';
@@ -200,7 +203,8 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 				{ role: 'system', content: prompts.articleTopicSystemMessage.trim() },
 				{ role: 'user', content: prompts.articleTopicPrompt().trim() }
 			],
-			max_tokens: 16
+			max_tokens: 12,
+			temperature: 0.3 // moderate temperature for topic diversity
 		});
 	} catch (aiError) {
 		console.error('AI model failed for article topic generation', { error: aiError });
@@ -231,32 +235,34 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 
 	// Rank articles to find the best one
 	// Limit is ~512 tokens per context for BGE-Reranker
-	// Chunk by 125 articles to reduce latency and neuron load
-	const batches = chunkArray(searchResults, 125);
+	// Filter aggressively first, then chunk by 150 articles for optimal throughput
+	const filteredResults = searchResults
+		.filter(
+			(article) =>
+				(article.abstract && article.abstract.length >= 250) ||
+				(article.content && article.content.length >= 250)
+		) // must have abstract or content with at least 250 characters
+		.filter((article) => article.title.match(/[^\x00-\x7F]+/gim)?.length || 0 === 0) // title must be only ascii
+		.filter((article) => article.keywords && article.keywords.length > 0); // must have keywords
+
+	const batches = chunkArray(filteredResults, 150);
 
 	const allArticles: { text: string; ocean: OceanArticle }[] = [];
 	const rankQuery = prompts.articleClassificationQuery(topic, tags);
 	const allRanked: { id: number; score: number }[] = [];
 
 	for (const batch of batches) {
-		const contexts = batch
-			.filter(
-				(article) =>
-					(article.abstract && article.abstract.length >= 250) ||
-					(article.content && article.content.length >= 250)
-			) // must have abstract or content with at least 250 characters
-			.filter((article) => article.title.match(/[^\x00-\x7F]+/gim)?.length || 0 === 0) // title must be only ascii
-			.map((article) => ({
-				text:
-					(article.title || '') +
-					' by ' +
-					(article.author || 'Unknown') +
-					' | Tags: ' +
-					(article.keywords || []).join(', ') +
-					'\n' +
-					(article.abstract || '').substring(0, 200),
-				ocean: article // store original for later retrieval
-			}));
+		const contexts = batch.map((article) => ({
+			text:
+				(article.title || '') +
+				' by ' +
+				(article.author || 'Unknown') +
+				' | Tags: ' +
+				(article.keywords || []).join(', ') +
+				'\n' +
+				(article.abstract || '').substring(0, 200),
+			ocean: article // store original for later retrieval
+		}));
 		allArticles.push(...contexts);
 
 		// Rank this batch
@@ -345,7 +351,7 @@ export async function createArticle(
 	ocean: OceanArticle,
 	ai: Ai,
 	tags: string[]
-): Promise<Partial<Article>> {
+): Promise<Omit<Article, 'id' | 'author' | 'author_id' | 'created_at' | 'color_hex'>> {
 	const maxContentLength = 100000;
 	const articleContent =
 		ocean.content?.trim()?.substring(0, maxContentLength) || ocean.abstract?.trim() || '';
@@ -362,7 +368,8 @@ export async function createArticle(
 					{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
 					{ role: 'user', content: ocean.title.trim() }
 				],
-				max_tokens: 36
+				max_tokens: 48,
+				temperature: 0.2 // lower temperature for focused titles
 			});
 		} catch (aiError) {
 			console.error('AI model failed for article title generation', {
@@ -382,7 +389,8 @@ export async function createArticle(
 					{ role: 'user', content: articleContent },
 					{ role: 'user', content: prompts.articleSummaryPrompt(ocean, tags).trim() }
 				],
-				max_tokens: 2500 // Add max_tokens limit for summary
+				max_tokens: 1536,
+				temperature: 0.25 // balanced for natural writing while maintaining focus
 			});
 		} catch (aiError) {
 			console.error('AI model failed for article summary generation', {
@@ -411,11 +419,69 @@ export async function createArticle(
 	}
 }
 
-export async function postArticle(article: Partial<Article>, bindings: Bindings): Promise<Article> {
-	if (!article.title || !article.description || !article.content) {
-		throw new Error('Article must have title, description and content');
-	}
+export type ArticleQuizQuestion = {
+	question: string;
+} & (
+	| {
+			type: 'multiple_choice';
+			options: string[];
+			correct_answer: string;
+			correct_answer_index: number;
+	  }
+	| {
+			type: 'true_false';
+			options: ('true' | 'false')[];
+			correct_answer: 'true' | 'false';
+			correct_answer_index: number;
+			is_true: boolean;
+			is_false: boolean;
+	  }
+);
 
+const articleQuizAiSchema = {
+	type: 'array',
+	items: {
+		type: 'object',
+		properties: {
+			question: { type: 'string' },
+			type: { type: 'string', enum: ['multiple_choice', 'true_false'] },
+			options: {
+				type: 'array',
+				items: { type: 'string' }
+			},
+			correct_answer: { type: 'string' },
+			correct_answer_index: { type: 'number' },
+			is_true: { type: 'boolean' },
+			is_false: { type: 'boolean' }
+		},
+		required: ['question', 'type', 'options', 'correct_answer', 'correct_answer_index']
+	}
+};
+
+export async function createArticleQuiz(
+	article: Pick<Article, 'title' | 'content' | 'ocean' | 'tags'>,
+	ai: Ai
+): Promise<ArticleQuizQuestion[]> {
+	const quizResult = await ai.run(quizModel, {
+		messages: [
+			{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
+			{ role: 'user', content: prompts.articleQuizPrompt(article).trim() }
+		],
+		response_format: {
+			type: 'json',
+			json_schema: articleQuizAiSchema
+		}
+	});
+
+	const quizData = JSON.parse(quizResult?.response || '[]') as ArticleQuizQuestion[];
+	return quizData || [];
+}
+
+export async function postArticle(
+	article: Pick<Article, 'title' | 'description' | 'content' | 'ocean'>,
+	quiz: ArticleQuizQuestion[] | null,
+	bindings: Bindings
+): Promise<Article> {
 	const url = (bindings.MANTLE_URL || 'https://api.earth-app.com') + '/v2/articles';
 	const res = await fetch(url, {
 		method: 'POST',
@@ -436,6 +502,12 @@ export async function postArticle(article: Partial<Article>, bindings: Bindings)
 		throw new Error('Failed to create article, no ID returned');
 	}
 
+	// add quiz to KV
+	if (quiz) {
+		const key = `article:quiz:${data.id}`;
+		await bindings.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 12 * 29 }); // 14.5 days (articles are deleted after 2 weeks)
+	}
+
 	return data;
 }
 
@@ -454,9 +526,9 @@ export async function recommendArticles(
 		text:
 			(article.title || '') +
 			' | Tags: ' +
-			(article.tags || []).join(', ') +
+			(article.tags || []).slice(0, 6).join(', ') + // limit tags to reduce tokens
 			'\n' +
-			(article.description || '').substring(0, 500),
+			(article.description || '').substring(0, 400), // slightly reduce description length
 		original: article // store original for later retrieval
 	}));
 
@@ -473,8 +545,10 @@ export async function recommendArticles(
 		.filter((r) => r.id !== undefined)
 		.map((r) => ({ id: r.id!, score: r.score || 0 }));
 
-	// Get top N articles based on score
+	// Get top N articles based on score, filtering by minimum threshold
+	const scoreThreshold = 0.3; // only include articles with meaningful relevance
 	const topRanked = allRanked
+		.filter((r) => r.score >= scoreThreshold)
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
@@ -496,12 +570,10 @@ export async function recommendSimilarArticles(
 	const contexts = pool.map((a) => ({
 		text:
 			(a.title || '') +
-			' by ' +
-			(a.author || 'Unknown') +
 			' | Tags: ' +
-			(a.tags || []).join(', ') +
+			(a.tags || []).slice(0, 6).join(', ') + // limit tags
 			'\n' +
-			(a.content || '').substring(0, 500),
+			(a.content || '').substring(0, 400), // reduce content length
 		original: a // store original for later retrieval
 	}));
 
@@ -518,8 +590,10 @@ export async function recommendSimilarArticles(
 		.filter((r) => r.id !== undefined)
 		.map((r) => ({ id: r.id!, score: r.score || 0 }));
 
-	// Get top N similar articles based on score
+	// Get top N similar articles based on score with minimum threshold
+	const scoreThreshold = 0.4; // higher threshold for similarity recommendations
 	const topRanked = allRanked
+		.filter((r) => r.score >= scoreThreshold)
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
@@ -768,8 +842,8 @@ export async function createEvent(
 					content: prompts.eventDescriptionPrompt(entry, date).trim()
 				}
 			],
-			max_tokens: 500,
-			temperature: 0.25
+			max_tokens: 450,
+			temperature: 0.2 // lower temperature for factual, informative descriptions
 		});
 	} catch (aiError) {
 		console.error('AI model failed for event description generation', {
@@ -788,7 +862,9 @@ export async function createEvent(
 			messages: [
 				{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
 				{ role: 'user', content: `'${name}'` }
-			]
+			],
+			max_tokens: 64,
+			temperature: 0.05 // very low temperature for consistent tag selection
 		});
 	} catch (aiError) {
 		console.error('AI model failed for activity tags', { name, error: aiError });
@@ -981,9 +1057,9 @@ export async function recommendEvents(
 			text:
 				(event.name || '') +
 				' | Activities: ' +
-				activityStrings.join(', ') +
+				activityStrings.slice(0, 5).join(', ') + // limit activities
 				'\n' +
-				(event.description || '').substring(0, 500),
+				(event.description || '').substring(0, 400), // reduce description
 			original: event
 		};
 	});
@@ -1001,8 +1077,10 @@ export async function recommendEvents(
 		.filter((r) => r.id !== undefined)
 		.map((r) => ({ id: r.id!, score: r.score || 0 }));
 
-	// Get top N events based on score
+	// Get top N events based on score with minimum relevance threshold
+	const scoreThreshold = 0.3;
 	const topRanked = allRanked
+		.filter((r) => r.score >= scoreThreshold)
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
@@ -1048,9 +1126,9 @@ export async function recommendSimilarEvents(event: Event, pool: Event[], limit:
 			text:
 				(e.name || '') +
 				' | Activities: ' +
-				activityStrings.join(', ') +
+				activityStrings.slice(0, 5).join(', ') + // limit activities
 				'\n' +
-				(e.description || '').substring(0, 500),
+				(e.description || '').substring(0, 400), // reduce description
 			original: e
 		};
 	});
@@ -1068,8 +1146,10 @@ export async function recommendSimilarEvents(event: Event, pool: Event[], limit:
 		.filter((r) => r.id !== undefined)
 		.map((r) => ({ id: r.id!, score: r.score || 0 }));
 
-	// Get top N similar events based on score
+	// Get top N similar events based on score with higher threshold for similarity
+	const scoreThreshold = 0.4;
 	const topRanked = allRanked
+		.filter((r) => r.score >= scoreThreshold)
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
