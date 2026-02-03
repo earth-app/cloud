@@ -471,35 +471,26 @@ const articleQuizAiSchema = {
 	properties: {
 		questions: {
 			type: 'array',
-			minItems: 5,
-			maxItems: 15,
+			minItems: 2,
+			maxItems: 5,
 			items: {
 				type: 'object',
 				properties: {
 					question: {
 						type: 'string',
-						minLength: 10,
-						maxLength: 200
+						maxLength: 100
 					},
 					type: { type: 'string', enum: ['multiple_choice', 'true_false'] },
 					options: {
 						type: 'array',
-						minItems: 2,
-						maxItems: 5,
+						maxItems: 4,
 						items: {
 							type: 'string',
-							minLength: 1,
-							maxLength: 150
+							maxLength: 60
 						}
 					},
-					correct_answer: {
-						type: 'string',
-						minLength: 1
-					},
-					correct_answer_index: {
-						type: 'number',
-						minimum: 0
-					},
+					correct_answer: { type: 'string' },
+					correct_answer_index: { type: 'number' },
 					is_true: { type: 'boolean' },
 					is_false: { type: 'boolean' }
 				},
@@ -510,16 +501,30 @@ const articleQuizAiSchema = {
 	required: ['questions']
 };
 
+const QUIZ_CUTOFF = 300;
+
 export async function createArticleQuiz(
 	article: Pick<Article, 'title' | 'content' | 'ocean' | 'tags'>,
 	ai: Ai
 ): Promise<ArticleQuizQuestion[]> {
 	try {
+		const content = article.ocean.content || article.ocean.abstract || '';
+		const firstPart = content.substring(0, QUIZ_CUTOFF);
+		const lastPart = content.substring(content.length - QUIZ_CUTOFF);
 		const quizResult = await ai.run(quizModel, {
 			messages: [
 				{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
-				{ role: 'user', content: prompts.articleQuizPrompt(article).trim() }
+				{
+					role: 'user',
+					content:
+						content.length > QUIZ_CUTOFF * 2
+							? firstPart + '... (truncated) ...' + lastPart
+							: content
+				},
+				{ role: 'user', content: prompts.articleQuizPrompt.trim() }
 			],
+			max_tokens: 512,
+			temperature: 0.3,
 			response_format: {
 				type: 'json_schema',
 				json_schema: articleQuizAiSchema

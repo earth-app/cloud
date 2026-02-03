@@ -309,7 +309,7 @@ export function validateArticleTopic(topicResponse: string): string {
 			throw new Error('Generated article topic too short');
 		}
 
-		if (wordCount > 3) {
+		if (wordCount > 6) {
 			logAIFailure('ArticleTopic', 'N/A', topic, `Topic too long: ${wordCount} words`);
 			throw new Error('Generated article topic too long');
 		}
@@ -344,7 +344,7 @@ export function validateArticleTitle(titleResponse: string, originalTitle: strin
 			throw new Error('Generated article title too short');
 		}
 
-		if (wordCount > 20) {
+		if (wordCount > 30) {
 			logAIFailure('ArticleTitle', originalTitle, title, `Title too long: ${wordCount} words`);
 			throw new Error('Generated article title too long');
 		}
@@ -751,7 +751,6 @@ You are an expert quiz creator specializing in educational content.
 TASK: Generate a quiz based on the provided article.
 
 REQUIREMENTS:
-- Question Count: 5-15 questions
 - Format: Mix of multiple choice and true/false
 - Difficulty: Varying levels, from basic recall to critical thinking
 - Clarity: Clear, concise wording
@@ -762,34 +761,16 @@ REQUIREMENTS:
 OUTPUT FORMAT: Return only the quiz questions, answer choices, correct answers, and explanations.
 `;
 
-export const articleQuizPrompt = (
-	article: Pick<Article, 'ocean' | 'title' | 'tags' | 'content'>
-): string => {
-	const content = article.ocean.content || article.ocean.abstract || '';
-	return `
-Generate a quiz with 5-15 questions, multiple choice and true/false format, based on the following article:
-
-Title: "${article.title}"
-Tags: ${article.tags.join(', ')}
-
-Excerpt:
-${article.content.length > 500 ? `${article.content.substring(0, 500)}... (truncated)` : article.content}
-
-Content:
-${content.length > 1000 ? `${content.substring(0, 1000)}... (truncated)` : content}
+export const articleQuizPrompt = `
+Generate a quiz with brief questions (multiple choice and true/false) based on the article.
 
 REQUIREMENTS:
-- Question Count: 5-15 questions
-- Format: Mix of multiple choice and true/false
-- Difficulty: Varying levels, from basic recall to critical thinking
-- Clarity: Clear, concise wording
-- Relevance: Directly related to article content
-- No personal pronouns or conversational language
-- Provide correct answers and brief explanations for each question
+- Mix of multiple choice (2-4 options) and true/false
+- Concise (max 100 chars per question, 60 per option)
+- Directly related to article content
 
-OUTPUT: Return only the quiz questions, answer choices, correct answers, and explanations.
+OUTPUT: Return the quiz as JSON.
 `;
-};
 
 // Prompts Prompts
 
