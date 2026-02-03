@@ -1,5 +1,6 @@
 import {
 	createArticle,
+	createArticleQuiz,
 	createEvent,
 	createPrompt,
 	findArticle,
@@ -39,15 +40,17 @@ export default async function scheduled(
 			(async () => {
 				console.log('Started at', new Date().toISOString());
 
-				const [article, tags] = await findArticle(env);
-				console.log('Found article and tags:', article.title, tags);
+				const [ocean, tags] = await findArticle(env);
+				console.log('Found article and tags:', ocean.title, tags);
 
-				const created = await createArticle(article, env.AI, tags);
-				await postArticle(created, env);
+				const article = await createArticle(ocean, env.AI, tags);
+				const quiz = await createArticleQuiz(article, env.AI);
+				await postArticle(article, quiz, env);
+
 				console.log(
 					'Created new article:',
-					`"${created.title}" | `,
-					created.content?.slice(0, 100) + '...'
+					`"${article.title}" | `,
+					article.content?.slice(0, 100) + '...'
 				);
 
 				console.log('Finished at', new Date().toISOString());

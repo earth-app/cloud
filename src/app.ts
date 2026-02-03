@@ -2,6 +2,7 @@ import { com, kotlin } from '@earth-app/ocean';
 import { Hono } from 'hono';
 
 import {
+	ArticleQuizQuestion,
 	createActivityData,
 	extractLocationFromEventName,
 	findArticles,
@@ -14,7 +15,7 @@ import {
 import { getSynonyms } from './util/dictionary';
 import * as prompts from './util/ai';
 
-import { Article, Bindings, Event } from './util/types';
+import { Article, Bindings, Event, EventData } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
@@ -24,7 +25,9 @@ import {
 	validSizes,
 	getEventThumbnail,
 	uploadEventThumbnail,
-	deleteEventThumbnail
+	deleteEventThumbnail,
+	submitEventImage,
+	getEventImageSubmissions
 } from './util/util';
 import { tryCache } from './util/cache';
 import {
@@ -33,6 +36,7 @@ import {
 	getJourney,
 	incrementJourney,
 	resetJourney,
+	retrieveLeaderboard,
 	retrieveLeaderboardRank
 } from './user/journies';
 import {
@@ -53,6 +57,7 @@ import {
 	removeImpactPoints,
 	setImpactPoints
 } from './user/points';
+import { scoreImage, ScoreResult, scoreText } from './content/ferry';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -67,6 +72,7 @@ app.use('*', async (c, next) => {
 // Implementation
 
 // Activities
+
 app.get('/synonyms', async (c) => {
 	const word = c.req.query('word')?.trim();
 	if (!word || word.length < 3) {
@@ -170,6 +176,49 @@ app.post('/articles/recommend_similar_articles', async (c) => {
 		}),
 		200
 	);
+});
+
+app.post('/articles/grade', async (c) => {
+	const body = await c.req.json<{
+		content: string;
+	}>();
+
+	if (!body.content) {
+		return c.text('Invalid request body', 400);
+	}
+
+	const score = await scoreText(c.env, body.content || '', prompts.articleCriteria);
+	return c.json(score, 200);
+});
+
+app.get('/articles/quiz', async (c) => {
+	const articleId = c.req.query('articleId');
+	if (!articleId) {
+		return c.text('Article ID is required', 400);
+	}
+
+	const key = `article:quiz:${articleId}`;
+	const quizData = await c.env.KV.get<ArticleQuizQuestion[]>(key, 'json');
+	if (!quizData) {
+		return c.text('Quiz not found for the specified article', 404);
+	}
+
+	return c.json(quizData, 200);
+});
+
+// Prompts
+
+app.post('/prompts/grade', async (c) => {
+	const body = await c.req.json<{
+		prompt: string;
+	}>();
+
+	if (!body.prompt) {
+		return c.text('Invalid request body', 400);
+	}
+
+	const score = await scoreText(c.env, body.prompt || '', prompts.promptCriteria);
+	return c.json(score, 200);
 });
 
 // Users
@@ -485,7 +534,42 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 	}
 });
 
-// User Badges
+app.get('/users/journey/:type/:id/rank', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const type = c.req.param('type')?.toLowerCase();
+	if (!id || !type) {
+		return c.text('Journey ID and type are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const rank = await retrieveLeaderboardRank(id, type, c.env.KV, c.env.CACHE);
+		return c.json({ rank }, 200);
+	} catch (err) {
+		console.error(`Error retrieving leaderboard rank for journey '${type}' and ID '${id}':`, err);
+		return c.text('Failed to retrieve leaderboard rank', 500);
+	}
+});
+
+app.get('/users/journey/:type/leaderboard', async (c) => {
+	const type = c.req.param('type')?.toLowerCase();
+	if (!type) {
+		return c.text('Journey type is required', 400);
+	}
+
+	try {
+		const leaderboard = await retrieveLeaderboard(type, c.env.KV, c.env.CACHE);
+		return c.json(leaderboard, 200);
+	} catch (err) {
+		console.error(`Error retrieving leaderboard for journey type '${type}':`, err);
+		return c.text('Failed to retrieve leaderboard', 500);
+	}
+});
+
+/// User Badges
 
 app.get('/users/badges/:id/:badge_id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
@@ -745,7 +829,7 @@ app.delete('/users/badges/:id/:badge_id/reset', async (c) => {
 	}
 });
 
-// User Impact Points
+/// User Impact Points
 
 app.get('/users/impact_points/:id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
@@ -1078,6 +1162,84 @@ app.post('/events/recommend_similar_events', async (c) => {
 		}),
 		200
 	);
+});
+
+app.post('/events/submit_image', async (c) => {
+	const body = await c.req.json<{ event: Event }>();
+	if (!body || !body.event) {
+		return c.text('Invalid request body', 400);
+	}
+
+	const idParam = body.event.id;
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const photo = await c.req.arrayBuffer();
+	const imageData = new Uint8Array(photo);
+	if (imageData.length === 0) {
+		return c.text('Image data is required', 400);
+	}
+
+	const res = await submitEventImage(id, imageData, c.env, c.executionCtx);
+
+	// create submission grade
+	c.executionCtx.waitUntil(
+		(async () => {
+			const [caption, score] = await scoreImage(
+				c.env,
+				res.image,
+				prompts.eventImageCaptionPrompt(body.event),
+				prompts.eventImageCriteria(body.event)
+			);
+
+			const key = `event:image:score:${id}:${res.id}`;
+			const endDate = body.event.end_date || body.event.date;
+			await c.env.KV.put(key, JSON.stringify(score), {
+				expiration: Math.floor(new Date(endDate).getTime() / 1000) + 60 * 60 * 24 * 3, // 3 days after event end
+				metadata: { caption }
+			});
+		})()
+	);
+
+	return c.body(null, 204);
+});
+
+app.get('/events/:id/submissions', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const submissions = await getEventImageSubmissions(id, c.env);
+
+	// attach scores, convert to data url
+	const submissionsWithScores = await Promise.all(
+		submissions.map(async (submission) => {
+			const key = `event:image:score:${id}:${submission.id}`;
+			const value = await c.env.KV.getWithMetadata<{ caption: string }>(key);
+			const score = value.value ? (JSON.parse(value.value) as ScoreResult) : null;
+
+			return {
+				...submission,
+				image: toDataURL(submission.image, 'image/webp'),
+				score,
+				caption: value.metadata?.caption || null
+			};
+		})
+	);
+
+	return c.json(submissionsWithScores, 200);
 });
 
 export default app;
