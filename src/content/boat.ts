@@ -251,16 +251,19 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 	const rankQuery = prompts.articleClassificationQuery(topic, tags);
 	const allRanked: { id: number; score: number }[] = [];
 
-	for (const batch of batches) {
+	for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+		const batch = batches[batchIndex];
+		const batchOffset = batchIndex * 150; // Track offset for index mapping
+
 		const contexts = batch.map((article) => ({
 			text:
 				(article.title || '') +
 				' by ' +
 				(article.author || 'Unknown') +
 				' | Tags: ' +
-				(article.keywords || []).join(', ') +
+				(article.keywords || []).slice(0, 8).join(', ') + // limit keywords to reduce tokens
 				'\n' +
-				(article.abstract || '').substring(0, 200),
+				(article.abstract || '').substring(0, 180),
 			ocean: article // store original for later retrieval
 		}));
 		allArticles.push(...contexts);
@@ -275,10 +278,11 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 			throw new Error('Failed to rank articles: ' + JSON.stringify(ranked));
 		}
 
+		// Map batch-relative IDs to global indices
 		allRanked.push(
 			...ranked.response
 				.filter((r) => r.id !== undefined)
-				.map((r) => ({ id: r.id!, score: r.score || 0 }))
+				.map((r) => ({ id: r.id! + batchOffset, score: r.score || 0 }))
 		);
 	}
 
@@ -286,6 +290,11 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 	const best = allRanked.sort((a, b) => b.score - a.score)[0];
 	if (!best) {
 		throw new Error('No best article found after ranking: length ' + allRanked.length);
+	}
+
+	// Bounds check before accessing array
+	if (best.id < 0 || best.id >= allArticles.length) {
+		throw new Error(`Invalid article index: ${best.id} (array length: ${allArticles.length})`);
 	}
 
 	const bestArticle = allArticles[best.id].ocean;
@@ -462,19 +471,24 @@ export async function createArticleQuiz(
 	article: Pick<Article, 'title' | 'content' | 'ocean' | 'tags'>,
 	ai: Ai
 ): Promise<ArticleQuizQuestion[]> {
-	const quizResult = await ai.run(quizModel, {
-		messages: [
-			{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
-			{ role: 'user', content: prompts.articleQuizPrompt(article).trim() }
-		],
-		response_format: {
-			type: 'json',
-			json_schema: articleQuizAiSchema
-		}
-	});
+	try {
+		const quizResult = await ai.run(quizModel, {
+			messages: [
+				{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
+				{ role: 'user', content: prompts.articleQuizPrompt(article).trim() }
+			],
+			response_format: {
+				type: 'json',
+				json_schema: articleQuizAiSchema
+			}
+		});
 
-	const quizData = JSON.parse(quizResult?.response || '[]') as ArticleQuizQuestion[];
-	return quizData || [];
+		const quizData = JSON.parse(quizResult?.response || '[]') as ArticleQuizQuestion[];
+		return quizData || [];
+	} catch (error) {
+		console.error('Quiz generation failed, continuing without quiz:', error);
+		return []; // Return empty quiz rather than failing article creation
+	}
 }
 
 export async function postArticle(
@@ -548,7 +562,7 @@ export async function recommendArticles(
 	// Get top N articles based on score, filtering by minimum threshold
 	const scoreThreshold = 0.3; // only include articles with meaningful relevance
 	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold)
+		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
@@ -593,7 +607,7 @@ export async function recommendSimilarArticles(
 	// Get top N similar articles based on score with minimum threshold
 	const scoreThreshold = 0.4; // higher threshold for similarity recommendations
 	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold)
+		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
@@ -771,7 +785,7 @@ export async function rankActivitiesForEvent(
 	// Filter by score threshold (0.5 or higher indicates good relevance)
 	const scoreThreshold = 0.5;
 	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold)
+		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original.id);
@@ -1080,7 +1094,7 @@ export async function recommendEvents(
 	// Get top N events based on score with minimum relevance threshold
 	const scoreThreshold = 0.3;
 	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold)
+		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);
@@ -1149,7 +1163,7 @@ export async function recommendSimilarEvents(event: Event, pool: Event[], limit:
 	// Get top N similar events based on score with higher threshold for similarity
 	const scoreThreshold = 0.4;
 	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold)
+		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit)
 		.map((r) => contexts[r.id].original);

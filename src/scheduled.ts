@@ -63,7 +63,7 @@ export default async function scheduled(
 				console.log('Started at', new Date().toISOString());
 
 				const types = ['article', 'prompt', 'event'];
-				Promise.all(
+				await Promise.all(
 					types.map(async (type) => {
 						await retrieveLeaderboard(type, env.KV, env.CACHE);
 						console.log(`Cached leaderboard for journey type: ${type}`);
