@@ -291,44 +291,6 @@ export function validateActivityDescription(
 	}
 }
 
-export function validateActivityTags(tagsResponse: string, activityName: string): string[] {
-	try {
-		if (!tagsResponse || typeof tagsResponse !== 'string') {
-			logAIFailure('ActivityTags', activityName, tagsResponse, 'Invalid response type');
-			return ['OTHER'];
-		}
-
-		// Sanitize the tags response
-		const sanitized = sanitizeForContentType(tagsResponse, 'tags');
-
-		const validTags = ocean.com.earthapp.activity.ActivityType.values().map((t) =>
-			t.name.trim().toUpperCase()
-		);
-
-		const tags = sanitized
-			.trim()
-			.split(',')
-			.map((tag) => tag.trim().toUpperCase())
-			.filter((tag) => tag.length > 0)
-			.filter((tag) => validTags.includes(tag));
-
-		if (tags.length === 0) {
-			logAIFailure('ActivityTags', activityName, sanitized, 'No valid tags found');
-			return ['OTHER'];
-		}
-
-		if (tags.length > 5) {
-			console.warn('Too many tags generated, limiting to 5', { tags, activityName });
-			return tags.slice(0, 5);
-		}
-
-		return tags;
-	} catch (error) {
-		logAIFailure('ActivityTags', activityName, tagsResponse, `Validation error: ${error}`);
-		return ['OTHER'];
-	}
-}
-
 export function validateArticleTopic(topicResponse: string): string {
 	try {
 		if (!topicResponse || typeof topicResponse !== 'string') {

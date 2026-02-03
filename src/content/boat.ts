@@ -22,6 +22,22 @@ const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const quizModel = '@hf/nousresearch/hermes-2-pro-mistral-7b';
 const promptModel = '@cf/openai/gpt-oss-120b';
 
+const activityTagsSchema = {
+	type: 'object',
+	properties: {
+		tags: {
+			type: 'array',
+			minItems: 1,
+			maxItems: 5,
+			items: {
+				type: 'string',
+				enum: com.earthapp.activity.ActivityType.values().map((t: any) => t.name.toUpperCase())
+			}
+		}
+	},
+	required: ['tags']
+};
+
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
 		// Generate description with retry logic (3 attempts)
@@ -72,22 +88,25 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			);
 		}
 
-		// Generate tags with error handling
-		let tagsResult;
+		// Generate tags with error handling and JSON schema
+		let tags: string[] = ['OTHER'];
 		try {
-			tagsResult = await ai.run(tagsModel, {
+			const tagsResult = await ai.run(tagsModel, {
 				messages: [
 					{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
 					{ role: 'user', content: `'${activity}'` }
-				]
+				],
+				response_format: {
+					type: 'json_schema',
+					json_schema: activityTagsSchema
+				}
 			});
+			const parsed = JSON.parse(tagsResult?.response || '{"tags":["OTHER"]}');
+			tags = parsed.tags || ['OTHER'];
 		} catch (aiError) {
 			console.error('AI model failed for activity tags', { activity, error: aiError });
-			// Continue with default tags rather than failing completely
-			tagsResult = { response: 'OTHER' };
+			tags = ['OTHER'];
 		}
-
-		const tags = prompts.validateActivityTags(tagsResult?.response || '', activity);
 
 		// Find aliases
 		let aliases: string[] = [];
@@ -448,23 +467,47 @@ export type ArticleQuizQuestion = {
 );
 
 const articleQuizAiSchema = {
-	type: 'array',
-	items: {
-		type: 'object',
-		properties: {
-			question: { type: 'string' },
-			type: { type: 'string', enum: ['multiple_choice', 'true_false'] },
-			options: {
-				type: 'array',
-				items: { type: 'string' }
-			},
-			correct_answer: { type: 'string' },
-			correct_answer_index: { type: 'number' },
-			is_true: { type: 'boolean' },
-			is_false: { type: 'boolean' }
-		},
-		required: ['question', 'type', 'options', 'correct_answer', 'correct_answer_index']
-	}
+	type: 'object',
+	properties: {
+		questions: {
+			type: 'array',
+			minItems: 5,
+			maxItems: 15,
+			items: {
+				type: 'object',
+				properties: {
+					question: {
+						type: 'string',
+						minLength: 10,
+						maxLength: 200
+					},
+					type: { type: 'string', enum: ['multiple_choice', 'true_false'] },
+					options: {
+						type: 'array',
+						minItems: 2,
+						maxItems: 5,
+						items: {
+							type: 'string',
+							minLength: 1,
+							maxLength: 150
+						}
+					},
+					correct_answer: {
+						type: 'string',
+						minLength: 1
+					},
+					correct_answer_index: {
+						type: 'number',
+						minimum: 0
+					},
+					is_true: { type: 'boolean' },
+					is_false: { type: 'boolean' }
+				},
+				required: ['question', 'type', 'options', 'correct_answer', 'correct_answer_index']
+			}
+		}
+	},
+	required: ['questions']
 };
 
 export async function createArticleQuiz(
@@ -478,13 +521,14 @@ export async function createArticleQuiz(
 				{ role: 'user', content: prompts.articleQuizPrompt(article).trim() }
 			],
 			response_format: {
-				type: 'json',
+				type: 'json_schema',
 				json_schema: articleQuizAiSchema
 			}
 		});
 
-		const quizData = JSON.parse(quizResult?.response || '[]') as ArticleQuizQuestion[];
-		return quizData || [];
+		const parsedResult = JSON.parse(quizResult?.response || '{"questions":[]}');
+		const quizData = (parsedResult.questions || []) as ArticleQuizQuestion[];
+		return quizData;
 	} catch (error) {
 		console.error('Quiz generation failed, continuing without quiz:', error);
 		return []; // Return empty quiz rather than failing article creation
@@ -870,23 +914,27 @@ export async function createEvent(
 	const description = descriptionResult?.response || '';
 	const validatedDescription = prompts.validateEventDescription(description, name);
 
-	let tagsResult;
+	let activityTypes: string[];
 	try {
-		tagsResult = await ai.run(tagsModel, {
+		const tagsResult = await ai.run(tagsModel, {
 			messages: [
 				{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
 				{ role: 'user', content: `'${name}'` }
 			],
 			max_tokens: 64,
-			temperature: 0.05 // very low temperature for consistent tag selection
+			temperature: 0.3, // low temperature for consistent tag selection
+			response_format: {
+				type: 'json_schema',
+				json_schema: activityTagsSchema
+			}
 		});
+		const parsed = JSON.parse(tagsResult?.response || '{"tags":["OTHER"]}');
+		activityTypes = parsed.tags || ['OTHER'];
 	} catch (aiError) {
 		console.error('AI model failed for activity tags', { name, error: aiError });
 		// Continue with default tags rather than failing completely
-		tagsResult = { response: 'OTHER' };
+		activityTypes = ['OTHER'];
 	}
-
-	const activityTypes = prompts.validateActivityTags(tagsResult?.response || '', name);
 
 	// Fetch and rank activities from the API
 	const activitiesPool = await retrieveActivities(bindings);
