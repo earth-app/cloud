@@ -93,6 +93,19 @@ export type Event = {
 	};
 };
 
+export function eventActivitiesList(event: Event): string[] {
+	const activities: string[] = [];
+	for (const activity of event.activities) {
+		if (activity.type === 'activity_type') {
+			activities.push(activity.value.replace(/_/g, ' '));
+		} else {
+			activities.push(activity.name);
+		}
+	}
+
+	return activities;
+}
+
 export type EventData = Omit<Event, 'id' | 'activities'> & {
 	activities: (string | typeof com.earthapp.activity.ActivityType.prototype.name)[];
 };

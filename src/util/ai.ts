@@ -1,7 +1,8 @@
 import * as ocean from '@earth-app/ocean';
-import { Article, EventData, OceanArticle } from './types';
+import { Article, Event, eventActivitiesList, EventData, OceanArticle } from './types';
 import { Ai } from '@cloudflare/workers-types';
 import { Entry } from '@earth-app/moho';
+import { ScoringCriterion } from '../content/ferry';
 
 // Validation and sanitation functions for AI outputs
 
@@ -580,11 +581,12 @@ TASK: Generate a single paragraph description of the given activity.
 
 REQUIREMENTS:
 - Length: 150-250 words, approximately 1-2 minutes read
-- Focus: What the activity is, why people enjoy it, benefits, and interesting aspects
+- Focus: What the activity involves, its history or cultural context, what makes it interesting, and how people engage with it
 - Format: Single complete paragraph, no bullet points, quotes, or special formatting
-- Tone: Informative yet lighthearted, engaging and accessible
-- Language: Simple, clear, avoid jargon
-- Content: Include practical benefits and interesting facts
+- Tone: Informative and neutral, fostering curiosity without promotional language
+- Language: Simple, clear, accessible to beginners
+- Content: Include practical information, interesting facts, and ways people connect through this activity
+- Avoid prescriptive language like "you should" or "must" - instead describe what people typically do or discover
 - No emojis, special characters, or markdown formatting
 - CRITICAL: Must end with proper punctuation (period, exclamation mark, or question mark)
 - CRITICAL: Must form a complete, coherent paragraph with a clear beginning, middle, and end
@@ -596,16 +598,16 @@ export const activityDescriptionPrompt = (activity: string): string => {
 	return `Describe the activity: "${activity}"
 
 Focus on:
-- What the activity involves
-- Why people enjoy it
-- Benefits or interesting aspects
-- How accessible it is to beginners
+- What the activity involves and its origins or cultural background
+- What people find interesting or meaningful about it
+- Ways people learn, practice, or engage with it
+- What makes it accessible or approachable for newcomers
 
-Write in an engaging, friendly tone that makes the activity sound appealing.
-Make sure that you remain gramatically correct, and keep the description to a single paragraph
-that neatly flows from start to finish. The activity should be described in a way that is easy
-to understand and inviting to someone who has never heard of it before.
-Do not use quotes, bullet points, or special formatting. Ensure that it ends with proper punctuation
+Write in an informative, welcoming tone that sparks curiosity about the activity.
+Maintain grammatical correctness and keep the description as a single paragraph
+that flows naturally from start to finish. The activity should be described clearly
+for someone unfamiliar with it, emphasizing discovery and connection rather than promotion.
+Do not use quotes, bullet points, or special formatting. Ensure it ends with proper punctuation
 and is at least 150 words long but no more than 250 words.`;
 };
 
@@ -645,8 +647,10 @@ OUTPUT FORMAT: Return only the topic words, nothing else.
 
 const topicExamples = [
 	'self growth',
-	'perserverance',
-	'mental health',
+	'perseverance',
+	'mental wellness',
+	'social connection',
+	'cognitive development',
 	'mathematics',
 	'physics',
 	'psychology',
@@ -655,13 +659,13 @@ const topicExamples = [
 	'engineering',
 	'biology',
 	'chemistry',
-	'climate change',
+	'climate science',
 	'astronomy',
-	'music',
+	'music cognition',
 	'artificial intelligence',
 	'robotics',
 	'data science',
-	'meditation',
+	'mindfulness',
 	'medical research',
 	'genetics',
 	'neuroscience',
@@ -672,8 +676,9 @@ const topicExamples = [
 	'ethics',
 	'anthropology',
 	'sociology',
-	'economics',
-	'education'
+	'community building',
+	'education',
+	'learning science'
 ];
 
 export const articleTopicPrompt = (): string => {
@@ -778,25 +783,73 @@ Focus on articles that share similar themes, topics, or subject matter.
 `;
 };
 
+export const articleQuizSystemMessage = `
+You are an expert quiz creator specializing in educational content.
+
+TASK: Generate a quiz based on the provided article.
+
+REQUIREMENTS:
+- Question Count: 5-15 questions
+- Format: Mix of multiple choice and true/false
+- Difficulty: Varying levels, from basic recall to critical thinking
+- Clarity: Clear, concise wording
+- Relevance: Directly related to article content
+- No personal pronouns or conversational language
+- Provide correct answers and brief explanations for each question
+
+OUTPUT FORMAT: Return only the quiz questions, answer choices, correct answers, and explanations.
+`;
+
+export const articleQuizPrompt = (
+	article: Pick<Article, 'ocean' | 'title' | 'tags' | 'content'>
+): string => {
+	const content = article.ocean.content || article.ocean.abstract || '';
+	return `
+Generate a quiz with 5-15 questions, multiple choice and true/false format, based on the following article:
+
+Title: "${article.title}"
+Tags: ${article.tags.join(', ')}
+
+Excerpt:
+${article.content.length > 500 ? `${article.content.substring(0, 500)}... (truncated)` : article.content}
+
+Content:
+${content.length > 1000 ? `${content.substring(0, 1000)}... (truncated)` : content}
+
+REQUIREMENTS:
+- Question Count: 5-15 questions
+- Format: Mix of multiple choice and true/false
+- Difficulty: Varying levels, from basic recall to critical thinking
+- Clarity: Clear, concise wording
+- Relevance: Directly related to article content
+- No personal pronouns or conversational language
+- Provide correct answers and brief explanations for each question
+
+OUTPUT: Return only the quiz questions, answer choices, correct answers, and explanations.
+`;
+};
+
 // Prompts Prompts
 
 export const promptsSystemMessage = `
 Current date: ${new Date().toISOString().split('T')[0]}
 
-TASK: Generate exactly ONE original, thought-provoking question.
+TASK: Generate exactly ONE original, thought-provoking question that encourages reflection and curiosity.
 
 REQUIREMENTS:
 - Length: Under 15 words, under 100 characters
 - Format: End with '?' if appropriate
 - Style: Open-ended (not yes/no), clear, grammatically correct
-- Content: Timeless, insightful, engaging, creative
+- Content: Timeless, inviting exploration and diverse perspectives
 - Language: Simple English, maximum one comma
-- Avoid: Personal pronouns, "what if", "imagine", clichés, company names, specific events
+- Tone: Neutral and inclusive - avoid prescriptive or judgmental framing
+- Avoid: Personal pronouns, "what if", "imagine", clichés, company names, specific events, loaded language
 
 EXAMPLES OF GOOD QUESTIONS:
 - "What drives people to take creative risks?"
 - "How does curiosity shape learning?"
 - "Why do some habits stick while others fade?"
+- "What role does wonder play in discovery?"
 
 OUTPUT: Return only the question, nothing else.
 `;
@@ -860,40 +913,43 @@ const topics = [
 	'cultural differences',
 	'technological advancements',
 	'scientific discoveries',
-	'perserverance',
+	'perseverance',
 	'integrity',
-	'mental health',
-	'financial literacy',
+	'mental wellness',
+	'social connection',
+	'belonging',
 	'work-life balance',
 	'remote work',
-	'hydration',
+	'self-care',
 	'nutrition',
-	'meditation',
+	'mindfulness',
 	'energy',
 	'resilience',
 	'curiosity',
+	'wonder',
 	'open-mindedness',
 	'critical thinking',
 	'emotional intelligence',
 	'collaboration',
 	'problem-solving',
 	'adaptability',
-	'innovation strategies',
-	'creative processes',
-	'goal setting',
-	'time management',
+	'innovation',
+	'creative expression',
+	'meaningful goals',
+	'presence',
 	'decision making',
 	'conflict resolution',
-	'stress management',
-	'career development',
-	'real estate',
-	'investing',
-	'motorsports',
+	'community',
+	'personal growth',
+	'exploration',
+	'discovery',
+	'learning',
 	'photography',
 	'gardening',
 	'cooking',
 	'language learning',
-	'public speaking'
+	'storytelling',
+	'human connection'
 ];
 
 export const promptsQuestionPrompt = () => {
@@ -908,14 +964,15 @@ export const promptsQuestionPrompt = () => {
 export const eventDescriptionSystemMessage = `
 You are an expert event describer.
 
-TASK: Generate a concise, engaging description for the given an event title and metadata.
+TASK: Generate a concise, engaging description for the given event title and metadata.
 
 REQUIREMENTS:
-- Focus: What the event is about, key highlights, fun facts about the event, things to expect, why to attend
-- Bounds: There is no guarentee that any in-person attendance or online organization exists; assume it is an unknown online event
-and focus on the history of the event itself
-- Tone: Inviting and informative, including facts to pique interest
+- Focus: What the event celebrates or commemorates, its history and significance, interesting facts, and learning opportunities
+- Bounds: There is no guarantee that any in-person attendance or online organization exists; assume it is an informational event
+and focus on the event's history, meaning, and context
+- Tone: Informative and welcoming, sparking curiosity without promotional pressure
 - Format: Single paragraph, no bullet points or special formatting, complete sentences
+- Emphasize discovery, learning, and connection rather than obligations or imperatives
 
 OUTPUT FORMAT: Return only the description text as a single complete paragraph.
 `;
@@ -923,21 +980,21 @@ OUTPUT FORMAT: Return only the description text as a single complete paragraph.
 export const eventDescriptionPrompt = (entry: Entry, date: Date): string => {
 	const isBirthday = entry.name.includes('Birthday');
 
-	return `Describe the event titled "${entry.name}" happening on ${date.toISOString()}. There is no location and will be
-observed online.
+	return `Describe the event titled "${entry.name}" happening on ${date.toISOString()}. This is primarily an informational
+observance without specific location.
 
 ${isBirthday ? 'IMPORTANT: This is a birthday of a PLACE (such as a country, town, city, or region), NOT a person or animal. The name provided is a shorthand (e.g., "Jackson", "Cook County", "Botswana"). Focus on the geographic/political entity and its history.\n\n' : ''}
 Focus on:
-- What the event is about
-- Key highlights or attractions
-- Fun facts or interesting aspects
-- What attendees can expect
-- Why people should attend
+- What the event celebrates or commemorates
+- Historical context and significance
+- Interesting facts or cultural aspects
+- Learning opportunities or ways to explore the topic
+- How people might engage with or reflect on this event
 
-Write in an engaging, friendly tone that makes the event sound appealing.
-Keep the description to a single paragraph that flows neatly from start to finish.
-Do not use quotes, bullet points, or special formatting. Ensure that it ends with proper punctuation
-and has complete sentences.`;
+Write in an informative, welcoming tone that sparks curiosity about the event.
+Keep the description to a single paragraph that flows naturally from start to finish.
+Avoid promotional or prescriptive language. Do not use quotes, bullet points, or special formatting.
+Ensure it ends with proper punctuation and has complete sentences.`;
 };
 
 export const eventActivitySelectionQuery = (
@@ -973,6 +1030,93 @@ ${event.description.length > 500 ? `${event.description.substring(0, 500)}... (t
 Focus on events that share similar themes, topics, or subject matter.
 `;
 };
+
+export const promptCriteria: ScoringCriterion[] = [
+	{
+		id: 'linguistic_quality',
+		weight: 0.2,
+		ideal:
+			'The question is grammatically correct, well-structured, and easy to read without introducing ambiguity.'
+	},
+	{
+		id: 'semantic_clarity',
+		weight: 0.25,
+		ideal:
+			'The question communicates its intent clearly and can be understood without additional context or interpretation.'
+	},
+	{
+		id: 'conceptual_distinctiveness',
+		weight: 0.25,
+		ideal:
+			'The question explores a topic or angle that is not overly generic or commonly phrased, while remaining accessible without specialized knowledge.'
+	},
+	{
+		id: 'response_invitation',
+		weight: 0.3,
+		ideal:
+			'The question naturally invites reflection and diverse perspectives, fostering curiosity and connection without prescriptive framing or implying a single correct answer.'
+	}
+];
+
+export const articleCriteria: ScoringCriterion[] = [
+	{
+		id: 'content_alignment',
+		weight: 0.35,
+		ideal:
+			"The summary accurately represents the article's main ideas and naturally incorporates the provided tags to enhance understanding."
+	},
+	{
+		id: 'expositional_clarity',
+		weight: 0.3,
+		ideal:
+			'The summary is well-organized, accessible, and free of jargon or grammatical errors, with ideas flowing logically to support learning.'
+	},
+	{
+		id: 'reader_orientation',
+		weight: 0.2,
+		ideal:
+			'The summary provides enough context and clarity to help readers discover whether this topic aligns with their interests or curiosity.'
+	},
+	{
+		id: 'intellectual_engagement',
+		weight: 0.15,
+		ideal:
+			'The summary sparks curiosity by highlighting interesting findings or questions without sensationalism, inviting further exploration.'
+	}
+];
+
+export const eventImageCaptionPrompt = (event: Event) => {
+	return `Write a concise caption describing what is visible in the image and how it relates to the event.
+
+Event: "${event.name}"
+Description: ${event.description.substring(0, 300)}
+Activities: ${eventActivitiesList(event).join(', ')}
+
+Guidelines:
+- Describe observable elements in the image and their connection to the event
+- Use concrete details rather than general statements
+- Avoid promotional or generic language
+- Keep the caption under 50 words`;
+};
+
+export const eventImageCriteria = (event: Event) =>
+	[
+		{
+			id: 'context_alignment',
+			weight: 0.5,
+			ideal: `The caption clearly connects visible elements in the image to the event's activities (${eventActivitiesList(event).join(', ')}), without speculation.`
+		},
+		{
+			id: 'descriptive_specificity',
+			weight: 0.3,
+			ideal: `The caption references concrete, observable details rather than vague or generic descriptions.`
+		},
+		{
+			id: 'linguistic_precision',
+			weight: 0.2,
+			ideal: `The caption is concise, clearly written, and avoids clichés or filler phrases.`
+		}
+	] as ScoringCriterion[];
 
 // User Profile Photo
 

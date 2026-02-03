@@ -499,3 +499,74 @@ export async function deleteEventThumbnail(
 		])
 	);
 }
+
+// event image submissions
+
+export async function submitEventImage(
+	eventId: bigint,
+	image: Uint8Array,
+	bindings: Bindings,
+	ctx: ExecutionContext
+) {
+	const id = crypto.randomUUID().replace(/-/g, '');
+	const timestamp = Date.now();
+	const imagePath = `events/${eventId}/submissions/${id}.webp`;
+
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(image);
+			controller.close();
+		}
+	});
+
+	const transformedStream = (
+		await bindings.IMAGES.input(stream)
+			.transform({ height: 1080, fit: 'scale-down' })
+			.output({ format: 'image/webp', quality: 90 })
+	).image();
+
+	const image0 = await streamToUint8Array(transformedStream);
+
+	ctx.waitUntil(
+		bindings.R2.put(imagePath, image0, {
+			httpMetadata: {
+				contentType: 'image/webp'
+			}
+		})
+	);
+
+	return { id, timestamp, image: image0 };
+}
+
+export async function getEventImageSubmissions(
+	eventId: bigint,
+	bindings: Bindings
+): Promise<Array<{ id: string; image: Uint8Array }>> {
+	const prefix = `events/${eventId}/submissions/`;
+	const list = await bindings.R2.list({ prefix });
+
+	const submissions: Array<{ id: string; image: Uint8Array }> = [];
+	for (const obj of list.objects) {
+		const buf = await bindings.R2.get(obj.key)!.then((o) => o?.arrayBuffer());
+		if (!buf) continue;
+
+		const idMatch = obj.key.match(/submissions\/(.+)\.webp$/);
+		const id = idMatch ? idMatch[1] : 'unknown';
+		submissions.push({
+			id,
+			image: new Uint8Array(buf)
+		});
+	}
+
+	return submissions;
+}
+
+export async function deleteEventImageSubmission(
+	eventId: bigint,
+	submissionId: string,
+	bindings: Bindings,
+	ctx: ExecutionContext
+) {
+	const imagePath = `events/${eventId}/submissions/${submissionId}.webp`;
+	ctx.waitUntil(bindings.R2.delete(imagePath));
+}
