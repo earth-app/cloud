@@ -3,7 +3,7 @@ import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
 
 export type Badge = {
 	id: string;
-	name?: string; // if not provided, normalized id is used
+	name: string; // if not provided, normalized id is used
 	description: string;
 	icon: string;
 	rarity: 'normal' | 'rare' | 'amazing' | 'green';

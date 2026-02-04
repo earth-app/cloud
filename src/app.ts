@@ -632,6 +632,7 @@ app.get('/users/badges/:id/:badge_id', async (c) => {
 		return c.json(
 			{
 				...badge,
+				user_id: id,
 				granted,
 				granted_at,
 				progress
@@ -672,6 +673,7 @@ app.get('/users/badges/:id', async (c) => {
 				const { progress: _, ...badgeData } = badge;
 				return {
 					...badgeData,
+					user_id: id,
 					granted,
 					granted_at,
 					progress
@@ -808,6 +810,7 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 		return c.json(
 			{
 				...badgeData,
+				user_id: id,
 				granted,
 				granted_at: metadata?.granted_at || null,
 				progress
