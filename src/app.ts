@@ -595,6 +595,10 @@ app.get('/users/journey/:type/leaderboard', async (c) => {
 
 /// User Badges
 
+app.get('/users/badges', async (c) => {
+	return c.json(badges, 200);
+});
+
 app.get('/users/badges/:id/:badge_id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
@@ -623,7 +627,7 @@ app.get('/users/badges/:id/:badge_id', async (c) => {
 
 		return c.json(
 			{
-				badge_id: badgeId,
+				...badge,
 				granted,
 				granted_at,
 				progress
@@ -662,7 +666,7 @@ app.get('/users/badges/:id', async (c) => {
 				}
 
 				return {
-					badge_id: badge.id,
+					...badge,
 					granted,
 					granted_at,
 					progress
@@ -709,7 +713,7 @@ app.post('/users/badges/:id/:badge_id/grant', async (c) => {
 
 		return c.json(
 			{
-				badge_id: badgeId,
+				...badge,
 				granted: true,
 				granted_at: metadata?.granted_at || null,
 				progress: 1
@@ -738,10 +742,7 @@ app.post('/users/badges/:id/track', async (c) => {
 	}
 
 	try {
-		// Add to tracker
 		await addBadgeProgress(id, body.tracker_id, body.value, c.env.KV);
-
-		// Check and auto-grant all badges using this tracker
 		const newlyGranted = await checkAndGrantBadges(id, body.tracker_id, c.env.KV);
 
 		return c.json(
@@ -790,7 +791,6 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 		await addBadgeProgress(id, badge.tracker_id, body.value, c.env.KV);
 		const progress = await getBadgeProgress(id, badgeId, c.env.KV);
 
-		// Auto-grant if progress reaches 100%
 		if (progress >= 1 && !(await isBadgeGranted(id, badgeId, c.env.KV))) {
 			await grantBadge(id, badgeId, c.env.KV);
 		}
@@ -800,7 +800,7 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 
 		return c.json(
 			{
-				badge_id: badgeId,
+				...badge,
 				granted,
 				granted_at: metadata?.granted_at || null,
 				progress
