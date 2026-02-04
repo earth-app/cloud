@@ -9,7 +9,7 @@ import {
 	postPrompt,
 	retrieveEvents
 } from './content/boat';
-import { retrieveLeaderboard } from './user/journies';
+import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
 import { Bindings } from './util/types';
 
 export default async function scheduled(
@@ -59,7 +59,7 @@ export default async function scheduled(
 				const types = ['article', 'prompt', 'event'];
 				await Promise.all(
 					types.map(async (type) => {
-						await retrieveLeaderboard(type, env.KV, env.CACHE);
+						await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
 						console.log(`Cached leaderboard for journey type: ${type}`);
 					})
 				);

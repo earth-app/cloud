@@ -60,6 +60,7 @@ export const TOP_LEADERBOARD_COUNT = 250;
 
 export async function retrieveLeaderboard(
 	type: string,
+	limit: number,
 	kv: KVNamespace,
 	cacheKv: KVNamespace
 ): Promise<Array<{ id: string; streak: number }>> {
@@ -104,7 +105,7 @@ export async function retrieveLeaderboard(
 			}
 
 			leaderboard.sort((a, b) => b.streak - a.streak);
-			return leaderboard.slice(0, TOP_LEADERBOARD_COUNT);
+			return leaderboard.slice(0, Math.min(limit, TOP_LEADERBOARD_COUNT));
 		},
 		14400 // cache for 4 hours
 	);
@@ -121,7 +122,7 @@ export async function retrieveLeaderboardRank(
 	const [userStreak] = await getJourney(normalizedId, type, kv);
 	if (userStreak === 0) return 0;
 
-	const leaderboard = await retrieveLeaderboard(type, kv, cacheKv);
+	const leaderboard = await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, kv, cacheKv);
 	const rank = leaderboard.findIndex((entry) => entry.id === normalizedId);
 	if (rank >= 0) return rank + 1; // retrieve is 0-based
 

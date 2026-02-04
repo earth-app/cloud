@@ -39,7 +39,8 @@ import {
 	incrementJourney,
 	resetJourney,
 	retrieveLeaderboard,
-	retrieveLeaderboardRank
+	retrieveLeaderboardRank,
+	TOP_LEADERBOARD_COUNT
 } from './user/journies';
 import {
 	badges,
@@ -575,8 +576,16 @@ app.get('/users/journey/:type/leaderboard', async (c) => {
 		return c.text('Journey type is required', 400);
 	}
 
+	const limit = c.req.query('limit');
+	let limit0 = limit ? parseInt(limit, 10) : TOP_LEADERBOARD_COUNT;
+	if (isNaN(limit0) || limit0 <= 0) {
+		limit0 = TOP_LEADERBOARD_COUNT;
+	} else if (limit0 > TOP_LEADERBOARD_COUNT) {
+		limit0 = TOP_LEADERBOARD_COUNT;
+	}
+
 	try {
-		const leaderboard = await retrieveLeaderboard(type, c.env.KV, c.env.CACHE);
+		const leaderboard = await retrieveLeaderboard(type, limit0, c.env.KV, c.env.CACHE);
 		return c.json(leaderboard, 200);
 	} catch (err) {
 		console.error(`Error retrieving leaderboard for journey type '${type}':`, err);
