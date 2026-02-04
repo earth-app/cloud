@@ -642,10 +642,15 @@ app.get('/users/badges/:id', async (c) => {
 				const metadata = granted ? await getBadgeMetadata(id, badge.id, c.env.KV) : null;
 				const progress = await getBadgeProgress(id, badge.id, c.env.KV);
 
+				let granted_at = null;
+				if (metadata?.granted_at) {
+					granted_at = new Date(metadata.granted_at);
+				}
+
 				return {
 					badge_id: badge.id,
 					granted,
-					granted_at: metadata?.granted_at || null,
+					granted_at,
 					progress
 				};
 			})
