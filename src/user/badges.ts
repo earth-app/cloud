@@ -380,7 +380,7 @@ function min(args: any[], min: number): number {
 
 type TrackerEntry = {
 	date: number;
-	value: string | string[] | number | number[];
+	value: string | string[] | number | number[] | (string | number)[];
 };
 
 type BadgeMetadata = {
@@ -437,9 +437,40 @@ export async function addBadgeProgress(
 	const trackerData = await kv.get(trackerKey, 'json');
 	const tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
 
+	const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
+	let aggregatedValue: TrackerEntry['value'];
+
+	if (typeof value === 'number') {
+		if (lastEntry && typeof lastEntry.value === 'number') {
+			aggregatedValue = lastEntry.value + value;
+		} else {
+			aggregatedValue = value;
+		}
+	} else if (typeof value === 'string') {
+		if (lastEntry) {
+			if (Array.isArray(lastEntry.value)) {
+				aggregatedValue = [...lastEntry.value, value] as (string | number)[];
+			} else {
+				aggregatedValue = [lastEntry.value, value] as (string | number)[];
+			}
+		} else {
+			aggregatedValue = value;
+		}
+	} else if (Array.isArray(value)) {
+		if (lastEntry && Array.isArray(lastEntry.value)) {
+			aggregatedValue = [...lastEntry.value, ...value] as (string | number)[];
+		} else if (lastEntry) {
+			aggregatedValue = [lastEntry.value, ...value] as (string | number)[];
+		} else {
+			aggregatedValue = value;
+		}
+	} else {
+		aggregatedValue = value;
+	}
+
 	tracker.push({
 		date: Date.now(),
-		value
+		value: aggregatedValue
 	});
 
 	await kv.put(trackerKey, JSON.stringify(tracker));
