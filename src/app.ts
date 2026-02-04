@@ -596,7 +596,10 @@ app.get('/users/journey/:type/leaderboard', async (c) => {
 /// User Badges
 
 app.get('/users/badges', async (c) => {
-	return c.json(badges, 200);
+	return c.json(
+		badges.map(({ progress, ...badge }) => badge),
+		200
+	);
 });
 
 app.get('/users/badges/:id/:badge_id', async (c) => {
@@ -610,10 +613,11 @@ app.get('/users/badges/:id/:badge_id', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
-	const badge = badges.find((b) => b.id === badgeId);
-	if (!badge) {
+	const badgeData = badges.find((b) => b.id === badgeId);
+	if (!badgeData) {
 		return c.text('Badge not found', 404);
 	}
+	const { progress: _, ...badge } = badgeData;
 
 	try {
 		const granted = await isBadgeGranted(id, badgeId, c.env.KV);
@@ -665,8 +669,9 @@ app.get('/users/badges/:id', async (c) => {
 					granted_at = new Date(metadata.granted_at);
 				}
 
+				const { progress: _, ...badgeData } = badge;
 				return {
-					...badge,
+					...badgeData,
 					granted,
 					granted_at,
 					progress
@@ -711,9 +716,10 @@ app.post('/users/badges/:id/:badge_id/grant', async (c) => {
 		await grantBadge(id, badgeId, c.env.KV);
 		const metadata = await getBadgeMetadata(id, badgeId, c.env.KV);
 
+		const { progress: _, ...badgeData } = badge;
 		return c.json(
 			{
-				...badge,
+				...badgeData,
 				granted: true,
 				granted_at: metadata?.granted_at || null,
 				progress: 1
@@ -798,9 +804,10 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 		const granted = await isBadgeGranted(id, badgeId, c.env.KV);
 		const metadata = await getBadgeMetadata(id, badgeId, c.env.KV);
 
+		const { progress: _, ...badgeData } = badge;
 		return c.json(
 			{
-				...badge,
+				...badgeData,
 				granted,
 				granted_at: metadata?.granted_at || null,
 				progress
