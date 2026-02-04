@@ -61,6 +61,7 @@ import {
 	setImpactPoints
 } from './user/points';
 import { scoreImage, ScoreResult, scoreText } from './content/ferry';
+import { sendUserNotification } from './user/notifications';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -602,49 +603,6 @@ app.get('/users/badges', async (c) => {
 	);
 });
 
-app.get('/users/badges/:id/:badge_id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
-	const badgeId = c.req.param('badge_id')?.toLowerCase();
-	if (!id || !badgeId) {
-		return c.text('User ID and Badge ID are required', 400);
-	}
-
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
-	}
-
-	const badgeData = badges.find((b) => b.id === badgeId);
-	if (!badgeData) {
-		return c.text('Badge not found', 404);
-	}
-	const { progress: _, ...badge } = badgeData;
-
-	try {
-		const granted = await isBadgeGranted(id, badgeId, c.env.KV);
-		const metadata = await getBadgeMetadata(id, badgeId, c.env.KV);
-		const progress = await getBadgeProgress(id, badgeId, c.env.KV);
-
-		let granted_at = null;
-		if (metadata?.granted_at) {
-			granted_at = new Date(metadata.granted_at);
-		}
-
-		return c.json(
-			{
-				...badge,
-				user_id: id,
-				granted,
-				granted_at,
-				progress
-			},
-			200
-		);
-	} catch (err) {
-		console.error(`Error getting badge '${badgeId}' for user '${id}':`, err);
-		return c.text('Failed to get badge', 500);
-	}
-});
-
 app.get('/users/badges/:id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	if (!id) {
@@ -685,6 +643,49 @@ app.get('/users/badges/:id', async (c) => {
 	} catch (err) {
 		console.error(`Error getting badges for user '${id}':`, err);
 		return c.text('Failed to get badges', 500);
+	}
+});
+
+app.get('/users/badges/:id/:badge_id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const badgeData = badges.find((b) => b.id === badgeId);
+	if (!badgeData) {
+		return c.text('Badge not found', 404);
+	}
+	const { progress: _, ...badge } = badgeData;
+
+	try {
+		const granted = await isBadgeGranted(id, badgeId, c.env.KV);
+		const metadata = await getBadgeMetadata(id, badgeId, c.env.KV);
+		const progress = await getBadgeProgress(id, badgeId, c.env.KV);
+
+		let granted_at = null;
+		if (metadata?.granted_at) {
+			granted_at = new Date(metadata.granted_at);
+		}
+
+		return c.json(
+			{
+				...badge,
+				user_id: id,
+				granted,
+				granted_at,
+				progress
+			},
+			200
+		);
+	} catch (err) {
+		console.error(`Error getting badge '${badgeId}' for user '${id}':`, err);
+		return c.text('Failed to get badge', 500);
 	}
 });
 
@@ -744,14 +745,29 @@ app.post('/users/badges/:id/track', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
-	const body = await c.req.json<{ tracker_id: string; value: string }>();
-	if (!body.tracker_id || !body.value) {
+	const body = await c.req.json<{ tracker_id: string; value: string | string[] | number }>();
+	if (!body.tracker_id || body.value === undefined || body.value === null) {
 		return c.text('tracker_id and value are required', 400);
+	}
+
+	// Validate value type
+	if (
+		typeof body.value !== 'string' &&
+		typeof body.value !== 'number' &&
+		!Array.isArray(body.value)
+	) {
+		return c.text('value must be a string, number, or array of valid types', 400);
+	}
+	if (
+		Array.isArray(body.value) &&
+		!body.value.every((v) => typeof v === 'string' || typeof v === 'number')
+	) {
+		return c.text('value array must contain only strings or numbers', 400);
 	}
 
 	try {
 		await addBadgeProgress(id, body.tracker_id, body.value, c.env.KV);
-		const newlyGranted = await checkAndGrantBadges(id, body.tracker_id, c.env.KV);
+		const newlyGranted = await checkAndGrantBadges(id, body.tracker_id, c.env, c.executionCtx);
 
 		return c.json(
 			{
@@ -790,9 +806,24 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 		return c.text('Badge does not have a tracker', 400);
 	}
 
-	const body = await c.req.json<{ value: string }>();
-	if (!body.value) {
+	const body = await c.req.json<{ value: string | string[] | number }>();
+	if (body.value === undefined || body.value === null) {
 		return c.text('Value is required', 400);
+	}
+
+	// Validate value type
+	if (
+		typeof body.value !== 'string' &&
+		typeof body.value !== 'number' &&
+		!Array.isArray(body.value)
+	) {
+		return c.text('value must be a string, number, or array of valid types', 400);
+	}
+	if (
+		Array.isArray(body.value) &&
+		!body.value.every((v) => typeof v === 'string' || typeof v === 'number')
+	) {
+		return c.text('value array must contain only strings or numbers', 400);
 	}
 
 	try {
@@ -915,6 +946,16 @@ app.post('/users/impact_points/:id/add', async (c) => {
 		// Track for badge progress
 		c.executionCtx.waitUntil(
 			addBadgeProgress(id, 'impact_points_earned', newPoints.toString(), c.env.KV)
+		);
+		c.executionCtx.waitUntil(
+			sendUserNotification(
+				c.env,
+				id,
+				'Impact Points Earned',
+				`You have earned ${body.points} impact points! Your new total is ${newPoints} points.`,
+				undefined,
+				'success'
+			)
 		);
 
 		return c.json({ points: newPoints }, 200);

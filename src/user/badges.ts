@@ -1,5 +1,7 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
+import { sendUserNotification } from './notifications';
+import { Bindings } from '../util/types';
 
 export type Badge = {
 	id: string;
@@ -378,7 +380,7 @@ function min(args: any[], min: number): number {
 
 type TrackerEntry = {
 	date: number;
-	value: string;
+	value: string | string[] | number | number[];
 };
 
 type BadgeMetadata = {
@@ -427,7 +429,7 @@ export async function getBadgeProgress(
 export async function addBadgeProgress(
 	userId: string,
 	trackerId: string,
-	value: string,
+	value: TrackerEntry['value'],
 	kv: KVNamespace
 ): Promise<void> {
 	const normalizedUserId = normalizeId(userId);
@@ -548,8 +550,10 @@ export async function resetBadgeProgress(
 export async function checkAndGrantBadges(
 	userId: string,
 	trackerId: string,
-	kv: KVNamespace
+	bindings: Bindings,
+	ctx: ExecutionContext
 ): Promise<string[]> {
+	const kv = bindings.KV;
 	const normalizedUserId = normalizeId(userId);
 	// Find all badges that use this tracker
 	const relevantBadges = badges.filter((b) => b.tracker_id === trackerId);
@@ -566,6 +570,25 @@ export async function checkAndGrantBadges(
 			newlyGranted.push(badge.id);
 		}
 	}
+
+	// send notification
+	ctx.waitUntil(
+		sendUserNotification(
+			bindings,
+			normalizedUserId,
+			newlyGranted.length > 1 ? 'New Badges Unlocked!' : 'New Badge Unlocked!',
+			newlyGranted.length > 1
+				? `You've unlocked the following badges: ${newlyGranted
+						.map((id) => {
+							const badge = badges.find((b) => b.id === id);
+							return badge ? badge.name : id;
+						})
+						.join(', ')}.`
+				: `You've unlocked the "${badges.find((b) => b.id === newlyGranted[0])?.name}" badge!`,
+			undefined,
+			'success'
+		)
+	);
 
 	return newlyGranted;
 }
