@@ -88,7 +88,6 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			);
 		}
 
-		// Generate tags with error handling and JSON schema
 		let tags: string[] = ['OTHER'];
 		try {
 			const tagsResult = await ai.run(tagsModel, {
@@ -101,7 +100,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 					json_schema: activityTagsSchema
 				}
 			});
-			const parsed = JSON.parse(tagsResult?.response || '{"tags":["OTHER"]}');
+			const parsed = (tagsResult?.response || { tags: ['OTHER'] }) as { tags: string[] };
 			tags = parsed.tags || ['OTHER'];
 		} catch (aiError) {
 			console.error('AI model failed for activity tags', { activity, error: aiError });
@@ -531,7 +530,7 @@ export async function createArticleQuiz(
 			}
 		});
 
-		const parsedResult = (quizResult.response || JSON.parse('{"questions":[]}')) as {
+		const parsedResult = (quizResult.response || { questions: [] }) as {
 			questions: ArticleQuizQuestion[];
 		};
 		return parsedResult?.questions || [];
@@ -934,11 +933,10 @@ export async function createEvent(
 				json_schema: activityTagsSchema
 			}
 		});
-		const parsed = JSON.parse(tagsResult?.response || '{"tags":["OTHER"]}');
+		const parsed = (tagsResult?.response || { tags: ['OTHER'] }) as { tags: string[] };
 		activityTypes = parsed.tags || ['OTHER'];
 	} catch (aiError) {
 		console.error('AI model failed for activity tags', { name, error: aiError });
-		// Continue with default tags rather than failing completely
 		activityTypes = ['OTHER'];
 	}
 
