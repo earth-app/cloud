@@ -596,6 +596,46 @@ export async function deleteEventThumbnail(
 
 // event image submissions
 
+async function encryptImage(data: Uint8Array, encryptionKey: string): Promise<Uint8Array> {
+	const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
+	const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
+		'encrypt'
+	]);
+
+	// Generate a random 12-byte IV
+	const iv = crypto.getRandomValues(new Uint8Array(12));
+	const encrypted = await crypto.subtle.encrypt(
+		{ name: 'AES-GCM', iv },
+		key,
+		data.buffer as ArrayBuffer
+	);
+
+	// Prepend IV to ciphertext
+	const result = new Uint8Array(iv.length + encrypted.byteLength);
+	result.set(iv, 0);
+	result.set(new Uint8Array(encrypted), iv.length);
+
+	return result;
+}
+
+async function decryptImage(encryptedData: Uint8Array, encryptionKey: string): Promise<Uint8Array> {
+	const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
+	const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
+		'decrypt'
+	]);
+
+	// Extract IV (first 12 bytes) and ciphertext
+	const iv = encryptedData.slice(0, 12);
+	const ciphertext = encryptedData.slice(12);
+	const decrypted = await crypto.subtle.decrypt(
+		{ name: 'AES-GCM', iv },
+		key,
+		ciphertext.buffer as ArrayBuffer
+	);
+
+	return new Uint8Array(decrypted);
+}
+
 export async function submitEventImage(
 	eventId: bigint,
 	image: Uint8Array,
@@ -621,15 +661,18 @@ export async function submitEventImage(
 
 	const image0 = await streamToUint8Array(transformedStream);
 
+	// Encrypt the image data before storing
+	const encryptedImage = await encryptImage(image0, bindings.ENCRYPTION_KEY);
+
 	ctx.waitUntil(
-		bindings.R2.put(imagePath, image0, {
+		bindings.R2.put(imagePath, encryptedImage, {
 			httpMetadata: {
-				contentType: 'image/webp'
+				contentType: 'application/octet-stream' // encrypted data
 			}
 		})
 	);
 
-	return { id, timestamp, image: image0 };
+	return { id, timestamp, image: image0 }; // return unencrypted image to caller
 }
 
 export async function getEventImageSubmissions(
@@ -646,9 +689,14 @@ export async function getEventImageSubmissions(
 
 		const idMatch = obj.key.match(/submissions\/(.+)\.webp$/);
 		const id = idMatch ? idMatch[1] : 'unknown';
+
+		// Decrypt the encrypted image data
+		const encryptedData = new Uint8Array(buf);
+		const decryptedImage = await decryptImage(encryptedData, bindings.ENCRYPTION_KEY);
+
 		submissions.push({
 			id,
-			image: new Uint8Array(buf)
+			image: decryptedImage
 		});
 	}
 

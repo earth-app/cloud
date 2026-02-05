@@ -1250,8 +1250,8 @@ app.post('/events/recommend_similar_events', async (c) => {
 });
 
 app.post('/events/submit_image', async (c) => {
-	const body = await c.req.json<{ event: Event }>();
-	if (!body || !body.event) {
+	const body = await c.req.json<{ event: Event; photo: ArrayBuffer }>();
+	if (!body || !body.event || !body.photo) {
 		return c.text('Invalid request body', 400);
 	}
 
@@ -1265,8 +1265,7 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	const photo = await c.req.arrayBuffer();
-	const imageData = new Uint8Array(photo);
+	const imageData = new Uint8Array(body.photo);
 	if (imageData.length === 0) {
 		return c.text('Image data is required', 400);
 	}

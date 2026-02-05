@@ -13,6 +13,7 @@ export type Bindings = {
 	NCBI_API_KEY: string;
 	MANTLE_URL: string;
 	MAPS_API_KEY: string;
+	ENCRYPTION_KEY: string;
 };
 
 export type Activity = {
