@@ -42,8 +42,8 @@ export default async function scheduled(
 				const article = await createArticle(ocean, env.AI, tags);
 				console.log('Created article content:', article.content?.slice(0, 100) + '...');
 
-				// const quiz = await createArticleQuiz(article, env.AI);
-				// console.log('Created article quiz with questions:', quiz);
+				const quiz = await createArticleQuiz(article, env.AI);
+				console.log('Created article quiz with questions:', quiz);
 
 				await postArticle(article, null, env);
 

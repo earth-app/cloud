@@ -51,6 +51,9 @@ export function sanitizeAIOutput(
 		...options
 	};
 
+	// Remove "(Note: ...)" or "Note: ..." suffix
+	cleaned = cleaned.replace(/\(Note:[^)]+\)\s*$/i, '').replace(/^\s*Note:\s*/i, '');
+
 	// Remove markdown formatting
 	if (opts.removeMarkdown) {
 		cleaned = cleaned
@@ -344,7 +347,7 @@ export function validateArticleTitle(titleResponse: string, originalTitle: strin
 			throw new Error('Generated article title too short');
 		}
 
-		if (wordCount > 30) {
+		if (wordCount > 35) {
 			logAIFailure('ArticleTitle', originalTitle, title, `Title too long: ${wordCount} words`);
 			throw new Error('Generated article title too long');
 		}

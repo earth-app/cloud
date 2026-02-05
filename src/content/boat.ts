@@ -19,7 +19,7 @@ const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
 const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
 const rankerModel = '@cf/baai/bge-reranker-base';
 const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
-const quizModel = '@hf/nousresearch/hermes-2-pro-mistral-7b';
+const quizModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 const promptModel = '@cf/openai/gpt-oss-120b';
 
 const activityTagsSchema = {
@@ -471,14 +471,14 @@ const articleQuizAiSchema = {
 	properties: {
 		questions: {
 			type: 'array',
-			minItems: 2,
-			maxItems: 5,
+			minItems: 6,
+			maxItems: 15,
 			items: {
 				type: 'object',
 				properties: {
 					question: {
 						type: 'string',
-						maxLength: 100
+						maxLength: 150
 					},
 					type: { type: 'string', enum: ['multiple_choice', 'true_false'] },
 					options: {
@@ -486,7 +486,7 @@ const articleQuizAiSchema = {
 						maxItems: 4,
 						items: {
 							type: 'string',
-							maxLength: 60
+							maxLength: 100
 						}
 					},
 					correct_answer: { type: 'string' },
@@ -501,7 +501,7 @@ const articleQuizAiSchema = {
 	required: ['questions']
 };
 
-const QUIZ_CUTOFF = 300;
+const QUIZ_CUTOFF = 2000;
 
 export async function createArticleQuiz(
 	article: Pick<Article, 'title' | 'content' | 'ocean' | 'tags'>,
@@ -523,7 +523,7 @@ export async function createArticleQuiz(
 				},
 				{ role: 'user', content: prompts.articleQuizPrompt.trim() }
 			],
-			max_tokens: 512,
+			max_tokens: 1024,
 			temperature: 0.3,
 			response_format: {
 				type: 'json_schema',
@@ -531,9 +531,10 @@ export async function createArticleQuiz(
 			}
 		});
 
-		const parsedResult = JSON.parse(quizResult?.response || '{"questions":[]}');
-		const quizData = (parsedResult.questions || []) as ArticleQuizQuestion[];
-		return quizData;
+		const parsedResult = (quizResult.response || JSON.parse('{"questions":[]}')) as {
+			questions: ArticleQuizQuestion[];
+		};
+		return parsedResult?.questions || [];
 	} catch (error) {
 		console.error('Quiz generation failed, continuing without quiz:', error);
 		return []; // Return empty quiz rather than failing article creation
