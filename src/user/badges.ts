@@ -36,7 +36,7 @@ export const badges = (
 		},
 		{
 			id: 'philosopher',
-			description: 'Respond to a prompt activity',
+			description: 'Respond to a prompt',
 			icon: 'mdi:brain',
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 1),
@@ -73,6 +73,14 @@ export const badges = (
 			tracker_id: 'events_attended'
 		},
 		{
+			id: 'thinker',
+			description: 'Create 3 prompts',
+			icon: 'material-symbols:person-outline',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 3),
+			tracker_id: 'prompts_created'
+		},
+		{
 			id: 'impacter',
 			description: 'Achieve 100 impact points',
 			icon: 'mdi:earth-arrow-right',
@@ -103,6 +111,20 @@ export const badges = (
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 5),
 			tracker_id: 'activity_types_explored'
+		},
+		{
+			id: 'super_philosopher',
+			description: 'Respond to 10 prompts',
+			icon: 'mdi:thought-bubble-outline',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'prompts_responded'
+		},
+		{
+			id: 'close_friends',
+			description: 'Add someone to your close friends',
+			icon: 'mdi:heart-circle',
+			rarity: 'normal'
 		},
 		// rare badges
 		{
@@ -244,6 +266,28 @@ export const badges = (
 			icon: 'mdi:school',
 			rarity: 'rare'
 		},
+		{
+			id: 'world_photographer',
+			description: 'Submit an image to events in 10 different countries',
+			icon: 'mdi:camera-burst',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'event_countries_photographed'
+		},
+		{
+			id: 'ultra_philosopher',
+			description: 'Respond to 50 prompts',
+			icon: 'mdi:thought-bubble',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 50),
+			tracker_id: 'prompts_responded'
+		},
+		{
+			id: 'outreacher',
+			description: 'Become friends with someone outside of your country',
+			icon: 'mdi:globe-model',
+			rarity: 'rare'
+		},
 		// amazing badges
 		{
 			id: 'journey_master',
@@ -311,6 +355,22 @@ export const badges = (
 			progress: (...args: any[]) => min(args, 100),
 			tracker_id: 'events_attended'
 		},
+		{
+			id: 'legendary_philosopher',
+			description: 'Respond to 500 prompts',
+			icon: 'material-symbols:mindfulness-outline',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 500),
+			tracker_id: 'prompts_responded'
+		},
+		{
+			id: 'lifetime_reader',
+			description: 'Read 600 unique articles',
+			icon: 'mdi:comment-bookmark',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 600),
+			tracker_id: 'articles_read'
+		},
 		// green badges
 		{
 			id: 'old_account_2',
@@ -345,6 +405,30 @@ export const badges = (
 			description: 'Become friends with an administrator',
 			icon: 'mdi:shield-star',
 			rarity: 'green'
+		},
+		{
+			id: 'eternal_reader',
+			description: 'Read 1,000 unique articles',
+			icon: 'mdi:bookshelf',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 1000),
+			tracker_id: 'articles_read'
+		},
+		{
+			id: 'legendary_writer',
+			description: 'Create 1,000 articles',
+			icon: 'material-symbols:stylus-pencil',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 1000),
+			tracker_id: 'articles_created'
+		},
+		{
+			id: 'world_changer',
+			description: 'Achieve 1,000,000 impact points',
+			icon: 'mdi:star-plus',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 1000000),
+			tracker_id: 'impact_points_earned'
 		}
 	] as (Badge & { name?: string })[]
 ).map((badge) => {
