@@ -53,6 +53,20 @@
 			"id": "322faefd5628471cb7cea08cf041804a"
 		}
 	],
+	"durable_objects": {
+		"bindings": [
+			{
+				"name": "NOTIFIER",
+				"class_name": "LiveNotifier"
+			}
+		]
+	},
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_classes": ["LiveNotifier"]
+		}
+	],
 	"r2_buckets": [
 		{
 			"binding": "R2",

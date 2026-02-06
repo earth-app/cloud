@@ -8,6 +8,7 @@ export type Bindings = {
 	CACHE: KVNamespace;
 	ASSETS: Fetcher;
 	IMAGES: ImagesBinding;
+	NOTIFIER: DurableObjectNamespace;
 
 	ADMIN_API_KEY: string;
 	NCBI_API_KEY: string;

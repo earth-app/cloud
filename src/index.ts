@@ -6,6 +6,7 @@ import { logger } from 'hono/logger';
 import { secureHeaders } from 'hono/secure-headers';
 
 import app from './app';
+import ws from './ws';
 import scheduled from './scheduled';
 
 import * as packageJson from '../package.json';
@@ -46,6 +47,7 @@ main.use(
 
 main.get('/', (c) => c.text('Woosh!'));
 main.route('/v1', app);
+main.route('/ws', ws);
 
 export default {
 	fetch: main.fetch,
