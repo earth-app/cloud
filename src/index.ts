@@ -12,6 +12,7 @@ import scheduled from './scheduled';
 import * as packageJson from '../package.json';
 import { Bindings } from './util/types';
 import { poweredBy } from 'hono/powered-by';
+import { LiveNotifier } from './user/notifications';
 
 const main = new Hono<{ Bindings: Bindings }>();
 
@@ -51,5 +52,6 @@ main.route('/ws', ws);
 
 export default {
 	fetch: main.fetch,
-	scheduled: scheduled
+	scheduled: scheduled,
+	LiveNotifier
 };
