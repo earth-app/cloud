@@ -50,8 +50,9 @@ main.get('/', (c) => c.text('Woosh!'));
 main.route('/v1', app);
 main.route('/ws', ws);
 
+export { LiveNotifier };
+
 export default {
 	fetch: main.fetch,
-	scheduled: scheduled,
-	LiveNotifier
+	scheduled: scheduled
 };
