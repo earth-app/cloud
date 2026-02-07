@@ -196,6 +196,7 @@ app.post('/articles/recommend_similar_articles', async (c) => {
 
 app.post('/articles/grade', async (c) => {
 	const body = await c.req.json<{
+		id: string;
 		content: string;
 	}>();
 
@@ -203,7 +204,13 @@ app.post('/articles/grade', async (c) => {
 		return c.text('Invalid request body', 400);
 	}
 
-	const score = await scoreText(c.env, body.content || '', prompts.articleCriteria);
+	const key = `cache:article_score:${body.id}`;
+	const score = await tryCache(
+		key,
+		c.env.CACHE,
+		async () => await scoreText(c.env, body.content || '', prompts.articleCriteria),
+		60 * 60 * 24 * 14 // scores should not change, cache for article lifetime
+	);
 	return c.json(score, 200);
 });
 
@@ -226,6 +233,7 @@ app.get('/articles/quiz', async (c) => {
 
 app.post('/prompts/grade', async (c) => {
 	const body = await c.req.json<{
+		id: string;
 		prompt: string;
 	}>();
 
@@ -233,7 +241,13 @@ app.post('/prompts/grade', async (c) => {
 		return c.text('Invalid request body', 400);
 	}
 
-	const score = await scoreText(c.env, body.prompt || '', prompts.promptCriteria);
+	const key = `cache:prompt_score:${body.id}`;
+	const score = await tryCache(
+		key,
+		c.env.CACHE,
+		async () => await scoreText(c.env, body.prompt || '', prompts.promptCriteria),
+		60 * 60 * 24 * 2 // scores should not change, cache for prompt lifetime
+	);
 	return c.json(score, 200);
 });
 
