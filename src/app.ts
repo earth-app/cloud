@@ -321,19 +321,20 @@ app.get('/users/profile_photo/:id', async (c) => {
 		return c.text('Invalid size parameter', 400);
 	}
 
-	const photo = await getProfileVariation(id, size, c.env, c.executionCtx);
-	if (!photo) {
-		return c.text('Profile photo not found', 404);
-	}
-
-	let size0 = size;
-	if (validSizes.indexOf(size) === -1) {
-		size0 = 1024;
-	}
-
-	const cacheKey = `user:profile_photo:${id}:${size0}`;
+	const cacheKey = `user:profile_photo:${id}:${size}`;
 	return c.json(
-		await tryCache(cacheKey, c.env.CACHE, async () => ({ data: toDataURL(photo) })),
+		await tryCache(cacheKey, c.env.CACHE, async () => {
+			const photo = await getProfileVariation(id, size, c.env, c.executionCtx);
+			if (!photo) {
+				return null;
+			}
+			return { data: toDataURL(photo) };
+		}).then((result) => {
+			if (!result) {
+				return c.text('Profile photo not found', 404);
+			}
+			return result;
+		}),
 		200
 	);
 });
