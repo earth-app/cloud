@@ -260,7 +260,11 @@ app.post('/articles/quiz/submit', async (c) => {
 	const body = await c.req.json<{
 		articleId: string;
 		userId: string;
-		answers: Record<string, string>;
+		answers: {
+			question: string;
+			text: string;
+			index: number;
+		}[];
 	}>();
 	if (!body.articleId || !body.userId || !body.answers) {
 		return c.text('Article ID and answers are required', 400);
@@ -281,21 +285,19 @@ app.post('/articles/quiz/submit', async (c) => {
 	let score = 0;
 	const results = [];
 	for (const question of quizData) {
-		const userAnswer = body.answers[question.question];
+		const userAnswer = body.answers.find((a) => a.question === question.question);
 
 		let correct = false;
-		if (
-			userAnswer &&
-			userAnswer.trim().toLowerCase() === question.correct_answer.trim().toLowerCase()
-		) {
+		if (userAnswer && userAnswer.index === question.correct_answer_index) {
 			score++;
 			correct = true;
 		}
 
 		results.push({
 			question: question.question,
-			correct_answer: question.correct_answer,
-			user_answer: userAnswer,
+			correct_answer_index: question.correct_answer_index,
+			user_answer_index: userAnswer?.index,
+			user_answer_text: userAnswer?.text,
 			correct
 		});
 	}
