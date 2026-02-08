@@ -9,6 +9,7 @@ export type Bindings = {
 	ASSETS: Fetcher;
 	IMAGES: ImagesBinding;
 	NOTIFIER: DurableObjectNamespace;
+	TIMER: DurableObjectNamespace;
 
 	ADMIN_API_KEY: string;
 	NCBI_API_KEY: string;

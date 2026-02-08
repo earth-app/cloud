@@ -58,6 +58,10 @@
 			{
 				"name": "NOTIFIER",
 				"class_name": "LiveNotifier"
+			},
+			{
+				"name": "TIMER",
+				"class_name": "UserTimer"
 			}
 		]
 	},

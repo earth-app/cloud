@@ -441,6 +441,21 @@ app.post('/users/recommend_articles', async (c) => {
 	);
 });
 
+app.post('/users/timer', async (c) => {
+	const { action, userId } = await c.req.json<{ action: string; userId: string }>();
+
+	const id = c.env.TIMER.idFromName(userId);
+	const stub = c.env.TIMER.get(id);
+
+	return stub.fetch('https://do/timer', {
+		method: 'POST',
+		body: JSON.stringify({ action, userId }),
+		headers: {
+			'Content-Type': 'application/json'
+		}
+	});
+});
+
 /// User Journeys
 
 app.get('/users/journey/activity/:id/count', async (c) => {

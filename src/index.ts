@@ -13,6 +13,7 @@ import * as packageJson from '../package.json';
 import { Bindings } from './util/types';
 import { poweredBy } from 'hono/powered-by';
 import { LiveNotifier } from './user/notifications';
+import { UserTimer } from './user/timer';
 
 const main = new Hono<{ Bindings: Bindings }>();
 
@@ -50,7 +51,7 @@ main.get('/', (c) => c.text('Woosh!'));
 main.route('/v1', app);
 main.route('/ws', ws);
 
-export { LiveNotifier };
+export { LiveNotifier, UserTimer };
 
 export default {
 	fetch: main.fetch,
