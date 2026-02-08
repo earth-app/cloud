@@ -442,14 +442,30 @@ app.post('/users/recommend_articles', async (c) => {
 });
 
 app.post('/users/timer', async (c) => {
-	const { action, userId } = await c.req.json<{ action: string; userId: string }>();
+	const { action, userId, field } = await c.req.json<{
+		action: string;
+		userId: string;
+		field: string;
+	}>();
+
+	if (!action) {
+		return c.text('Action is required', 400);
+	}
+
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (!field) {
+		return c.text('Field is required', 400);
+	}
 
 	const id = c.env.TIMER.idFromName(userId);
 	const stub = c.env.TIMER.get(id);
 
 	return stub.fetch('https://do/timer', {
 		method: 'POST',
-		body: JSON.stringify({ action, userId }),
+		body: JSON.stringify({ action, userId, field }),
 		headers: {
 			'Content-Type': 'application/json'
 		}
