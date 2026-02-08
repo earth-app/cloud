@@ -1218,7 +1218,8 @@ export async function recommendSimilarEvents(event: Event, pool: Event[], limit:
 
 export async function postEvent(
 	event: Awaited<ReturnType<typeof createEvent>>,
-	bindings: Bindings
+	bindings: Bindings,
+	ctx: ExecutionContext
 ) {
 	if (!event) {
 		throw new Error('No event data to post');
@@ -1256,7 +1257,7 @@ export async function postEvent(
 	const locationName = extractLocationFromEventName(event.name);
 	if (locationName) {
 		console.log(`Generating thumbnail for birthday event: ${locationName}`);
-		await uploadPlaceThumbnail(locationName, BigInt(data.id), bindings, null as any);
+		await uploadPlaceThumbnail(locationName, BigInt(data.id), bindings, ctx);
 	} else {
 		console.log(`Skipping thumbnail generation for non-birthday event: ${event.name}`);
 	}

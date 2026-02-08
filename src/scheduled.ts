@@ -78,7 +78,7 @@ export default async function scheduled(
 		const promises = entries.map(async (entry) => {
 			const event = await createEvent(entry.entry, entry.date, env);
 			if (!event) return null;
-			return await postEvent(event, env);
+			return await postEvent(event, env, ctx);
 		});
 
 		const events = await Promise.all(promises);
