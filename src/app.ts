@@ -229,6 +229,93 @@ app.get('/articles/quiz', async (c) => {
 	return c.json(quizData, 200);
 });
 
+app.get('/articles/quiz/score', async (c) => {
+	const userId = c.req.query('userId');
+	const articleId = c.req.query('articleId');
+	if (!userId || !articleId) {
+		return c.text('User ID and Article ID are required', 400);
+	}
+
+	const key = `article:quiz_score:${userId}:${articleId}`;
+	const data = await c.env.KV.get<{
+		score: number;
+		scorePercent: number;
+		results: {
+			question: string;
+			correct_answer: string;
+			user_answer: string;
+			correct: boolean;
+		}[];
+		total: number;
+	}>(key, 'json');
+
+	if (!data) {
+		return c.text('Quiz score not found for the specified user and article', 404);
+	}
+
+	return c.json(data, 200);
+});
+
+app.post('/articles/quiz/submit', async (c) => {
+	const body = await c.req.json<{
+		articleId: string;
+		userId: string;
+		answers: Record<string, string>;
+	}>();
+	if (!body.articleId || !body.userId || !body.answers) {
+		return c.text('Article ID and answers are required', 400);
+	}
+
+	const scoreKey = `article:quiz_score:${body.userId}:${body.articleId}`;
+	const existingScore = await c.env.KV.get(scoreKey);
+	if (existingScore) {
+		return c.text('Quiz has already been submitted for this article by the user', 409);
+	}
+
+	const key = `article:quiz:${body.articleId}`;
+	const quizData = await c.env.KV.get<ArticleQuizQuestion[]>(key, 'json');
+	if (!quizData) {
+		return c.text('Quiz not found for the specified article', 404);
+	}
+
+	let score = 0;
+	const results = [];
+	for (const question of quizData) {
+		const userAnswer = body.answers[question.question];
+
+		let correct = false;
+		if (
+			userAnswer &&
+			userAnswer.trim().toLowerCase() === question.correct_answer.trim().toLowerCase()
+		) {
+			score++;
+			correct = true;
+		}
+
+		results.push({
+			question: question.question,
+			correct_answer: question.correct_answer,
+			user_answer: userAnswer,
+			correct
+		});
+	}
+
+	const scorePercent = (score / quizData.length) * 100;
+
+	c.executionCtx.waitUntil(
+		c.env.KV.put(
+			scoreKey,
+			JSON.stringify({
+				score,
+				scorePercent,
+				results,
+				total: quizData.length
+			})
+		)
+	); // scores are persistent, no expiration
+	return c.json({ score, scorePercent, total: quizData.length, results }, 200);
+});
+
 // Prompts
 
 app.post('/prompts/grade', async (c) => {
