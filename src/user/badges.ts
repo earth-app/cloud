@@ -65,6 +65,14 @@ export const badges = (
 			tracker_id: 'articles_read'
 		},
 		{
+			id: 'bookworm',
+			description: 'Spend 1 hour reading an article',
+			icon: 'mdi:book',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 60 * 60),
+			tracker_id: 'articles_read_time'
+		},
+		{
 			id: 'social_butterfly',
 			description: 'Attend 5 events',
 			icon: 'mdi:account-group',
@@ -134,6 +142,14 @@ export const badges = (
 			rarity: 'rare',
 			progress: (...args: any[]) => min(args, 50),
 			tracker_id: 'articles_read'
+		},
+		{
+			id: 'super_bookworm',
+			description: 'Read articles for at least 5 hours',
+			icon: 'mdi:book-arrow-up',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 60 * 60 * 5),
+			tracker_id: 'articles_read_time'
 		},
 		{
 			id: 'networker',
@@ -334,6 +350,14 @@ export const badges = (
 			tracker_id: 'articles_created'
 		},
 		{
+			id: 'globetrotter',
+			description: 'Submit images to events in 25 different countries',
+			icon: 'mdi:camera-marker',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 25),
+			tracker_id: 'event_countries_photographed'
+		},
+		{
 			id: 'world_explorer',
 			description: 'Submit images to 30 different events',
 			icon: 'mdi:earth-arrow-up',
@@ -370,6 +394,14 @@ export const badges = (
 			rarity: 'amazing',
 			progress: (...args: any[]) => min(args, 600),
 			tracker_id: 'articles_read'
+		},
+		{
+			id: 'super_bookworm',
+			description: 'Read articles for at least 45 hours',
+			icon: 'material-symbols:book-2',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 60 * 60 * 45),
+			tracker_id: 'articles_read_time'
 		},
 		// green badges
 		{
@@ -429,6 +461,22 @@ export const badges = (
 			rarity: 'green',
 			progress: (...args: any[]) => min(args, 1000000),
 			tracker_id: 'impact_points_earned'
+		},
+		{
+			id: 'einstein',
+			description: 'Respond to 3,000 prompts',
+			icon: 'material-symbols:science-outline',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 3000),
+			tracker_id: 'prompts_responded'
+		},
+		{
+			id: 'immortal_bookworm',
+			description: 'Read articles for at least 350 hours',
+			icon: 'material-symbols:book-5',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 60 * 60 * 350),
+			tracker_id: 'articles_read_time'
 		}
 	] as (Badge & { name?: string })[]
 ).map((badge) => {
