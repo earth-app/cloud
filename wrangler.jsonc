@@ -68,7 +68,7 @@
 	"migrations": [
 		{
 			"tag": "v1",
-			"new_classes": ["LiveNotifier"]
+			"new_classes": ["LiveNotifier", "UserTimer"]
 		}
 	],
 	"r2_buckets": [
