@@ -145,6 +145,54 @@ export function chunkArray<T>(arr: T[], size: number): Array<T[]> {
 }
 
 /**
+ * Strips markdown code fences from AI-generated responses and normalizes to JSON string.
+ * Handles various formats:
+ * - Markdown fenced: ```json\n{...}\n```
+ * - Plain JSON string: {"key": "value"}
+ * - Already parsed object: {key: "value"}
+ * - JSON.stringify output: "{\"key\":\"value\"}"
+ * - Edge cases: multiple fences, whitespace, missing closing fence, CRLF/CR/LF line endings
+ *
+ * @param text - The text potentially wrapped in markdown code fences, or an already parsed object
+ * @returns The cleaned JSON string ready for parsing
+ */
+export function stripMarkdownCodeFence(text: string | object | any): string {
+	// Handle already-parsed objects
+	if (text && typeof text === 'object') {
+		return JSON.stringify(text);
+	}
+
+	// Handle non-string primitives
+	if (!text || typeof text !== 'string') {
+		return text || '';
+	}
+
+	let cleaned = text.trim();
+
+	// If it doesn't contain code fences, return as-is
+	if (!cleaned.includes('```')) {
+		return cleaned;
+	}
+	// Handle multiple code fences (keep stripping until none remain)
+	let previousLength = -1;
+	while (cleaned.length !== previousLength && cleaned.includes('```')) {
+		previousLength = cleaned.length;
+
+		// Match opening fence with optional language identifier
+		// Handles: ```json, ```typescript, ```javascript, ``` (no language), etc.
+		// (?:\r\n|\r|\n)? handles CRLF, CR, and LF line endings
+		cleaned = cleaned.replace(/^```[a-z]*\s*(?:\r\n|\r|\n)?/i, '');
+
+		// Match closing fence with any line ending type
+		cleaned = cleaned.replace(/(?:\r\n|\r|\n)?```\s*$/i, '');
+
+		cleaned = cleaned.trim();
+	}
+
+	return cleaned;
+}
+
+/**
  * Converts a number to its ordinal form (1st, 2nd, 3rd, etc.)
  * @param num - The number to convert
  * @returns The ordinal string (e.g., "1st", "2nd", "3rd", "4th")

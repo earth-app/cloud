@@ -6,7 +6,13 @@ import { Activity, Article, Bindings, Event, EventData, OceanArticle, Prompt } f
 import { getSynonyms } from '../util/dictionary';
 import * as prompts from '../util/ai';
 import { Ai } from '@cloudflare/workers-types';
-import { chunkArray, splitContent, toOrdinal, uploadEventThumbnail } from '../util/util';
+import {
+	chunkArray,
+	splitContent,
+	stripMarkdownCodeFence,
+	toOrdinal,
+	uploadEventThumbnail
+} from '../util/util';
 import {
 	Entry,
 	ExactDateWithYearEntry,
@@ -528,7 +534,8 @@ export async function createArticleQuiz(
 			}
 		});
 
-		const parsedResult = JSON.parse(quizResult.response || '{"questions":[]}');
+		const responseText = stripMarkdownCodeFence(quizResult.response || '{"questions":[]}');
+		const parsedResult = JSON.parse(responseText);
 		const quizData = (parsedResult.questions || []) as ArticleQuizQuestion[];
 		return quizData;
 	} catch (error) {
