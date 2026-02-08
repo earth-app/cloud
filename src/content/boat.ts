@@ -549,7 +549,10 @@ export async function postArticle(
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
 		},
-		body: JSON.stringify(article)
+		body: JSON.stringify({
+			...article,
+			censor: true
+		})
 	});
 
 	if (!res.ok) {
@@ -781,7 +784,7 @@ export async function postPrompt(prompt: string, bindings: Bindings): Promise<Pr
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
 		},
-		body: JSON.stringify({ prompt, visibility: 'PUBLIC' })
+		body: JSON.stringify({ prompt, visibility: 'PUBLIC', censor: true })
 	});
 
 	if (!res.ok) {
@@ -1354,7 +1357,10 @@ export async function postEvent(
 			'Content-Type': 'application/json',
 			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
 		},
-		body: JSON.stringify(event)
+		body: JSON.stringify({
+			...event,
+			censor: true
+		})
 	});
 
 	if (!res.ok) {
