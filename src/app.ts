@@ -243,7 +243,9 @@ app.get('/articles/quiz/score', async (c) => {
 		results: {
 			question: string;
 			correct_answer: string;
+			correct_answer_index: number;
 			user_answer: string;
+			user_answer_index: number;
 			correct: boolean;
 		}[];
 		total: number;
@@ -295,6 +297,7 @@ app.post('/articles/quiz/submit', async (c) => {
 
 		results.push({
 			question: question.question,
+			correct_answer: question.correct_answer,
 			correct_answer_index: question.correct_answer_index,
 			user_answer_index: userAnswer?.index,
 			user_answer_text: userAnswer?.text,
@@ -304,18 +307,10 @@ app.post('/articles/quiz/submit', async (c) => {
 
 	const scorePercent = (score / quizData.length) * 100;
 
-	c.executionCtx.waitUntil(
-		c.env.KV.put(
-			scoreKey,
-			JSON.stringify({
-				score,
-				scorePercent,
-				results,
-				total: quizData.length
-			})
-		)
-	); // scores are persistent, no expiration
-	return c.json({ score, scorePercent, total: quizData.length, results }, 200);
+	const data = { score, scorePercent, total: quizData.length, results };
+	c.executionCtx.waitUntil(c.env.KV.put(scoreKey, JSON.stringify(data))); // scores are persistent, no expiration
+
+	return c.json(data, 200);
 });
 
 // Prompts
