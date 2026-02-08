@@ -584,39 +584,67 @@ export async function recommendArticles(
 		throw new Error('No articles or activities provided for recommendation');
 	}
 
-	const rankQuery = prompts.articleRecommendationQuery(activities);
-	const contexts = pool.map((article) => ({
-		text:
-			(article.title || '') +
-			' | Tags: ' +
-			(article.tags || []).slice(0, 6).join(', ') + // limit tags to reduce tokens
-			'\n' +
-			(article.description || '').substring(0, 400), // slightly reduce description length
-		original: article // store original for later retrieval
-	}));
+	// Fallback function: return random articles from pool
+	const getRandomArticles = () => {
+		const shuffled = [...pool].sort(() => Math.random() - 0.5);
+		return shuffled.slice(0, Math.min(limit, pool.length));
+	};
 
-	const ranked = await ai.run(rankerModel, {
-		query: rankQuery,
-		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
-	});
+	try {
+		const rankQuery = prompts.articleRecommendationQuery(activities);
+		const contexts = pool.map((article) => ({
+			text:
+				(article.title || '') +
+				' | Tags: ' +
+				(article.tags || []).slice(0, 6).join(', ') + // limit tags to reduce tokens
+				'\n' +
+				(article.description || '').substring(0, 400), // slightly reduce description length
+			original: article // store original for later retrieval
+		}));
 
-	if (!ranked || !ranked.response) {
-		throw new Error('Failed to rank articles: ' + JSON.stringify(ranked));
+		const ranked = await ai.run(rankerModel, {
+			query: rankQuery,
+			contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+		});
+
+		if (!ranked || !ranked.response) {
+			console.warn('AI ranking failed, using random fallback');
+			return getRandomArticles();
+		}
+
+		const allRanked: { id: number; score: number }[] = ranked.response
+			.filter((r) => r.id !== undefined)
+			.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+		// Get top N articles based on score, filtering by minimum threshold
+		const scoreThreshold = 0.3; // only include articles with meaningful relevance
+		const topRanked = allRanked
+			.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
+			.sort((a, b) => b.score - a.score)
+			.slice(0, limit)
+			.map((r) => contexts[r.id].original);
+
+		// If no articles meet threshold, relax it and try again
+		if (topRanked.length === 0) {
+			const relaxedRanked = allRanked
+				.filter((r) => r.id >= 0 && r.id < contexts.length)
+				.sort((a, b) => b.score - a.score)
+				.slice(0, limit)
+				.map((r) => contexts[r.id].original);
+
+			// If still empty, use random fallback
+			if (relaxedRanked.length === 0) {
+				console.warn('No ranked articles found, using random fallback');
+				return getRandomArticles();
+			}
+			return relaxedRanked;
+		}
+
+		return topRanked;
+	} catch (error) {
+		console.error('Error in recommendArticles:', error);
+		return getRandomArticles();
 	}
-
-	const allRanked: { id: number; score: number }[] = ranked.response
-		.filter((r) => r.id !== undefined)
-		.map((r) => ({ id: r.id!, score: r.score || 0 }));
-
-	// Get top N articles based on score, filtering by minimum threshold
-	const scoreThreshold = 0.3; // only include articles with meaningful relevance
-	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
-		.sort((a, b) => b.score - a.score)
-		.slice(0, limit)
-		.map((r) => contexts[r.id].original);
-
-	return topRanked;
 }
 
 export async function recommendSimilarArticles(
@@ -629,39 +657,71 @@ export async function recommendSimilarArticles(
 		throw new Error('No articles provided for recommendation');
 	}
 
-	const rankQuery = prompts.articleSimilarityQuery(article);
-	const contexts = pool.map((a) => ({
-		text:
-			(a.title || '') +
-			' | Tags: ' +
-			(a.tags || []).slice(0, 6).join(', ') + // limit tags
-			'\n' +
-			(a.content || '').substring(0, 400), // reduce content length
-		original: a // store original for later retrieval
-	}));
+	// Fallback function: return random articles from pool (excluding the original)
+	const getRandomArticles = () => {
+		const filtered = pool.filter((a) => a.id !== article.id);
+		const shuffled = [...filtered].sort(() => Math.random() - 0.5);
+		return shuffled.slice(0, Math.min(limit, filtered.length));
+	};
 
-	const ranked = await ai.run(rankerModel, {
-		query: rankQuery,
-		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
-	});
+	try {
+		const rankQuery = prompts.articleSimilarityQuery(article);
+		const contexts = pool.map((a) => ({
+			text:
+				(a.title || '') +
+				' | Tags: ' +
+				(a.tags || []).slice(0, 6).join(', ') + // limit tags
+				'\n' +
+				(a.content || '').substring(0, 400), // reduce content length
+			original: a // store original for later retrieval
+		}));
 
-	if (!ranked || !ranked.response) {
-		throw new Error('Failed to rank articles: ' + JSON.stringify(ranked));
+		const ranked = await ai.run(rankerModel, {
+			query: rankQuery,
+			contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+		});
+
+		if (!ranked || !ranked.response) {
+			console.warn('AI ranking failed, using random fallback');
+			return getRandomArticles();
+		}
+
+		const allRanked: { id: number; score: number }[] = ranked.response
+			.filter((r) => r.id !== undefined)
+			.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+		// Get top N similar articles based on score with minimum threshold
+		const scoreThreshold = 0.4; // higher threshold for similarity recommendations
+		const topRanked = allRanked
+			.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
+			.sort((a, b) => b.score - a.score)
+			.slice(0, limit)
+			.map((r) => contexts[r.id].original);
+
+		const filtered = topRanked.filter((a) => a.id !== article.id); // exclude the original article
+
+		// If no articles meet threshold, relax it and try again
+		if (filtered.length === 0) {
+			const relaxedRanked = allRanked
+				.filter((r) => r.id >= 0 && r.id < contexts.length)
+				.sort((a, b) => b.score - a.score)
+				.slice(0, limit)
+				.map((r) => contexts[r.id].original)
+				.filter((a) => a.id !== article.id);
+
+			// If still empty, use random fallback
+			if (relaxedRanked.length === 0) {
+				console.warn('No similar articles found, using random fallback');
+				return getRandomArticles();
+			}
+			return relaxedRanked;
+		}
+
+		return filtered;
+	} catch (error) {
+		console.error('Error in recommendSimilarArticles:', error);
+		return getRandomArticles();
 	}
-
-	const allRanked: { id: number; score: number }[] = ranked.response
-		.filter((r) => r.id !== undefined)
-		.map((r) => ({ id: r.id!, score: r.score || 0 }));
-
-	// Get top N similar articles based on score with minimum threshold
-	const scoreThreshold = 0.4; // higher threshold for similarity recommendations
-	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
-		.sort((a, b) => b.score - a.score)
-		.slice(0, limit)
-		.map((r) => contexts[r.id].original);
-
-	return topRanked.filter((a) => a.id !== article.id); // exclude the original article
 }
 
 // Prompt Endpoints
@@ -1107,51 +1167,79 @@ export async function recommendEvents(
 		throw new Error('No events or activities provided for recommendation');
 	}
 
-	const rankQuery = prompts.eventRecommendationQuery(activities);
+	// Fallback function: return random events from pool
+	const getRandomEvents = () => {
+		const shuffled = [...pool].sort(() => Math.random() - 0.5);
+		return shuffled.slice(0, Math.min(limit, pool.length));
+	};
 
-	const contexts = pool.map((event) => {
-		// Extract activity names/types from EventActivity objects
-		const activityStrings = (event.activities || []).map((a) => {
-			if (a.type === 'activity_type') {
-				return a.value;
-			} else {
-				return a.name || '';
-			}
+	try {
+		const rankQuery = prompts.eventRecommendationQuery(activities);
+
+		const contexts = pool.map((event) => {
+			// Extract activity names/types from EventActivity objects
+			const activityStrings = (event.activities || []).map((a) => {
+				if (a.type === 'activity_type') {
+					return a.value;
+				} else {
+					return a.name || '';
+				}
+			});
+
+			return {
+				text:
+					(event.name || '') +
+					' | Activities: ' +
+					activityStrings.slice(0, 5).join(', ') + // limit activities
+					'\n' +
+					(event.description || '').substring(0, 400), // reduce description
+				original: event
+			};
 		});
 
-		return {
-			text:
-				(event.name || '') +
-				' | Activities: ' +
-				activityStrings.slice(0, 5).join(', ') + // limit activities
-				'\n' +
-				(event.description || '').substring(0, 400), // reduce description
-			original: event
-		};
-	});
+		const ranked = await ai.run(rankerModel, {
+			query: rankQuery,
+			contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+		});
 
-	const ranked = await ai.run(rankerModel, {
-		query: rankQuery,
-		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
-	});
+		if (!ranked || !ranked.response) {
+			console.warn('AI ranking failed, using random fallback');
+			return getRandomEvents();
+		}
 
-	if (!ranked || !ranked.response) {
-		throw new Error('Failed to rank events: ' + JSON.stringify(ranked));
+		const allRanked: { id: number; score: number }[] = ranked.response
+			.filter((r) => r.id !== undefined)
+			.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+		// Get top N events based on score with minimum relevance threshold
+		const scoreThreshold = 0.3;
+		const topRanked = allRanked
+			.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
+			.sort((a, b) => b.score - a.score)
+			.slice(0, limit)
+			.map((r) => contexts[r.id].original);
+
+		// If no events meet threshold, relax it and try again
+		if (topRanked.length === 0) {
+			const relaxedRanked = allRanked
+				.filter((r) => r.id >= 0 && r.id < contexts.length)
+				.sort((a, b) => b.score - a.score)
+				.slice(0, limit)
+				.map((r) => contexts[r.id].original);
+
+			// If still empty, use random fallback
+			if (relaxedRanked.length === 0) {
+				console.warn('No ranked events found, using random fallback');
+				return getRandomEvents();
+			}
+			return relaxedRanked;
+		}
+
+		return topRanked;
+	} catch (error) {
+		console.error('Error in recommendEvents:', error);
+		return getRandomEvents();
 	}
-
-	const allRanked: { id: number; score: number }[] = ranked.response
-		.filter((r) => r.id !== undefined)
-		.map((r) => ({ id: r.id!, score: r.score || 0 }));
-
-	// Get top N events based on score with minimum relevance threshold
-	const scoreThreshold = 0.3;
-	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
-		.sort((a, b) => b.score - a.score)
-		.slice(0, limit)
-		.map((r) => contexts[r.id].original);
-
-	return topRanked;
 }
 
 export async function recommendSimilarEvents(event: Event, pool: Event[], limit: number, ai: Ai) {
@@ -1159,68 +1247,100 @@ export async function recommendSimilarEvents(event: Event, pool: Event[], limit:
 		throw new Error('No events provided for recommendation');
 	}
 
-	// Convert event to EventData format for the query
-	const eventData: EventData = {
-		name: event.name,
-		description: event.description,
-		type: event.type,
-		date: event.date,
-		end_date: event.end_date,
-		visibility: event.visibility,
-		activities: event.activities.map((a) => {
-			if (a.type === 'activity_type') {
-				return a.value;
-			} else {
-				return a.id || a.name || '';
-			}
-		}),
-		fields: event.fields
+	// Fallback function: return random events from pool (excluding the original)
+	const getRandomEvents = () => {
+		const filtered = pool.filter((e) => e.name !== event.name);
+		const shuffled = [...filtered].sort(() => Math.random() - 0.5);
+		return shuffled.slice(0, Math.min(limit, filtered.length));
 	};
 
-	const rankQuery = prompts.eventSimilarityQuery(eventData);
-	const contexts = pool.map((e) => {
-		// Extract activity names/types from EventActivity objects
-		const activityStrings = (e.activities || []).map((a) => {
-			if (a.type === 'activity_type') {
-				return a.value;
-			} else {
-				return a.name || '';
-			}
+	try {
+		// Convert event to EventData format for the query
+		const eventData: EventData = {
+			name: event.name,
+			description: event.description,
+			type: event.type,
+			date: event.date,
+			end_date: event.end_date,
+			visibility: event.visibility,
+			activities: event.activities.map((a) => {
+				if (a.type === 'activity_type') {
+					return a.value;
+				} else {
+					return a.id || a.name || '';
+				}
+			}),
+			fields: event.fields
+		};
+
+		const rankQuery = prompts.eventSimilarityQuery(eventData);
+		const contexts = pool.map((e) => {
+			// Extract activity names/types from EventActivity objects
+			const activityStrings = (e.activities || []).map((a) => {
+				if (a.type === 'activity_type') {
+					return a.value;
+				} else {
+					return a.name || '';
+				}
+			});
+
+			return {
+				text:
+					(e.name || '') +
+					' | Activities: ' +
+					activityStrings.slice(0, 5).join(', ') + // limit activities
+					'\n' +
+					(e.description || '').substring(0, 400), // reduce description
+				original: e
+			};
 		});
 
-		return {
-			text:
-				(e.name || '') +
-				' | Activities: ' +
-				activityStrings.slice(0, 5).join(', ') + // limit activities
-				'\n' +
-				(e.description || '').substring(0, 400), // reduce description
-			original: e
-		};
-	});
+		const ranked = await ai.run(rankerModel, {
+			query: rankQuery,
+			contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
+		});
 
-	const ranked = await ai.run(rankerModel, {
-		query: rankQuery,
-		contexts: contexts.map((c) => ({ text: c.text })) // remove 'original' field for ranking
-	});
+		if (!ranked || !ranked.response) {
+			console.warn('AI ranking failed, using random fallback');
+			return getRandomEvents();
+		}
 
-	if (!ranked || !ranked.response) {
-		throw new Error('Failed to rank events: ' + JSON.stringify(ranked));
+		const allRanked: { id: number; score: number }[] = ranked.response
+			.filter((r) => r.id !== undefined)
+			.map((r) => ({ id: r.id!, score: r.score || 0 }));
+
+		// Get top N similar events based on score with higher threshold for similarity
+		const scoreThreshold = 0.4;
+		const topRanked = allRanked
+			.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
+			.sort((a, b) => b.score - a.score)
+			.slice(0, limit)
+			.map((r) => contexts[r.id].original);
+
+		const filtered = topRanked.filter((e) => e.name !== event.name); // exclude the original event
+
+		// If no events meet threshold, relax it and try again
+		if (filtered.length === 0) {
+			const relaxedRanked = allRanked
+				.filter((r) => r.id >= 0 && r.id < contexts.length)
+				.sort((a, b) => b.score - a.score)
+				.slice(0, limit)
+				.map((r) => contexts[r.id].original)
+				.filter((e) => e.name !== event.name);
+
+			// If still empty, use random fallback
+			if (relaxedRanked.length === 0) {
+				console.warn('No similar events found, using random fallback');
+				return getRandomEvents();
+			}
+			return relaxedRanked;
+		}
+
+		return filtered;
+	} catch (error) {
+		console.error('Error in recommendSimilarEvents:', error);
+		return getRandomEvents();
 	}
-
-	const allRanked: { id: number; score: number }[] = ranked.response
-		.filter((r) => r.id !== undefined)
-		.map((r) => ({ id: r.id!, score: r.score || 0 }));
-
-	// Get top N similar events based on score with higher threshold for similarity
-	const scoreThreshold = 0.4;
-	const topRanked = allRanked
-		.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
-		.sort((a, b) => b.score - a.score)
-		.slice(0, limit)
-		.map((r) => contexts[r.id].original);
-
-	return topRanked.filter((e) => e.name !== event.name); // exclude the original event
 }
 
 export async function postEvent(
