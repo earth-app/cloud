@@ -314,7 +314,8 @@ app.post('/articles/quiz/submit', async (c) => {
 		return c.text('Article ID and answers are required', 400);
 	}
 
-	const scoreKey = `article:quiz_score:${body.userId}:${normalizeId(body.articleId)}`;
+	const id = normalizeId(body.articleId);
+	const scoreKey = `article:quiz_score:${body.userId}:${id}`;
 	const existingScore = await c.env.KV.get(scoreKey);
 	if (existingScore) {
 		return c.text('Quiz has already been submitted for this article by the user', 409);
@@ -374,6 +375,17 @@ app.post('/articles/quiz/submit', async (c) => {
 
 	const data = { score, scorePercent, total: quizData.length, results };
 	c.executionCtx.waitUntil(c.env.KV.put(scoreKey, JSON.stringify(data))); // scores are persistent, no expiration
+
+	// increment badge progress
+	c.executionCtx.waitUntil(
+		addBadgeProgress(body.userId, 'article_quizzes_completed', id, c.env.KV)
+	);
+
+	if (data.scorePercent === 100) {
+		c.executionCtx.waitUntil(
+			addBadgeProgress(body.userId, 'article_quizzes_completed_perfect_score', id, c.env.KV)
+		);
+	}
 
 	return c.json(data, 200);
 });

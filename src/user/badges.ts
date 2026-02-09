@@ -134,6 +134,14 @@ export const badges = (
 			icon: 'mdi:heart-circle',
 			rarity: 'normal'
 		},
+		{
+			id: 'student',
+			description: 'Complete an article quiz',
+			icon: 'mdi:school-outline',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'article_quizzes_completed'
+		},
 		// rare badges
 		{
 			id: 'avid_reader',
@@ -280,7 +288,17 @@ export const badges = (
 			id: 'article_nerd',
 			description: 'Get 100% on an article quiz',
 			icon: 'mdi:school',
-			rarity: 'rare'
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'article_quizzes_completed_perfect_score'
+		},
+		{
+			id: 'super_student',
+			description: 'Complete 10 article quizzes',
+			icon: 'mdi:account-school',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'article_quizzes_completed'
 		},
 		{
 			id: 'world_photographer',
@@ -396,6 +414,14 @@ export const badges = (
 			tracker_id: 'articles_read'
 		},
 		{
+			id: 'juris_doctor',
+			description: 'Get 100% on 10 article quizzes',
+			icon: 'mdi:gavel',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'article_quizzes_completed_perfect_score'
+		},
+		{
 			id: 'super_bookworm',
 			description: 'Read articles for at least 45 hours',
 			icon: 'material-symbols:book-2',
@@ -423,6 +449,14 @@ export const badges = (
 			description: 'Maintain a 365-day streak on any journey',
 			icon: 'mdi:trophy-award',
 			rarity: 'green'
+		},
+		{
+			id: 'doctorate',
+			description: 'Get 100% on 50 article quizzes',
+			icon: 'mdi:script-text',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 50),
+			tracker_id: 'article_quizzes_completed_perfect_score'
 		},
 		{
 			id: 'crazy_impact',
