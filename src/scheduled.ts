@@ -45,7 +45,7 @@ export default async function scheduled(
 				const quiz = await createArticleQuiz(article, env.AI);
 				console.log('Created article quiz with questions:', quiz);
 
-				await postArticle(article, null, env);
+				await postArticle(article, quiz.length > 0 ? quiz : null, env);
 
 				console.log(
 					'Created new article and quiz:',

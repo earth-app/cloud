@@ -603,7 +603,7 @@ export async function recommendArticles(
 			text:
 				(article.title || '') +
 				' | Tags: ' +
-				(article.tags || []).slice(0, 6).join(', ') + // limit tags to reduce tokens
+				(article.tags && Array.isArray(article.tags) ? article.tags.slice(0, 6).join(', ') : '') + // limit tags to reduce tokens with null check
 				'\n' +
 				(article.description || '').substring(0, 400), // slightly reduce description length
 			original: article // store original for later retrieval
@@ -676,7 +676,7 @@ export async function recommendSimilarArticles(
 			text:
 				(a.title || '') +
 				' | Tags: ' +
-				(a.tags || []).slice(0, 6).join(', ') + // limit tags
+				(a.tags && Array.isArray(a.tags) ? a.tags.slice(0, 6).join(', ') : '') + // limit tags with null check
 				'\n' +
 				(a.content || '').substring(0, 400), // reduce content length
 			original: a // store original for later retrieval

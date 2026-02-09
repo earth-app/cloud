@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import {
 	ArticleQuizQuestion,
 	createActivityData,
+	createArticleQuiz,
 	extractLocationFromEventName,
 	findArticles,
 	recommendArticles,
@@ -311,6 +312,28 @@ app.post('/articles/quiz/submit', async (c) => {
 	c.executionCtx.waitUntil(c.env.KV.put(scoreKey, JSON.stringify(data))); // scores are persistent, no expiration
 
 	return c.json(data, 200);
+});
+
+app.post('/articles/quiz/create', async (c) => {
+	const body = await c.req.json<{
+		article: Article;
+	}>();
+
+	if (!body.article) {
+		return c.text('Article is required', 400);
+	}
+
+	const quiz = await createArticleQuiz(body.article, c.env.AI);
+	if (!quiz || quiz.length === 0) {
+		return c.text('Failed to create quiz for the article', 500);
+	}
+
+	const key = `article:quiz:${body.article.id}`;
+	c.executionCtx.waitUntil(
+		c.env.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 24 * 14 })
+	); // cache for 14 days
+
+	return c.json(quiz, 201);
 });
 
 // Prompts
