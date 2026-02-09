@@ -456,13 +456,13 @@ export type ArticleQuizQuestion = {
 	| {
 			type: 'multiple_choice';
 			options: string[];
-			correct_answer: string;
+			correct_answer?: string;
 			correct_answer_index: number;
 	  }
 	| {
 			type: 'true_false';
 			options: ('True' | 'False')[] | [];
-			correct_answer: 'True' | 'False';
+			correct_answer?: 'True' | 'False';
 			correct_answer_index: number | -1;
 			is_true: boolean;
 			is_false: boolean;

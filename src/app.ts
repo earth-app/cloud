@@ -231,17 +231,38 @@ app.get('/articles/quiz', async (c) => {
 	const processedQuizData = quizData.map((question) => {
 		if (question.type === 'true_false') {
 			let normalizedIndex = question.correct_answer_index;
+			let normalizedAnswer = question.correct_answer;
 
 			// Convert index if it's -1
 			if (normalizedIndex === -1) {
-				const answerLower = question.correct_answer.toString().toLowerCase().trim();
-				normalizedIndex = answerLower === 'true' ? 0 : 1;
+				// Use is_true/is_false to determine correct answer
+				if (question.is_true) {
+					normalizedIndex = 0;
+					normalizedAnswer = 'True';
+				} else if (question.is_false) {
+					normalizedIndex = 1;
+					normalizedAnswer = 'False';
+				} else {
+					// Default to false if no indicators
+					normalizedIndex = 1;
+					normalizedAnswer = 'False';
+				}
 			}
 
 			return {
 				...question,
 				options: ['True', 'False'],
+				correct_answer: normalizedAnswer || 'False',
 				correct_answer_index: normalizedIndex
+			};
+		} else if (question.type === 'multiple_choice') {
+			// derive correct_answer from options if not provided
+			const normalizedAnswer =
+				question.correct_answer || question.options[question.correct_answer_index];
+
+			return {
+				...question,
+				correct_answer: normalizedAnswer
 			};
 		}
 		return question;
@@ -321,8 +342,15 @@ app.post('/articles/quiz/submit', async (c) => {
 
 			// Convert index if it's -1
 			if (actualCorrectIndex === -1) {
-				const answerLower = question.correct_answer.toString().toLowerCase().trim();
-				actualCorrectIndex = answerLower === 'true' ? 0 : 1;
+				// Use is_true/is_false to determine correct answer
+				if (question.is_true) {
+					actualCorrectIndex = 0;
+				} else if (question.is_false) {
+					actualCorrectIndex = 1;
+				} else {
+					// Default to false if no indicators
+					actualCorrectIndex = 1;
+				}
 			}
 		}
 
@@ -337,7 +365,7 @@ app.post('/articles/quiz/submit', async (c) => {
 			options: actualOptions,
 			correct_answer_index: actualCorrectIndex,
 			user_answer_index: userAnswer?.index,
-			user_answer_text: userAnswer?.text,
+			user_answer: userAnswer?.text,
 			correct
 		});
 	}
@@ -373,17 +401,38 @@ app.post('/articles/quiz/create', async (c) => {
 	const processedQuiz = quiz.map((question) => {
 		if (question.type === 'true_false') {
 			let normalizedIndex = question.correct_answer_index;
+			let normalizedAnswer = question.correct_answer;
 
 			// Convert index if it's -1
 			if (normalizedIndex === -1) {
-				const answerLower = question.correct_answer.toString().toLowerCase().trim();
-				normalizedIndex = answerLower === 'true' ? 0 : 1;
+				// Use is_true/is_false to determine correct answer
+				if (question.is_true) {
+					normalizedIndex = 0;
+					normalizedAnswer = 'True';
+				} else if (question.is_false) {
+					normalizedIndex = 1;
+					normalizedAnswer = 'False';
+				} else {
+					// Default to false if no indicators
+					normalizedIndex = 1;
+					normalizedAnswer = 'False';
+				}
 			}
 
 			return {
 				...question,
 				options: ['True', 'False'],
+				correct_answer: normalizedAnswer || 'False',
 				correct_answer_index: normalizedIndex
+			};
+		} else if (question.type === 'multiple_choice') {
+			// Derive correct_answer from options if not provided
+			const normalizedAnswer =
+				question.correct_answer || question.options[question.correct_answer_index];
+
+			return {
+				...question,
+				correct_answer: normalizedAnswer
 			};
 		}
 		return question;
