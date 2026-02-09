@@ -216,7 +216,7 @@ app.post('/articles/grade', async (c) => {
 });
 
 app.get('/articles/quiz', async (c) => {
-	const articleId = c.req.query('articleId');
+	const articleId = normalizeId(c.req.query('articleId') || '');
 	if (!articleId) {
 		return c.text('Article ID is required', 400);
 	}
@@ -232,7 +232,7 @@ app.get('/articles/quiz', async (c) => {
 
 app.get('/articles/quiz/score', async (c) => {
 	const userId = c.req.query('userId');
-	const articleId = c.req.query('articleId');
+	const articleId = normalizeId(c.req.query('articleId') || '');
 	if (!userId || !articleId) {
 		return c.text('User ID and Article ID are required', 400);
 	}
@@ -273,13 +273,13 @@ app.post('/articles/quiz/submit', async (c) => {
 		return c.text('Article ID and answers are required', 400);
 	}
 
-	const scoreKey = `article:quiz_score:${body.userId}:${body.articleId}`;
+	const scoreKey = `article:quiz_score:${body.userId}:${normalizeId(body.articleId)}`;
 	const existingScore = await c.env.KV.get(scoreKey);
 	if (existingScore) {
 		return c.text('Quiz has already been submitted for this article by the user', 409);
 	}
 
-	const key = `article:quiz:${body.articleId}`;
+	const key = `article:quiz:${normalizeId(body.articleId)}`;
 	const quizData = await c.env.KV.get<ArticleQuizQuestion[]>(key, 'json');
 	if (!quizData) {
 		return c.text('Quiz not found for the specified article', 404);
@@ -328,7 +328,7 @@ app.post('/articles/quiz/create', async (c) => {
 		return c.text('Failed to create quiz for the article', 500);
 	}
 
-	const key = `article:quiz:${body.article.id}`;
+	const key = `article:quiz:${normalizeId(body.article.id)}`;
 	c.executionCtx.waitUntil(
 		c.env.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 24 * 14 })
 	); // cache for 14 days
