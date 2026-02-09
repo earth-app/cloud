@@ -227,7 +227,18 @@ app.get('/articles/quiz', async (c) => {
 		return c.text('Quiz not found for the specified article', 404);
 	}
 
-	return c.json(quizData, 200);
+	// Convert correct_answer_index for true/false questions with -1 index
+	const processedQuizData = quizData.map((question) => {
+		if (question.correct_answer_index === -1 && question.type === 'true_false') {
+			return {
+				...question,
+				correct_answer_index: question.correct_answer.toLowerCase() === 'true' ? 0 : 1
+			};
+		}
+		return question;
+	});
+
+	return c.json(processedQuizData, 200);
 });
 
 app.get('/articles/quiz/score', async (c) => {
@@ -291,15 +302,23 @@ app.post('/articles/quiz/submit', async (c) => {
 		const userAnswer = body.answers.find((a) => a.question === question.question);
 
 		let correct = false;
-		if (userAnswer && userAnswer.index === question.correct_answer_index) {
-			score++;
+		let actualCorrectIndex = question.correct_answer_index;
+
+		// Handle edge case where options is empty and correct_answer_index is -1
+		if (question.correct_answer_index === -1 && question.type === 'true_false') {
+			// Convert correct_answer to index (true = 0, false = 1)
+			actualCorrectIndex = question.correct_answer.toLowerCase() === 'true' ? 0 : 1;
+		}
+
+		// Standard index-based comparison
+		if (userAnswer && userAnswer.index === actualCorrectIndex) {
 			correct = true;
+			score++;
 		}
 
 		results.push({
 			question: question.question,
-			correct_answer: question.correct_answer,
-			correct_answer_index: question.correct_answer_index,
+			correct_answer_index: actualCorrectIndex,
 			user_answer_index: userAnswer?.index,
 			user_answer_text: userAnswer?.text,
 			correct

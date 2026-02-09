@@ -461,9 +461,9 @@ export type ArticleQuizQuestion = {
 	  }
 	| {
 			type: 'true_false';
-			options: ('true' | 'false')[];
+			options: ('true' | 'false')[] | [];
 			correct_answer: 'true' | 'false';
-			correct_answer_index: number;
+			correct_answer_index: number | -1;
 			is_true: boolean;
 			is_false: boolean;
 	  }
