@@ -229,10 +229,19 @@ app.get('/articles/quiz', async (c) => {
 
 	// Convert correct_answer_index for true/false questions with -1 index
 	const processedQuizData = quizData.map((question) => {
-		if (question.correct_answer_index === -1 && question.type === 'true_false') {
+		if (question.type === 'true_false') {
+			let normalizedIndex = question.correct_answer_index;
+
+			// Convert index if it's -1
+			if (normalizedIndex === -1) {
+				const answerLower = question.correct_answer.toString().toLowerCase().trim();
+				normalizedIndex = answerLower === 'true' ? 0 : 1;
+			}
+
 			return {
 				...question,
-				correct_answer_index: question.correct_answer.toLowerCase() === 'true' ? 0 : 1
+				options: ['True', 'False'],
+				correct_answer_index: normalizedIndex
 			};
 		}
 		return question;
@@ -303,11 +312,18 @@ app.post('/articles/quiz/submit', async (c) => {
 
 		let correct = false;
 		let actualCorrectIndex = question.correct_answer_index;
+		let actualOptions = question.options;
 
-		// Handle edge case where options is empty and correct_answer_index is -1
-		if (question.correct_answer_index === -1 && question.type === 'true_false') {
-			// Convert correct_answer to index (true = 0, false = 1)
-			actualCorrectIndex = question.correct_answer.toLowerCase() === 'true' ? 0 : 1;
+		// Handle true/false questions
+		if (question.type === 'true_false') {
+			// Always use ['True', 'False'] for true/false questions
+			actualOptions = ['True', 'False'];
+
+			// Convert index if it's -1
+			if (actualCorrectIndex === -1) {
+				const answerLower = question.correct_answer.toString().toLowerCase().trim();
+				actualCorrectIndex = answerLower === 'true' ? 0 : 1;
+			}
 		}
 
 		// Standard index-based comparison
@@ -318,6 +334,7 @@ app.post('/articles/quiz/submit', async (c) => {
 
 		results.push({
 			question: question.question,
+			options: actualOptions,
 			correct_answer_index: actualCorrectIndex,
 			user_answer_index: userAnswer?.index,
 			user_answer_text: userAnswer?.text,
@@ -352,7 +369,27 @@ app.post('/articles/quiz/create', async (c) => {
 		c.env.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 24 * 14 })
 	); // cache for 14 days
 
-	return c.json(quiz, 201);
+	// Convert correct_answer_index for true/false questions with -1 index
+	const processedQuiz = quiz.map((question) => {
+		if (question.type === 'true_false') {
+			let normalizedIndex = question.correct_answer_index;
+
+			// Convert index if it's -1
+			if (normalizedIndex === -1) {
+				const answerLower = question.correct_answer.toString().toLowerCase().trim();
+				normalizedIndex = answerLower === 'true' ? 0 : 1;
+			}
+
+			return {
+				...question,
+				options: ['True', 'False'],
+				correct_answer_index: normalizedIndex
+			};
+		}
+		return question;
+	});
+
+	return c.json(processedQuiz, 201);
 });
 
 // Prompts
