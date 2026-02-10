@@ -1,5 +1,5 @@
 import { com, kotlin } from '@earth-app/ocean';
-import { Hono } from 'hono';
+import { Context, Hono } from 'hono';
 
 import {
 	ArticleQuizQuestion,
@@ -16,7 +16,7 @@ import {
 import { getSynonyms } from './util/dictionary';
 import * as prompts from './util/ai';
 
-import { Article, Bindings, Event, EventData } from './util/types';
+import { Article, Bindings, Event, EventData, EventImageSubmission } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
@@ -30,7 +30,9 @@ import {
 	submitEventImage,
 	getEventImageSubmissions,
 	normalizeId,
-	migrateAllLegacyKeys
+	migrateAllLegacyKeys,
+	getEventImageSubmission,
+	batchProcess
 } from './util/util';
 import { tryCache } from './util/cache';
 import {
@@ -1519,8 +1521,10 @@ app.post('/events/recommend_similar_events', async (c) => {
 	);
 });
 
+// Event Image Submissions
+
 app.post('/events/submit_image', async (c) => {
-	const body = await c.req.json<{ event: Event; photo: ArrayBuffer }>();
+	const body = await c.req.json<{ userId: string; event: Event; photo: ArrayBuffer }>();
 	if (!body || !body.event || !body.photo) {
 		return c.text('Invalid request body', 400);
 	}
@@ -1530,7 +1534,6 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Event ID is required', 400);
 	}
 	const id = BigInt(idParam);
-
 	if (id <= 0n) {
 		return c.text('Invalid Event ID', 400);
 	}
@@ -1540,7 +1543,16 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Image data is required', 400);
 	}
 
-	const res = await submitEventImage(id, imageData, c.env, c.executionCtx);
+	const userIdParam = body.userId;
+	if (!userIdParam || !/^\d+$/.test(userIdParam)) {
+		return c.text('User ID is required', 400);
+	}
+	const userId = BigInt(userIdParam);
+	if (userId <= 0n) {
+		return c.text('Invalid User ID', 400);
+	}
+
+	const res = await submitEventImage(id, userId, imageData, c.env, c.executionCtx);
 
 	// create submission grade
 	c.executionCtx.waitUntil(
@@ -1556,13 +1568,53 @@ app.post('/events/submit_image', async (c) => {
 			const endDate = body.event.end_date || body.event.date;
 			await c.env.KV.put(key, JSON.stringify(score), {
 				expiration: Math.floor(new Date(endDate).getTime() / 1000) + 60 * 60 * 24 * 3, // 3 days after event end
-				metadata: { caption }
+				metadata: { caption, scored_at: Date.now(), user_id: userId }
 			});
 		})()
 	);
 
 	return c.body(null, 204);
 });
+
+async function mapSubmissionWithScore(
+	c: Context<{ Bindings: Bindings }>,
+	id: bigint,
+	submission: EventImageSubmission
+) {
+	// attach scores, convert to data url
+	const key = `event:image:score:${id}:${submission.id}`;
+	const value = await c.env.KV.getWithMetadata<{
+		caption: string;
+		scored_at: number;
+		user_id: string;
+	}>(key);
+	const score = value.value ? (JSON.parse(value.value) as ScoreResult) : null;
+
+	return {
+		...submission,
+		image: toDataURL(submission.image, 'image/webp'),
+		score,
+		caption: value.metadata?.caption || null,
+		scored_at: value.metadata?.scored_at ? new Date(value.metadata.scored_at) : null,
+		user_id: value.metadata?.user_id || null
+	};
+}
+
+async function formattedSubmissions(
+	c: Context<{ Bindings: Bindings }>,
+	id: bigint,
+	userId: bigint | null
+) {
+	const submissions = await getEventImageSubmissions(id, userId, c.env);
+
+	// Map all submissions with scores in parallel for better performance
+	const submissionPromises = submissions.map((submission) =>
+		mapSubmissionWithScore(c, id, submission)
+	);
+	const submissionsWithScores = await batchProcess(submissionPromises);
+
+	return c.json({ items: submissionsWithScores, total: submissionsWithScores.length }, 200);
+}
 
 app.get('/events/:id/submissions', async (c) => {
 	const idParam = c.req.param('id');
@@ -1575,25 +1627,57 @@ app.get('/events/:id/submissions', async (c) => {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	const submissions = await getEventImageSubmissions(id, c.env);
+	return formattedSubmissions(c, id, null);
+});
 
-	// attach scores, convert to data url
-	const submissionsWithScores = await Promise.all(
-		submissions.map(async (submission) => {
-			const key = `event:image:score:${id}:${submission.id}`;
-			const value = await c.env.KV.getWithMetadata<{ caption: string }>(key);
-			const score = value.value ? (JSON.parse(value.value) as ScoreResult) : null;
+app.get('/events/:id/submissions/:userId', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
 
-			return {
-				...submission,
-				image: toDataURL(submission.image, 'image/webp'),
-				score,
-				caption: value.metadata?.caption || null
-			};
-		})
-	);
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
 
-	return c.json(submissionsWithScores, 200);
+	const userIdParam = c.req.param('userId');
+	if (!userIdParam || !/^\d+$/.test(userIdParam)) {
+		return c.text('User ID is required', 400);
+	}
+	const userId = BigInt(userIdParam);
+	return formattedSubmissions(c, id, userId);
+});
+
+app.get('/events/:id/submissions/:userId/:submissionId', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const userIdParam = c.req.param('userId');
+	if (!userIdParam || !/^\d+$/.test(userIdParam)) {
+		return c.text('User ID is required', 400);
+	}
+	const userId = BigInt(userIdParam);
+
+	const submissionId = c.req.param('submissionId');
+	if (!submissionId) {
+		return c.text('Submission ID is required', 400);
+	}
+
+	const submission = await getEventImageSubmission(id, userId, submissionId, c.env);
+	if (!submission) {
+		return c.text('Submission not found', 404);
+	}
+
+	const data = await mapSubmissionWithScore(c, id, { id: submissionId, image: submission });
+	return c.json(data, 200);
 });
 
 export default app;
