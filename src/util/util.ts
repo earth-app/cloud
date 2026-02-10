@@ -1,6 +1,6 @@
 import { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
 import { generateProfilePhoto, UserProfilePromptData } from './ai';
-import { Bindings } from './types';
+import { Bindings, EventImageSubmission } from './types';
 
 export function trimToByteLimit(str: string, byteLimit: number): string {
 	const encoder = new TextEncoder();
@@ -419,29 +419,6 @@ export function splitContent(content: string): string[] {
 		});
 }
 
-export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<Uint8Array> {
-	if (id === 1n) {
-		const resp = await bindings.ASSETS.fetch('https://assets.local/cloud.png');
-		const fallback = await resp!.arrayBuffer();
-		return new Uint8Array(fallback);
-	}
-
-	const profileImage = `users/${id}/profile.png`;
-
-	const obj = await bindings.R2.get(profileImage);
-	if (obj) {
-		const buf = await obj.arrayBuffer();
-		return new Uint8Array(buf);
-	}
-
-	const resp = await bindings.ASSETS.fetch('https://assets.local/earth-app.png');
-	const fallback = await resp!.arrayBuffer();
-	return new Uint8Array(fallback);
-}
-
-export type ImageSizes = 32 | 128 | 1024 | null;
-export const validSizes = [32, 128, 1024, null];
-
 /**
  * Converts a ReadableStream to a Uint8Array by reading all chunks
  * @param stream - The ReadableStream to convert
@@ -475,7 +452,44 @@ export async function streamToUint8Array(stream: ReadableStream): Promise<Uint8A
 	return result;
 }
 
+// batch promises at X concurrency to avoid memory issues, rate limits, or overwhelming downstream services
+export async function batchProcess<T>(
+	promises: Promise<T>[],
+	batchSize: number = 600
+): Promise<T[]> {
+	const results: T[] = [];
+	for (let i = 0; i < promises.length; i += batchSize) {
+		const batch = promises.slice(i, i + batchSize);
+		const batchResults = await Promise.all(batch);
+		results.push(...batchResults);
+	}
+	return results;
+}
+
 // profile photos
+
+export type ImageSizes = 32 | 128 | 1024 | null;
+export const validSizes = [32, 128, 1024, null];
+
+export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<Uint8Array> {
+	if (id === 1n) {
+		const resp = await bindings.ASSETS.fetch('https://assets.local/cloud.png');
+		const fallback = await resp!.arrayBuffer();
+		return new Uint8Array(fallback);
+	}
+
+	const profileImage = `users/${id}/profile.png`;
+
+	const obj = await bindings.R2.get(profileImage);
+	if (obj) {
+		const buf = await obj.arrayBuffer();
+		return new Uint8Array(buf);
+	}
+
+	const resp = await bindings.ASSETS.fetch('https://assets.local/earth-app.png');
+	const fallback = await resp!.arrayBuffer();
+	return new Uint8Array(fallback);
+}
 
 export async function newProfilePhoto(
 	data: UserProfilePromptData,
@@ -686,13 +700,14 @@ async function decryptImage(encryptedData: Uint8Array, encryptionKey: string): P
 
 export async function submitEventImage(
 	eventId: bigint,
+	userId: bigint,
 	image: Uint8Array,
 	bindings: Bindings,
 	ctx: ExecutionContext
 ) {
 	const id = crypto.randomUUID().replace(/-/g, '');
 	const timestamp = Date.now();
-	const imagePath = `events/${eventId}/submissions/${id}.webp`;
+	const imagePath = `events/${eventId}/submissions/${userId}_${id}.webp`;
 
 	const stream = new ReadableStream<Uint8Array>({
 		start(controller) {
@@ -725,15 +740,19 @@ export async function submitEventImage(
 
 export async function getEventImageSubmissions(
 	eventId: bigint,
+	userId: bigint | null,
 	bindings: Bindings
-): Promise<Array<{ id: string; image: Uint8Array }>> {
-	const prefix = `events/${eventId}/submissions/`;
+): Promise<EventImageSubmission[]> {
+	let prefix = `events/${eventId}/submissions/`;
+	if (userId !== null) {
+		prefix += `${userId}_`;
+	}
+
 	const list = await bindings.R2.list({ prefix });
 
-	const submissions: Array<{ id: string; image: Uint8Array }> = [];
-	for (const obj of list.objects) {
+	const submissionPromises = list.objects.map(async (obj) => {
 		const buf = await bindings.R2.get(obj.key)!.then((o) => o?.arrayBuffer());
-		if (!buf) continue;
+		if (!buf) return null;
 
 		const idMatch = obj.key.match(/submissions\/(.+)\.webp$/);
 		const id = idMatch ? idMatch[1] : 'unknown';
@@ -742,21 +761,42 @@ export async function getEventImageSubmissions(
 		const encryptedData = new Uint8Array(buf);
 		const decryptedImage = await decryptImage(encryptedData, bindings.ENCRYPTION_KEY);
 
-		submissions.push({
+		return {
 			id,
 			image: decryptedImage
-		});
-	}
+		};
+	});
 
-	return submissions;
+	const results = await batchProcess(submissionPromises);
+	return results.filter((s): s is EventImageSubmission => s !== null);
+}
+
+export async function getEventImageSubmission(
+	eventId: bigint,
+	userId: bigint,
+	submissionId: string,
+	bindings: Bindings
+): Promise<Uint8Array | null> {
+	const imagePath = `events/${eventId}/submissions/${userId}_${submissionId}.webp`;
+	const obj = await bindings.R2.get(imagePath);
+	if (!obj) return null;
+
+	const buf = await obj.arrayBuffer();
+
+	// Decrypt the encrypted image data
+	const encryptedData = new Uint8Array(buf);
+	const decryptedImage = await decryptImage(encryptedData, bindings.ENCRYPTION_KEY);
+
+	return decryptedImage;
 }
 
 export async function deleteEventImageSubmission(
 	eventId: bigint,
+	userId: bigint,
 	submissionId: string,
 	bindings: Bindings,
 	ctx: ExecutionContext
 ) {
-	const imagePath = `events/${eventId}/submissions/${submissionId}.webp`;
+	const imagePath = `events/${eventId}/submissions/${userId}_${submissionId}.webp`;
 	ctx.waitUntil(bindings.R2.delete(imagePath));
 }
