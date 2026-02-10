@@ -112,3 +112,8 @@ export function eventActivitiesList(event: Event): string[] {
 export type EventData = Omit<Event, 'id' | 'activities'> & {
 	activities: (string | typeof com.earthapp.activity.ActivityType.prototype.name)[];
 };
+
+export type EventImageSubmission = {
+	id: string;
+	image: Uint8Array;
+};

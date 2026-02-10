@@ -11,7 +11,8 @@ import {
 	splitContent,
 	stripMarkdownCodeFence,
 	toOrdinal,
-	uploadEventThumbnail
+	uploadEventThumbnail,
+	batchProcess
 } from '../util/util';
 import {
 	Entry,
@@ -375,7 +376,7 @@ export async function findArticles(
 		.asJsReadonlyArrayView()
 		.map(async (item) => JSON.parse(item.toJson()) satisfies OceanArticle);
 
-	return await Promise.all(results);
+	return await batchProcess(results);
 }
 
 export async function createArticle(

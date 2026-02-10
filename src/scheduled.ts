@@ -11,6 +11,7 @@ import {
 } from './content/boat';
 import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
 import { Bindings } from './util/types';
+import { batchProcess } from './util/util';
 
 export default async function scheduled(
 	controller: ScheduledController,
@@ -81,7 +82,7 @@ export default async function scheduled(
 			return await postEvent(event, env, ctx);
 		});
 
-		const events = await Promise.all(promises);
+		const events = await batchProcess(promises);
 		for (const event of events) {
 			if (!event) continue;
 

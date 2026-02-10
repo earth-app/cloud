@@ -113,14 +113,6 @@ export const badges = (
 			tracker_id: 'friends_added'
 		},
 		{
-			id: 'curious_mind',
-			description: 'Explore the activities of 5 different types',
-			icon: 'mdi:magnify',
-			rarity: 'normal',
-			progress: (...args: any[]) => min(args, 5),
-			tracker_id: 'activity_types_explored'
-		},
-		{
 			id: 'super_philosopher',
 			description: 'Respond to 10 prompts',
 			icon: 'mdi:thought-bubble-outline',
