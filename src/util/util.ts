@@ -750,6 +750,8 @@ export async function getEventImageSubmissions(
 
 	const list = await bindings.R2.list({ prefix });
 
+	if (!list.objects.length) return [];
+
 	const submissionPromises = list.objects.map(async (obj) => {
 		const buf = await bindings.R2.get(obj.key)!.then((o) => o?.arrayBuffer());
 		if (!buf) return null;

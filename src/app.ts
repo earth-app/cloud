@@ -1552,6 +1552,12 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Invalid User ID', 400);
 	}
 
+	// limit to 3 per user
+	const existingSubmissions = await getEventImageSubmissions(id, userId, c.env);
+	if (existingSubmissions.length >= 3) {
+		return c.text('Submission limit reached for this event', 400);
+	}
+
 	const res = await submitEventImage(id, userId, imageData, c.env, c.executionCtx);
 
 	// create submission grade
@@ -1572,6 +1578,9 @@ app.post('/events/submit_image', async (c) => {
 			});
 		})()
 	);
+
+	// track progress for badges
+	c.executionCtx.waitUntil(addBadgeProgress(userIdParam, 'event_images_submitted', '1', c.env.KV));
 
 	return c.body(null, 204);
 });
@@ -1606,7 +1615,6 @@ async function formattedSubmissions(
 	userId: bigint | null
 ) {
 	const submissions = await getEventImageSubmissions(id, userId, c.env);
-
 	// Map all submissions with scores in parallel for better performance
 	const submissionPromises = submissions.map((submission) =>
 		mapSubmissionWithScore(c, id, submission)
