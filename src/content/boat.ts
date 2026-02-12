@@ -12,7 +12,8 @@ import {
 	stripMarkdownCodeFence,
 	toOrdinal,
 	uploadEventThumbnail,
-	batchProcess
+	batchProcess,
+	normalizeId
 } from '../util/util';
 import {
 	Entry,
@@ -575,7 +576,7 @@ export async function postArticle(
 
 	// add quiz to KV
 	if (quiz) {
-		const key = `article:quiz:${data.id}`;
+		const key = `article:quiz:${normalizeId(data.id)}`;
 		await bindings.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 12 * 29 }); // 14.5 days (articles are deleted after 2 weeks)
 	}
 

@@ -274,7 +274,7 @@ app.get('/articles/quiz', async (c) => {
 });
 
 app.get('/articles/quiz/score', async (c) => {
-	const userId = c.req.query('userId');
+	const userId = normalizeId(c.req.query('userId') || '');
 	const articleId = normalizeId(c.req.query('articleId') || '');
 	if (!userId || !articleId) {
 		return c.text('User ID and Article ID are required', 400);
@@ -316,8 +316,9 @@ app.post('/articles/quiz/submit', async (c) => {
 		return c.text('Article ID and answers are required', 400);
 	}
 
+	const userId = normalizeId(body.userId);
 	const id = normalizeId(body.articleId);
-	const scoreKey = `article:quiz_score:${body.userId}:${id}`;
+	const scoreKey = `article:quiz_score:${userId}:${id}`;
 	const existingScore = await c.env.KV.get(scoreKey);
 	if (existingScore) {
 		return c.text('Quiz has already been submitted for this article by the user', 409);
