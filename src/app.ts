@@ -707,6 +707,10 @@ app.get('/users/journey/activity/:id/count', async (c) => {
 		return c.text('Journey ID is required', 400);
 	}
 
+	if (!/^\d+$/.test(id)) {
+		return c.text('Journey ID must be numeric', 400);
+	}
+
 	if (id.length < 3 || id.length > 50) {
 		return c.text('Journey ID must be between 3 and 50 characters', 400);
 	}
@@ -720,11 +724,62 @@ app.get('/users/journey/activity/:id/count', async (c) => {
 	}
 });
 
+app.get('/users/journey/:type/leaderboard', async (c) => {
+	const type = c.req.param('type')?.toLowerCase();
+	if (!type) {
+		return c.text('Journey type is required', 400);
+	}
+
+	const limit = c.req.query('limit');
+	let limit0 = limit ? parseInt(limit, 10) : TOP_LEADERBOARD_COUNT;
+	if (isNaN(limit0) || limit0 <= 0) {
+		limit0 = TOP_LEADERBOARD_COUNT;
+	} else if (limit0 > TOP_LEADERBOARD_COUNT) {
+		limit0 = TOP_LEADERBOARD_COUNT;
+	}
+
+	try {
+		const leaderboard = await retrieveLeaderboard(type, limit0, c.env.KV, c.env.CACHE);
+		return c.json(leaderboard, 200);
+	} catch (err) {
+		console.error(`Error retrieving leaderboard for journey type '${type}':`, err);
+		return c.text('Failed to retrieve leaderboard', 500);
+	}
+});
+
+app.get('/users/journey/:type/:id/rank', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const type = c.req.param('type')?.toLowerCase();
+	if (!id || !type) {
+		return c.text('Journey ID and type are required', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('Journey ID must be numeric', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const rank = await retrieveLeaderboardRank(id, type, c.env.KV, c.env.CACHE);
+		return c.json({ rank }, 200);
+	} catch (err) {
+		console.error(`Error retrieving leaderboard rank for journey '${type}' and ID '${id}':`, err);
+		return c.text('Failed to retrieve leaderboard rank', 500);
+	}
+});
+
 app.get('/users/journey/:type/:id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
 		return c.text('Journey ID and type are required', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('Journey ID must be numeric', 400);
 	}
 
 	if (id.length < 3 || id.length > 50) {
@@ -746,6 +801,10 @@ app.post('/users/journey/activity/:id', async (c) => {
 	const activity = c.req.query('activity')?.toLowerCase();
 	if (!id || !activity) {
 		return c.text('Journey ID and activity are required', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('Journey ID must be numeric', 400);
 	}
 
 	if (id.length < 3 || id.length > 50) {
@@ -774,6 +833,10 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
 		return c.text('Journey ID and type are required', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('Journey ID must be numeric', 400);
 	}
 
 	if (id.length < 3 || id.length > 50) {
@@ -811,6 +874,10 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 		return c.text('Journey ID and type are required', 400);
 	}
 
+	if (!/^\d+$/.test(id)) {
+		return c.text('Journey ID must be numeric', 400);
+	}
+
 	if (id.length < 3 || id.length > 50) {
 		return c.text('Journey ID must be between 3 and 50 characters', 400);
 	}
@@ -821,49 +888,6 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 	} catch (err) {
 		console.error(`Error resetting journey '${type}' for ID '${id}':`, err);
 		return c.text('Failed to reset journey', 500);
-	}
-});
-
-app.get('/users/journey/:type/:id/rank', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
-	const type = c.req.param('type')?.toLowerCase();
-	if (!id || !type) {
-		return c.text('Journey ID and type are required', 400);
-	}
-
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Journey ID must be between 3 and 50 characters', 400);
-	}
-
-	try {
-		const rank = await retrieveLeaderboardRank(id, type, c.env.KV, c.env.CACHE);
-		return c.json({ rank }, 200);
-	} catch (err) {
-		console.error(`Error retrieving leaderboard rank for journey '${type}' and ID '${id}':`, err);
-		return c.text('Failed to retrieve leaderboard rank', 500);
-	}
-});
-
-app.get('/users/journey/:type/leaderboard', async (c) => {
-	const type = c.req.param('type')?.toLowerCase();
-	if (!type) {
-		return c.text('Journey type is required', 400);
-	}
-
-	const limit = c.req.query('limit');
-	let limit0 = limit ? parseInt(limit, 10) : TOP_LEADERBOARD_COUNT;
-	if (isNaN(limit0) || limit0 <= 0) {
-		limit0 = TOP_LEADERBOARD_COUNT;
-	} else if (limit0 > TOP_LEADERBOARD_COUNT) {
-		limit0 = TOP_LEADERBOARD_COUNT;
-	}
-
-	try {
-		const leaderboard = await retrieveLeaderboard(type, limit0, c.env.KV, c.env.CACHE);
-		return c.json(leaderboard, 200);
-	} catch (err) {
-		console.error(`Error retrieving leaderboard for journey type '${type}':`, err);
-		return c.text('Failed to retrieve leaderboard', 500);
 	}
 });
 
