@@ -538,12 +538,60 @@ function min(args: any[], min: number): number {
 
 type TrackerEntry = {
 	date: number;
-	value: string | string[] | number | number[] | (string | number)[];
+	value: string | number;
 };
 
 type BadgeMetadata = {
 	granted_at: number;
 };
+
+// Migration helper to flatten legacy compounding array data
+function migrateLegacyTrackerData(tracker: any[]): TrackerEntry[] {
+	if (!tracker || tracker.length === 0) return [];
+
+	const uniqueStringValues = new Set<string>();
+	const migratedEntries: TrackerEntry[] = [];
+	let lastNumericValue: number | null = null;
+	let lastNumericDate: number | null = null;
+
+	for (const entry of tracker) {
+		if (!entry || typeof entry !== 'object') continue;
+
+		const { date, value } = entry;
+
+		// Handle array values (legacy bad data)
+		if (Array.isArray(value)) {
+			for (const v of value) {
+				if (typeof v === 'number') {
+					// For numbers, keep track of the highest value (most recent accumulated total)
+					if (lastNumericValue === null || v > lastNumericValue) {
+						lastNumericValue = v;
+						lastNumericDate = date;
+					}
+				} else if (typeof v === 'string' && !uniqueStringValues.has(v)) {
+					uniqueStringValues.add(v);
+					migratedEntries.push({ date, value: v });
+				}
+			}
+		} else if (typeof value === 'number') {
+			// For numbers, keep track of the highest value (most recent accumulated total)
+			if (lastNumericValue === null || value > lastNumericValue) {
+				lastNumericValue = value;
+				lastNumericDate = date;
+			}
+		} else if (typeof value === 'string' && !uniqueStringValues.has(value)) {
+			uniqueStringValues.add(value);
+			migratedEntries.push({ date, value });
+		}
+	}
+
+	// Add the single numeric entry if we found any numbers
+	if (lastNumericValue !== null && lastNumericDate !== null) {
+		migratedEntries.push({ date: lastNumericDate, value: lastNumericValue });
+	}
+
+	return migratedEntries;
+}
 
 export async function getBadgeProgress(
 	userId: string,
@@ -575,10 +623,22 @@ export async function getBadgeProgress(
 			}
 		}
 
-		const tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
+		let tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
 
-		const uniqueValues = Array.from(new Set(tracker.map((t) => t.value)));
-		return await badge.progress(uniqueValues, ...progressArgs);
+		// Migrate legacy data if needed
+		tracker = migrateLegacyTrackerData(tracker);
+
+		// Determine if this tracker stores numbers or strings
+		const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
+
+		if (lastEntry && typeof lastEntry.value === 'number') {
+			// For numeric trackers, pass the latest accumulated value
+			return await badge.progress(lastEntry.value, ...progressArgs);
+		} else {
+			// For string trackers, pass array of unique values (for counting)
+			const uniqueValues = Array.from(new Set(tracker.map((t) => t.value)));
+			return await badge.progress(uniqueValues, ...progressArgs);
+		}
 	}
 
 	return await badge.progress(...progressArgs);
@@ -587,49 +647,70 @@ export async function getBadgeProgress(
 export async function addBadgeProgress(
 	userId: string,
 	trackerId: string,
-	value: TrackerEntry['value'],
+	value: TrackerEntry['value'] | TrackerEntry['value'][],
 	kv: KVNamespace
 ): Promise<void> {
 	const normalizedUserId = normalizeId(userId);
 	const trackerKey = `user:badge_tracker:${normalizedUserId}:${trackerId}`;
 	const trackerData = await kv.get(trackerKey, 'json');
-	const tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
+	let tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
 
-	const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
-	let aggregatedValue: TrackerEntry['value'];
+	// Migrate legacy data if needed (flatten arrays)
+	tracker = migrateLegacyTrackerData(tracker);
+	const values = Array.isArray(value) ? value : [value];
 
-	if (typeof value === 'number') {
+	const numbers = values.filter((v): v is number => typeof v === 'number');
+	const strings = values.filter((v): v is string => typeof v === 'string');
+
+	// Detect existing tracker type to prevent mixing types
+	const existingType = tracker.length > 0 && tracker[0] ? typeof tracker[0].value : null;
+
+	if (numbers.length > 0) {
+		// Validate: don't mix types in a tracker
+		if (existingType === 'string') {
+			console.warn(`Attempted to add numbers to string tracker: ${trackerId}`);
+			return;
+		}
+
+		const sumToAdd = numbers.reduce((acc, val) => acc + val, 0);
+		const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
+
 		if (lastEntry && typeof lastEntry.value === 'number') {
-			aggregatedValue = lastEntry.value + value;
+			lastEntry.value = lastEntry.value + sumToAdd;
+			lastEntry.date = Date.now();
 		} else {
-			aggregatedValue = value;
+			// First numeric entry for this tracker
+			tracker.push({
+				date: Date.now(),
+				value: sumToAdd
+			});
 		}
-	} else if (typeof value === 'string') {
-		if (lastEntry) {
-			if (Array.isArray(lastEntry.value)) {
-				aggregatedValue = [...lastEntry.value, value] as (string | number)[];
-			} else {
-				aggregatedValue = [lastEntry.value, value] as (string | number)[];
-			}
-		} else {
-			aggregatedValue = value;
-		}
-	} else if (Array.isArray(value)) {
-		if (lastEntry && Array.isArray(lastEntry.value)) {
-			aggregatedValue = [...lastEntry.value, ...value] as (string | number)[];
-		} else if (lastEntry) {
-			aggregatedValue = [lastEntry.value, ...value] as (string | number)[];
-		} else {
-			aggregatedValue = value;
-		}
-	} else {
-		aggregatedValue = value;
 	}
 
-	tracker.push({
-		date: Date.now(),
-		value: aggregatedValue
-	});
+	// Handle strings: add each unique value as separate entry
+	if (strings.length > 0) {
+		// Validate: don't mix types in a tracker
+		if (existingType === 'number') {
+			console.warn(`Attempted to add strings to number tracker: ${trackerId}`);
+			return;
+		}
+
+		const existingValues = new Set(tracker.map((t) => t.value));
+
+		for (const val of strings) {
+			// Normalize IDs if this looks like an ID (numeric string)
+			const normalizedValue = normalizeId(val);
+
+			// Only add if not already present (prevent duplicates)
+			if (!existingValues.has(normalizedValue)) {
+				tracker.push({
+					date: Date.now(),
+					value: normalizedValue
+				});
+				existingValues.add(normalizedValue); // Update set to prevent duplicates within this batch
+			}
+		}
+	}
 
 	await kv.put(trackerKey, JSON.stringify(tracker));
 }
