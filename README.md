@@ -29,30 +29,31 @@ implements a multi-layered architecture:
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      Hono.js Router                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │  Middleware  │  │   API v1     │  │   Scheduled  │      │
-│  │  - Security  │  │  - Activities│  │   - Hourly   │      │
-│  │  - CORS      │  │  - Articles  │  │   - 4-hourly │      │
-│  │  - Cache     │  │  - Users     │  │              │      │
-│  │  - Logger    │  │  - Journeys  │  │              │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │  Middleware  │  │   API v1     │  │   Scheduled  │       │
+│  │  - Security  │  │  - Activities│  │   - Hourly   │       │
+│  │  - CORS      │  │  - Articles  │  │   - 4-hourly │       │
+│  │  - Cache     │  │  - Users     │  │   - Weekly   │       │
+│  │  - Logger    │  │  - Journeys  │  │              │       │
+│  │              │  │  - Badges    │  │              │       │
+│  └──────────────┘  └──────────────┘  └──────────────┘       │
 └─────────────────────────────────────────────────────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        ▼                   ▼                   ▼
-   ┌─────────┐        ┌─────────┐        ┌─────────┐
-   │   AI    │        │   KV    │        │   R2    │
-   │ Models  │        │  Cache  │        │ Storage │
-   └─────────┘        └─────────┘        └─────────┘
-        │                                      │
-        ▼                                      ▼
-  ┌──────────────────────────────────────────────┐
-  │     External Services & Data Sources         │
-  │  - NCBI PubMed API (Scientific Articles)    │
-  │  - Iconify API (Activity Icons)             │
-  │  - Dictionary API (Synonyms)                │
-  │  - Mantle API (Backend Integration)         │
-  └──────────────────────────────────────────────┘
+                       │            │
+        ┌──────────────┼────────────┼──────────────┐
+        ▼              ▼            ▼              ▼
+   ┌─────────┐    ┌─────────┐   ┌─────────┐   ┌─────────┐
+   │   AI    │    │   KV    │   │   R2    │   │ Durable │
+   │ Models  │    │  Cache  │   │ Storage │   │ Objects │
+   └─────────┘    └─────────┘   └─────────┘   └─────────┘
+        │                                            │
+        ▼                                            ▼
+  ┌─────────────────────────────────────────────────────────┐
+  │     External Services & Data Sources                    │
+  │  - NCBI PubMed API (Scientific Articles)                │
+  │  - Iconify API (Activity Icons)                         │
+  │  - Dictionary API (Synonyms)                            │
+  │  - Mantle API (Backend Integration)                     │
+  └─────────────────────────────────────────────────────────┘
 ```
 
 ### Request Flow
