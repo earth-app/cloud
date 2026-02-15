@@ -14,9 +14,9 @@ export interface ScoringCriterion {
 
 export interface CriterionResult {
 	id: string;
-	similarity: number;
-	normalized: number;
-	weighted: number;
+	similarity: number; // raw cosine similarity (-1.0 to 1.0)
+	normalized: number; // normalized similarity (0.0 to 1.0)
+	weighted: number; // weighted contribution to final score (0.0 to weight)
 }
 
 export interface ScoreResult {
