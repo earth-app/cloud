@@ -1,5 +1,6 @@
 import { Ai, KVNamespace, R2Bucket, Fetcher } from '@cloudflare/workers-types';
 import { com } from '@earth-app/ocean';
+import { ScoreResult } from '../content/ferry';
 
 export type Bindings = {
 	R2: R2Bucket;
@@ -116,4 +117,12 @@ export type EventData = Omit<Event, 'id' | 'activities'> & {
 export type EventImageSubmission = {
 	id: string;
 	image: Uint8Array;
+};
+
+export type EventImage = Omit<EventImageSubmission, 'image'> & {
+	image: string;
+	score?: ScoreResult;
+	caption?: string;
+	scored_at?: Date;
+	user_id?: string;
 };

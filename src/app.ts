@@ -16,14 +16,13 @@ import {
 import { getSynonyms } from './util/dictionary';
 import * as prompts from './util/ai';
 
-import { Article, Bindings, Event, EventData, EventImageSubmission } from './util/types';
+import { Article, Bindings, Event, EventImage, EventImageSubmission } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
 	newProfilePhoto,
 	getProfileVariation,
 	ImageSizes,
-	validSizes,
 	getEventThumbnail,
 	uploadEventThumbnail,
 	deleteEventThumbnail,
@@ -1549,8 +1548,8 @@ app.post('/events/recommend_similar_events', async (c) => {
 // Event Image Submissions
 
 app.post('/events/submit_image', async (c) => {
-	const body = await c.req.json<{ userId: string; event: Event; photo: ArrayBuffer }>();
-	if (!body || !body.event || !body.photo) {
+	const body = await c.req.json<{ user_id: string; event: Event; photo_url: string }>();
+	if (!body || !body.event || !body.photo_url) {
 		return c.text('Invalid request body', 400);
 	}
 
@@ -1563,12 +1562,24 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	const imageData = new Uint8Array(body.photo);
+	if (!body.photo_url.match(/^data:image\/(png|jpeg|webp);base64,/)) {
+		return c.text('photo_url must be a data URL with base64-encoded image', 400);
+	}
+
+	// Extract base64 data from the data URL and convert to Uint8Array
+	const base64Data = body.photo_url.split(',')[1];
+	const binaryString = atob(base64Data);
+	const len = binaryString.length;
+	const imageData = new Uint8Array(len);
+	for (let i = 0; i < len; i++) {
+		imageData[i] = binaryString.charCodeAt(i);
+	}
+
 	if (imageData.length === 0) {
 		return c.text('Image data is required', 400);
 	}
 
-	const userIdParam = body.userId;
+	const userIdParam = body.user_id;
 	if (!userIdParam || !/^\d+$/.test(userIdParam)) {
 		return c.text('User ID is required', 400);
 	}
@@ -1614,7 +1625,7 @@ async function mapSubmissionWithScore(
 	c: Context<{ Bindings: Bindings }>,
 	id: bigint,
 	submission: EventImageSubmission
-) {
+): Promise<EventImage> {
 	// attach scores, convert to data url
 	const key = `event:image:score:${id}:${submission.id}`;
 	const value = await c.env.KV.getWithMetadata<{
@@ -1622,15 +1633,15 @@ async function mapSubmissionWithScore(
 		scored_at: number;
 		user_id: string;
 	}>(key);
-	const score = value.value ? (JSON.parse(value.value) as ScoreResult) : null;
+	const score = value.value ? (JSON.parse(value.value) as ScoreResult) : undefined;
 
 	return {
 		...submission,
 		image: toDataURL(submission.image, 'image/webp'),
 		score,
-		caption: value.metadata?.caption || null,
-		scored_at: value.metadata?.scored_at ? new Date(value.metadata.scored_at) : null,
-		user_id: value.metadata?.user_id || null
+		caption: value.metadata?.caption,
+		scored_at: value.metadata?.scored_at ? new Date(value.metadata.scored_at) : undefined,
+		user_id: value.metadata?.user_id
 	};
 }
 
