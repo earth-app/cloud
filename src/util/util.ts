@@ -1,6 +1,8 @@
 import { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
 import { generateProfilePhoto, UserProfilePromptData } from './ai';
 import { Bindings, EventImageSubmission } from './types';
+import { tryCache } from './cache';
+import { ScoreResult } from '../content/ferry';
 
 export function toDataURL(image: Uint8Array | ArrayBuffer, type = 'image/png'): string {
 	const bytes = image instanceof Uint8Array ? image : new Uint8Array(image);
@@ -631,6 +633,53 @@ export async function deleteEventThumbnail(
 
 // event image submissions
 
+// Helper functions for managing submission ID indices
+async function addSubmissionToIndex(
+	indexKey: string,
+	submissionId: string,
+	timestamp: number,
+	bindings: KVNamespace
+): Promise<void> {
+	const existing = await bindings.get<string[]>(indexKey, 'json');
+	const ids = existing || [];
+
+	// Avoid duplicates
+	if (!ids.includes(submissionId)) {
+		ids.push(submissionId);
+		await bindings.put(indexKey, JSON.stringify(ids), {
+			metadata: { last_updated: timestamp },
+			expirationTtl: 60 * 60 * 24 * 90 // 90 days - cleanup old indices
+		});
+	} else {
+		// Refresh TTL even if duplicate (bumps expiration)
+		await bindings.put(indexKey, JSON.stringify(ids), {
+			metadata: { last_updated: timestamp },
+			expirationTtl: 60 * 60 * 24 * 90
+		});
+	}
+}
+
+async function removeSubmissionFromIndex(
+	indexKey: string,
+	submissionId: string,
+	bindings: KVNamespace
+): Promise<void> {
+	const existing = await bindings.get<string[]>(indexKey, 'json');
+	if (!existing) return;
+
+	const filtered = existing.filter((id) => id !== submissionId);
+	if (filtered.length !== existing.length) {
+		if (filtered.length === 0) {
+			// Clean up empty indices
+			await bindings.delete(indexKey);
+		} else {
+			await bindings.put(indexKey, JSON.stringify(filtered), {
+				metadata: { last_updated: Date.now() }
+			});
+		}
+	}
+}
+
 async function encryptImage(data: Uint8Array, encryptionKey: string): Promise<Uint8Array> {
 	const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
 	const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
@@ -654,21 +703,28 @@ async function encryptImage(data: Uint8Array, encryptionKey: string): Promise<Ui
 }
 
 async function decryptImage(encryptedData: Uint8Array, encryptionKey: string): Promise<Uint8Array> {
-	const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
-	const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
-		'decrypt'
-	]);
+	try {
+		const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
+		const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
+			'decrypt'
+		]);
 
-	// Extract IV (first 12 bytes) and ciphertext
-	const iv = encryptedData.slice(0, 12);
-	const ciphertext = encryptedData.slice(12);
-	const decrypted = await crypto.subtle.decrypt(
-		{ name: 'AES-GCM', iv },
-		key,
-		ciphertext.buffer as ArrayBuffer
-	);
+		// Extract IV (first 12 bytes) and ciphertext
+		const iv = encryptedData.slice(0, 12);
+		const ciphertext = encryptedData.slice(12);
+		const decrypted = await crypto.subtle.decrypt(
+			{ name: 'AES-GCM', iv },
+			key,
+			ciphertext.buffer as ArrayBuffer
+		);
 
-	return new Uint8Array(decrypted);
+		return new Uint8Array(decrypted);
+	} catch (err) {
+		console.error('Image decryption failed:', err);
+		throw new Error(
+			'Failed to decrypt image data - image may be corrupted or encryption key changed'
+		);
+	}
 }
 
 export async function submitEventImage(
@@ -681,6 +737,25 @@ export async function submitEventImage(
 	const id = crypto.randomUUID().replace(/-/g, '');
 	const timestamp = Date.now();
 	const imagePath = `events/${eventId}/submissions/${userId}_${id}.webp`;
+
+	// map id to path in KV and add to reverse indices (event, user, and event-user intersection)
+	await Promise.all([
+		bindings.KV.put(`event:submission:${id}`, imagePath, {
+			metadata: {
+				eventId: eventId.toString(),
+				userId: userId.toString(),
+				timestamp
+			}
+		}),
+		addSubmissionToIndex(`event:${eventId}:submission_ids`, id, timestamp, bindings.KV),
+		addSubmissionToIndex(`user:${userId}:submission_ids`, id, timestamp, bindings.KV),
+		addSubmissionToIndex(
+			`event:${eventId}:user:${userId}:submission_ids`,
+			id,
+			timestamp,
+			bindings.KV
+		)
+	]);
 
 	const stream = new ReadableStream<Uint8Array>({
 		start(controller) {
@@ -701,68 +776,22 @@ export async function submitEventImage(
 	const encryptedImage = await encryptImage(image0, bindings.ENCRYPTION_KEY);
 
 	ctx.waitUntil(
-		bindings.R2.put(imagePath, encryptedImage, {
-			httpMetadata: {
-				contentType: 'application/octet-stream' // encrypted data
-			}
-		})
+		Promise.all([
+			bindings.R2.put(imagePath, encryptedImage, {
+				httpMetadata: {
+					contentType: 'application/octet-stream' // encrypted data
+				}
+			}),
+			// invalidate all caches related to this event and user
+			bindings.CACHE.delete(`event:${eventId}:submissions`),
+			bindings.CACHE.delete(`user:${userId}:submissions`),
+			bindings.CACHE.delete(`event:${eventId}:submissions:full`),
+			bindings.CACHE.delete(`user:${userId}:submissions:full`),
+			bindings.CACHE.delete(`event:${eventId}:user:${userId}:submissions:full`)
+		])
 	);
 
 	return { id, timestamp, image: image0 }; // return unencrypted image to caller
-}
-
-export async function getEventImageSubmissions(
-	eventId: bigint,
-	userId: bigint | null,
-	bindings: Bindings
-): Promise<EventImageSubmission[]> {
-	let prefix = `events/${eventId}/submissions/`;
-	if (userId !== null) {
-		prefix += `${userId}_`;
-	}
-
-	const list = await bindings.R2.list({ prefix });
-
-	if (!list.objects.length) return [];
-
-	const submissionPromises = list.objects.map(async (obj) => {
-		const buf = await bindings.R2.get(obj.key)!.then((o) => o?.arrayBuffer());
-		if (!buf) return null;
-
-		const idMatch = obj.key.match(/submissions\/(.+)\.webp$/);
-		const id = idMatch ? idMatch[1] : 'unknown';
-
-		// Decrypt the encrypted image data
-		const encryptedData = new Uint8Array(buf);
-		const decryptedImage = await decryptImage(encryptedData, bindings.ENCRYPTION_KEY);
-
-		return {
-			id,
-			image: decryptedImage
-		};
-	});
-
-	const results = await batchProcess(submissionPromises);
-	return results.filter((s): s is EventImageSubmission => s !== null);
-}
-
-export async function getEventImageSubmission(
-	eventId: bigint,
-	userId: bigint,
-	submissionId: string,
-	bindings: Bindings
-): Promise<Uint8Array | null> {
-	const imagePath = `events/${eventId}/submissions/${userId}_${submissionId}.webp`;
-	const obj = await bindings.R2.get(imagePath);
-	if (!obj) return null;
-
-	const buf = await obj.arrayBuffer();
-
-	// Decrypt the encrypted image data
-	const encryptedData = new Uint8Array(buf);
-	const decryptedImage = await decryptImage(encryptedData, bindings.ENCRYPTION_KEY);
-
-	return decryptedImage;
 }
 
 export async function deleteEventImageSubmission(
@@ -773,5 +802,188 @@ export async function deleteEventImageSubmission(
 	ctx: ExecutionContext
 ) {
 	const imagePath = `events/${eventId}/submissions/${userId}_${submissionId}.webp`;
-	ctx.waitUntil(bindings.R2.delete(imagePath));
+
+	// delete from R2, remove mapping from KV, remove from indices (including event-user intersection), invalidate caches
+	ctx.waitUntil(
+		Promise.all([
+			bindings.R2.delete(imagePath),
+			bindings.KV.delete(`event:submission:${submissionId}`),
+			removeSubmissionFromIndex(`event:${eventId}:submission_ids`, submissionId, bindings.KV),
+			removeSubmissionFromIndex(`user:${userId}:submission_ids`, submissionId, bindings.KV),
+			removeSubmissionFromIndex(
+				`event:${eventId}:user:${userId}:submission_ids`,
+				submissionId,
+				bindings.KV
+			),
+			bindings.CACHE.delete(`event:${eventId}:submissions`),
+			bindings.CACHE.delete(`user:${userId}:submissions`),
+			bindings.CACHE.delete(`event:${eventId}:submissions:full`),
+			bindings.CACHE.delete(`user:${userId}:submissions:full`),
+			bindings.CACHE.delete(`event:${eventId}:user:${userId}:submissions:full`)
+		])
+	);
+}
+
+export async function getEventImage(
+	submissionId: string,
+	bindings: Bindings
+): Promise<[Uint8Array | null, bigint | null, bigint | null, number | null]> {
+	// [image data, eventId, userId, timestamp]
+	const data = await bindings.KV.getWithMetadata<{
+		eventId: string;
+		userId: string;
+		timestamp: number;
+	}>(`event:submission:${submissionId}`);
+	if (!data.value || !data.metadata) return [null, null, null, null];
+
+	const obj = await bindings.R2.get(data.value);
+	if (!obj) return [null, null, null, null];
+
+	const buf = await obj.arrayBuffer();
+
+	// Decrypt the encrypted image data
+	const encryptedData = new Uint8Array(buf);
+	const decryptedImage = await decryptImage(encryptedData, bindings.ENCRYPTION_KEY);
+
+	const eventId = BigInt(data.metadata.eventId);
+	const userId = BigInt(data.metadata.userId);
+	const timestamp = data.metadata.timestamp;
+
+	return [decryptedImage, eventId, userId, timestamp];
+}
+
+/**
+ * Retrieve event image submissions with full image data as data URLs.
+ * Supports filtering by eventId, userId, or both (intersection).
+ * Uses reverse indices and caching for optimal performance.
+ */
+export async function getEventImageSubmissionsWithData(
+	eventId: bigint | null,
+	userId: bigint | null,
+	bindings: Bindings
+): Promise<
+	{
+		submission_id: string;
+		event_id: string;
+		user_id: string;
+		timestamp: number;
+		image: string;
+		score?: ScoreResult;
+		caption?: string;
+		scored_at?: Date;
+	}[]
+> {
+	if (!eventId && !userId) {
+		return [];
+	}
+
+	// Build cache key based on query parameters
+	let cacheKey: string;
+	if (eventId && userId) {
+		cacheKey = `event:${eventId}:user:${userId}:submissions:full`;
+	} else if (eventId) {
+		cacheKey = `event:${eventId}:submissions:full`;
+	} else {
+		cacheKey = `user:${userId}:submissions:full`;
+	}
+
+	return await tryCache(
+		cacheKey,
+		bindings.CACHE,
+		async () => {
+			let submissionIds: string[] = [];
+			let eventIdForScores: bigint | null = eventId;
+
+			if (eventId && userId) {
+				// Both provided: find intersection for optimal performance
+				const [eventIds, userIds] = await Promise.all([
+					bindings.KV.get<string[]>(`event:${eventId}:submission_ids`, 'json'),
+					bindings.KV.get<string[]>(`user:${userId}:submission_ids`, 'json')
+				]);
+
+				if (!eventIds || !userIds) {
+					return [];
+				}
+
+				// Intersect the two arrays (submissions that belong to both event AND user)
+				const eventIdsSet = new Set(eventIds);
+				submissionIds = userIds.filter((id) => eventIdsSet.has(id));
+			} else if (eventId) {
+				// Only event provided
+				const ids = await bindings.KV.get<string[]>(`event:${eventId}:submission_ids`, 'json');
+				submissionIds = ids || [];
+			} else if (userId) {
+				// Only user provided
+				const ids = await bindings.KV.get<string[]>(`user:${userId}:submission_ids`, 'json');
+				submissionIds = ids || [];
+			}
+
+			if (submissionIds.length === 0) {
+				return [];
+			}
+
+			// Fetch full image data and scores for all submissions in parallel
+			const imagePromises = submissionIds.map(async (submissionId) => {
+				const [image, eventIdResult, userIdResult, timestamp] = await getEventImage(
+					submissionId,
+					bindings
+				);
+
+				if (!image || !eventIdResult || !userIdResult || timestamp === null) {
+					return null;
+				}
+
+				// Fetch score data in parallel with image processing
+				const scoreKey = `event:image:score:${eventIdResult}:${submissionId}`;
+				const scoreData = await bindings.KV.getWithMetadata<{
+					caption: string;
+					scored_at: number;
+					user_id: string;
+				}>(scoreKey);
+
+				// Parse score data with error handling for corrupted data
+				let score: ScoreResult | undefined;
+				try {
+					score = scoreData.value ? (JSON.parse(scoreData.value) as ScoreResult) : undefined;
+				} catch (err) {
+					console.error(`Failed to parse score data for ${submissionId}:`, err);
+					score = undefined;
+				}
+
+				return {
+					submission_id: submissionId,
+					event_id: eventIdResult.toString(),
+					user_id: userIdResult.toString(),
+					timestamp,
+					image: toDataURL(image, 'image/webp'),
+					score,
+					caption: scoreData.metadata?.caption,
+					scored_at: scoreData.metadata?.scored_at
+						? new Date(scoreData.metadata.scored_at)
+						: undefined
+				};
+			});
+
+			const results = await batchProcess(imagePromises);
+			const filtered = results.filter((r) => r !== null) as {
+				submission_id: string;
+				event_id: string;
+				user_id: string;
+				timestamp: number;
+				image: string;
+				score?: ScoreResult;
+				caption?: string;
+				scored_at?: Date;
+			}[];
+
+			// Deduplicate in case of race conditions in index writes
+			const seen = new Set<string>();
+			return filtered.filter((item) => {
+				if (seen.has(item.submission_id)) return false;
+				seen.add(item.submission_id);
+				return true;
+			});
+		},
+		60 * 60 * 24 * 30 // 30 days cache for better performance, invalidated on submission/deletion
+	);
 }

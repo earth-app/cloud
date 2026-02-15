@@ -27,11 +27,12 @@ import {
 	uploadEventThumbnail,
 	deleteEventThumbnail,
 	submitEventImage,
-	getEventImageSubmissions,
 	normalizeId,
 	migrateAllLegacyKeys,
-	getEventImageSubmission,
-	batchProcess
+	batchProcess,
+	deleteEventImageSubmission,
+	getEventImage,
+	getEventImageSubmissionsWithData
 } from './util/util';
 import { tryCache } from './util/cache';
 import {
@@ -1568,15 +1569,25 @@ app.post('/events/submit_image', async (c) => {
 
 	// Extract base64 data from the data URL and convert to Uint8Array
 	const base64Data = body.photo_url.split(',')[1];
-	const binaryString = atob(base64Data);
+	let binaryString: string;
+	try {
+		binaryString = atob(base64Data);
+	} catch (err) {
+		return c.text('Invalid base64 image data', 400);
+	}
+
 	const len = binaryString.length;
+	const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+	if (len === 0) {
+		return c.text('Image data is required', 400);
+	}
+	if (len > MAX_IMAGE_SIZE) {
+		return c.text('Image size exceeds 10MB limit', 413);
+	}
+
 	const imageData = new Uint8Array(len);
 	for (let i = 0; i < len; i++) {
 		imageData[i] = binaryString.charCodeAt(i);
-	}
-
-	if (imageData.length === 0) {
-		return c.text('Image data is required', 400);
 	}
 
 	const userIdParam = body.user_id;
@@ -1588,9 +1599,28 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Invalid User ID', 400);
 	}
 
-	// limit to 3 per user
-	const existingSubmissions = await getEventImageSubmissions(id, userId, c.env);
-	if (existingSubmissions.length >= 3) {
+	// limit to 3 per user - check using lightweight index instead of full data fetch
+	const indexKey = `event:${id}:user:${userId}:submission_ids`;
+	let userEventSubmissions = await c.env.KV.get<string[]>(indexKey, 'json');
+	if (!userEventSubmissions) {
+		// fallback: check user's global submission index filtered by event
+		const userIndexKey = `user:${userId}:submission_ids`;
+		const allUserSubmissions = await c.env.KV.get<string[]>(userIndexKey, 'json');
+		if (allUserSubmissions) {
+			const eventSubmissionChecks = await Promise.all(
+				allUserSubmissions.map(async (sid) => {
+					const meta = await c.env.KV.getWithMetadata<{ eventId: string }>(
+						`event:submission:${sid}`
+					);
+					return meta.metadata?.eventId === id.toString() ? sid : null;
+				})
+			);
+			userEventSubmissions = eventSubmissionChecks.filter((s): s is string => s !== null);
+		} else {
+			userEventSubmissions = [];
+		}
+	}
+	if (userEventSubmissions.length >= 3) {
 		return c.text('Submission limit reached for this event', 400);
 	}
 
@@ -1621,44 +1651,111 @@ app.post('/events/submit_image', async (c) => {
 	return c.body(null, 204);
 });
 
-async function mapSubmissionWithScore(
-	c: Context<{ Bindings: Bindings }>,
-	id: bigint,
-	submission: EventImageSubmission
-): Promise<EventImage> {
-	// attach scores, convert to data url
-	const key = `event:image:score:${id}:${submission.id}`;
-	const value = await c.env.KV.getWithMetadata<{
-		caption: string;
-		scored_at: number;
-		user_id: string;
-	}>(key);
-	const score = value.value ? (JSON.parse(value.value) as ScoreResult) : undefined;
+app.get('/events/retrieve_image', async (c) => {
+	const submissionId = c.req.query('submission_id');
+	const eventIdParam = c.req.query('event_id');
+	const userIdParam = c.req.query('user_id');
 
-	return {
-		...submission,
-		image: toDataURL(submission.image, 'image/webp'),
-		score,
-		caption: value.metadata?.caption,
-		scored_at: value.metadata?.scored_at ? new Date(value.metadata.scored_at) : undefined,
-		user_id: value.metadata?.user_id
-	};
-}
+	// Priority 1: submission_id - return single submission with score data
+	if (submissionId) {
+		if (!/^[0-9a-f]{32}$/i.test(submissionId)) {
+			return c.text('Invalid submission_id format', 400);
+		}
 
-async function formattedSubmissions(
-	c: Context<{ Bindings: Bindings }>,
-	id: bigint,
-	userId: bigint | null
-) {
-	const submissions = await getEventImageSubmissions(id, userId, c.env);
-	// Map all submissions with scores in parallel for better performance
-	const submissionPromises = submissions.map((submission) =>
-		mapSubmissionWithScore(c, id, submission)
+		const [image, eventId, userId, timestamp] = await getEventImage(submissionId, c.env);
+		if (!image || !eventId || !userId || timestamp === null) {
+			return c.text('Image not found', 404);
+		}
+
+		// Fetch score data with error handling
+		const scoreKey = `event:image:score:${eventId}:${submissionId}`;
+		const scoreData = await c.env.KV.getWithMetadata<{
+			caption: string;
+			scored_at: number;
+			user_id: string;
+		}>(scoreKey);
+		let score: ScoreResult | undefined;
+		try {
+			score = scoreData.value ? (JSON.parse(scoreData.value) as ScoreResult) : undefined;
+		} catch (err) {
+			console.error(`Failed to parse score data for ${submissionId}:`, err);
+			score = undefined;
+		}
+
+		return c.json(
+			{
+				submission_id: submissionId,
+				event_id: eventId.toString(),
+				user_id: userId.toString(),
+				timestamp,
+				image: toDataURL(image, 'image/webp'),
+				score,
+				caption: scoreData.metadata?.caption,
+				scored_at: scoreData.metadata?.scored_at
+					? new Date(scoreData.metadata.scored_at)
+					: undefined
+			},
+			200
+		);
+	}
+
+	// Priority 2: event_id and/or user_id - return array of submissions with score data
+	if (!eventIdParam && !userIdParam) {
+		return c.text('At least one of submission_id, event_id, or user_id is required', 400);
+	}
+
+	let eventId: bigint | null = null;
+	if (eventIdParam) {
+		if (!/^\d+$/.test(eventIdParam)) {
+			return c.text('Invalid event_id', 400);
+		}
+		eventId = BigInt(eventIdParam);
+		if (eventId <= 0n) {
+			return c.text('Invalid event_id', 400);
+		}
+	}
+
+	let userId: bigint | null = null;
+	if (userIdParam) {
+		if (!/^\d+$/.test(userIdParam)) {
+			return c.text('Invalid user_id', 400);
+		}
+		userId = BigInt(userIdParam);
+		if (userId <= 0n) {
+			return c.text('Invalid user_id', 400);
+		}
+	}
+
+	// Fetch submissions with image data and scores
+	const submissions = await getEventImageSubmissionsWithData(eventId, userId, c.env);
+
+	return c.json(
+		{
+			items: submissions,
+			total: submissions.length
+		},
+		200
 	);
-	const submissionsWithScores = await batchProcess(submissionPromises);
+});
 
-	return c.json({ items: submissionsWithScores, total: submissionsWithScores.length }, 200);
-}
+app.delete('/events/delete_image', async (c) => {
+	const submissionId = c.req.query('submission_id');
+	if (!submissionId || submissionId.trim().length === 0) {
+		return c.text('submission_id is required', 400);
+	}
+
+	if (!/^[0-9a-f]{32}$/i.test(submissionId)) {
+		return c.text('Invalid submission_id format', 400);
+	}
+
+	const [image, eventId, userId, timestamp] = await getEventImage(submissionId, c.env);
+	if (!image || !eventId || !userId || timestamp === null) {
+		return c.text('Image not found', 404);
+	}
+
+	await deleteEventImageSubmission(eventId, userId, submissionId, c.env, c.executionCtx);
+	return c.body(null, 204);
+});
 
 app.get('/events/:id/submissions', async (c) => {
 	const idParam = c.req.param('id');
@@ -1671,7 +1768,8 @@ app.get('/events/:id/submissions', async (c) => {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	return formattedSubmissions(c, id, null);
+	const submissions = await getEventImageSubmissionsWithData(id, null, c.env);
+	return c.json({ items: submissions, total: submissions.length }, 200);
 });
 
 app.get('/events/:id/submissions/:userId', async (c) => {
@@ -1690,7 +1788,9 @@ app.get('/events/:id/submissions/:userId', async (c) => {
 		return c.text('User ID is required', 400);
 	}
 	const userId = BigInt(userIdParam);
-	return formattedSubmissions(c, id, userId);
+
+	const submissions = await getEventImageSubmissionsWithData(id, userId, c.env);
+	return c.json({ items: submissions, total: submissions.length }, 200);
 });
 
 app.get('/events/:id/submissions/:userId/:submissionId', async (c) => {
@@ -1711,17 +1811,83 @@ app.get('/events/:id/submissions/:userId/:submissionId', async (c) => {
 	const userId = BigInt(userIdParam);
 
 	const submissionId = c.req.param('submissionId');
-	if (!submissionId) {
+	if (!submissionId || submissionId.trim().length === 0) {
 		return c.text('Submission ID is required', 400);
 	}
 
-	const submission = await getEventImageSubmission(id, userId, submissionId, c.env);
-	if (!submission) {
+	if (!/^[0-9a-f]{32}$/i.test(submissionId)) {
+		return c.text('Invalid submission_id format', 400);
+	}
+
+	// get submission with full data and scores
+	const [image, eventId, userIdResult, timestamp] = await getEventImage(submissionId, c.env);
+	if (!image || !eventId || !userIdResult || timestamp === null) {
 		return c.text('Submission not found', 404);
 	}
 
-	const data = await mapSubmissionWithScore(c, id, { id: submissionId, image: submission });
-	return c.json(data, 200);
+	// validate eventId and userId match the request params
+	if (eventId !== id || userIdResult !== userId) {
+		return c.text('Submission not found', 404);
+	}
+
+	// Fetch score data with error handling
+	const scoreKey = `event:image:score:${eventId}:${submissionId}`;
+	const scoreData = await c.env.KV.getWithMetadata<{
+		caption: string;
+		scored_at: number;
+		user_id: string;
+	}>(scoreKey);
+	let score: ScoreResult | undefined;
+	try {
+		score = scoreData.value ? (JSON.parse(scoreData.value) as ScoreResult) : undefined;
+	} catch (err) {
+		console.error(`Failed to parse score data for ${submissionId}:`, err);
+		score = undefined;
+	}
+
+	return c.json(
+		{
+			submission_id: submissionId,
+			event_id: eventId.toString(),
+			user_id: userIdResult.toString(),
+			timestamp,
+			image: toDataURL(image, 'image/webp'),
+			score,
+			caption: scoreData.metadata?.caption,
+			scored_at: scoreData.metadata?.scored_at ? new Date(scoreData.metadata.scored_at) : undefined
+		},
+		200
+	);
+});
+
+app.delete('/events/:id/submissions/:userId/:submissionId', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('Event ID is required', 400);
+	}
+	const id = BigInt(idParam);
+
+	if (id <= 0n) {
+		return c.text('Invalid Event ID', 400);
+	}
+
+	const userIdParam = c.req.param('userId');
+	if (!userIdParam || !/^\d+$/.test(userIdParam)) {
+		return c.text('User ID is required', 400);
+	}
+	const userId = BigInt(userIdParam);
+
+	const submissionId = c.req.param('submissionId');
+	if (!submissionId || submissionId.trim().length === 0) {
+		return c.text('Submission ID is required', 400);
+	}
+
+	if (!/^[0-9a-f]{32}$/i.test(submissionId)) {
+		return c.text('Invalid submission_id format', 400);
+	}
+
+	await deleteEventImageSubmission(id, userId, submissionId, c.env, c.executionCtx);
+	return c.body(null, 204);
 });
 
 export default app;
