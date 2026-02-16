@@ -742,11 +742,12 @@ export async function submitEventImage(
 	await Promise.all([
 		bindings.KV.put(`event:submission:${id}`, imagePath, {
 			metadata: {
-				eventId: eventId.toString(),
-				userId: userId.toString(),
+				eventId: normalizeId(eventId.toString()),
+				userId: normalizeId(userId.toString()),
 				timestamp
 			}
 		}),
+		addSubmissionToIndex(`event:${eventId}:submission_ids`, id, timestamp, bindings.KV),
 		addSubmissionToIndex(`event:${eventId}:submission_ids`, id, timestamp, bindings.KV),
 		addSubmissionToIndex(`user:${userId}:submission_ids`, id, timestamp, bindings.KV),
 		addSubmissionToIndex(
@@ -860,7 +861,11 @@ export async function getEventImage(
 export async function getEventImageSubmissionsWithData(
 	eventId: bigint | null,
 	userId: bigint | null,
-	bindings: Bindings
+	bindings: Bindings,
+	limit: number = 100,
+	page: number = 1,
+	sort: 'asc' | 'desc' | 'rand' = 'desc',
+	search?: string
 ): Promise<
 	{
 		submission_id: string;
@@ -878,13 +883,14 @@ export async function getEventImageSubmissionsWithData(
 	}
 
 	// Build cache key based on query parameters
+	const suffix = `${sort}:${search || 'no-search'}:page:${page}:limit:${limit}`;
 	let cacheKey: string;
 	if (eventId && userId) {
-		cacheKey = `event:${eventId}:user:${userId}:submissions:full`;
+		cacheKey = `event:${eventId}:user:${userId}:submissions:full:${suffix}`;
 	} else if (eventId) {
-		cacheKey = `event:${eventId}:submissions:full`;
+		cacheKey = `event:${eventId}:submissions:full:${suffix}`;
 	} else {
-		cacheKey = `user:${userId}:submissions:full`;
+		cacheKey = `user:${userId}:submissions:full:${suffix}`;
 	}
 
 	return await tryCache(
@@ -892,7 +898,6 @@ export async function getEventImageSubmissionsWithData(
 		bindings.CACHE,
 		async () => {
 			let submissionIds: string[] = [];
-			let eventIdForScores: bigint | null = eventId;
 
 			if (eventId && userId) {
 				// Both provided: find intersection for optimal performance
@@ -976,13 +981,46 @@ export async function getEventImageSubmissionsWithData(
 				scored_at?: Date;
 			}[];
 
-			// Deduplicate in case of race conditions in index writes
+			// deduplicate in case of race conditions in index writes
 			const seen = new Set<string>();
-			return filtered.filter((item) => {
+			const deduplicated = filtered.filter((item) => {
 				if (seen.has(item.submission_id)) return false;
 				seen.add(item.submission_id);
 				return true;
 			});
+
+			// search caption, user_id, event_id, and submission_id if search query provided
+			const normalizedSearch = search ? normalizeId(search) : undefined;
+			const searched = search
+				? deduplicated.filter(
+						(item) =>
+							item.caption?.toLowerCase().includes(search.toLowerCase()) ||
+							item.user_id === normalizedSearch ||
+							item.event_id === normalizedSearch ||
+							item.submission_id === normalizedSearch
+					)
+				: deduplicated;
+
+			// sort by timestamp
+			switch (sort) {
+				case 'asc': // oldest first
+					searched.sort((a, b) => a.timestamp - b.timestamp);
+					break;
+				case 'desc': // newest first
+					searched.sort((a, b) => b.timestamp - a.timestamp);
+					break;
+				case 'rand':
+					for (let i = searched.length - 1; i > 0; i--) {
+						const j = Math.floor(Math.random() * (i + 1));
+						[searched[i], searched[j]] = [searched[j], searched[i]];
+					}
+					break;
+			}
+
+			// Apply pagination
+			const startIndex = (page - 1) * limit;
+			const endIndex = startIndex + limit;
+			return searched.slice(startIndex, endIndex);
 		},
 		60 * 60 * 24 * 30 // 30 days cache for better performance, invalidated on submission/deletion
 	);

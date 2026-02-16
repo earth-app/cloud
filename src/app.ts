@@ -1648,7 +1648,8 @@ app.post('/events/submit_image', async (c) => {
 	// track progress for badges
 	c.executionCtx.waitUntil(addBadgeProgress(userIdParam, 'event_images_submitted', '1', c.env.KV));
 
-	return c.body(null, 204);
+	// return submission ID
+	return c.json({ submission_id: res.id, success: true }, 201);
 });
 
 app.get('/events/retrieve_image', async (c) => {
@@ -1726,8 +1727,53 @@ app.get('/events/retrieve_image', async (c) => {
 		}
 	}
 
+	// Parse pagination parameters
+	const limitParam = c.req.query('limit');
+	const pageParam = c.req.query('page');
+	const sortParam = c.req.query('sort');
+	const searchParam = c.req.query('search');
+
+	let limit = 100; // default
+	if (limitParam) {
+		const parsedLimit = parseInt(limitParam, 10);
+		if (isNaN(parsedLimit) || parsedLimit <= 0) {
+			return c.text('Invalid limit parameter', 400);
+		}
+		if (parsedLimit > 500) {
+			return c.text('Limit cannot exceed 500', 400);
+		}
+		limit = parsedLimit;
+	}
+
+	let page = 1; // default
+	if (pageParam) {
+		const parsedPage = parseInt(pageParam, 10);
+		if (isNaN(parsedPage) || parsedPage <= 0) {
+			return c.text('Invalid page parameter', 400);
+		}
+		page = parsedPage;
+	}
+
+	let sort: 'asc' | 'desc' | 'rand' = 'desc'; // default
+	if (sortParam) {
+		if (sortParam !== 'asc' && sortParam !== 'desc' && sortParam !== 'rand') {
+			return c.text("Invalid sort parameter (must be 'asc', 'desc', or 'rand')", 400);
+		}
+		sort = sortParam;
+	}
+
+	const search = searchParam?.trim() || undefined;
+
 	// Fetch submissions with image data and scores
-	const submissions = await getEventImageSubmissionsWithData(eventId, userId, c.env);
+	const submissions = await getEventImageSubmissionsWithData(
+		eventId,
+		userId,
+		c.env,
+		limit,
+		page,
+		sort,
+		search
+	);
 
 	return c.json(
 		{
