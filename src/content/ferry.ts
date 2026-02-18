@@ -38,8 +38,8 @@ async function embedText(env: Bindings, text: string): Promise<number[]> {
 	});
 }
 
-const MIN_SIM = 0.3;
-const MAX_SIM = 0.8;
+const MIN_SIM = 0.25;
+const MAX_SIM = 0.6;
 
 function cosineSimilarity(a: number[], b: number[]): number {
 	let dot = 0;

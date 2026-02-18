@@ -1642,6 +1642,8 @@ app.post('/events/submit_image', async (c) => {
 				expiration: Math.floor(new Date(endDate).getTime() / 1000) + 60 * 60 * 24 * 3, // 3 days after event end
 				metadata: { caption, scored_at: Date.now(), user_id: userId.toString() }
 			});
+
+			console.log(`Scored image submission ${res.id} for event ${id} with score:`, score);
 		})()
 	);
 

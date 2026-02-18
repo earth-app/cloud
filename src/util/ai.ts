@@ -1080,6 +1080,7 @@ Guidelines:
 - Describe observable elements in the image and their connection to the event
 - Use concrete details rather than general statements
 - Avoid promotional or generic language
+- Mention at least one specific activity from the list if visible
 - Keep the caption under 50 words`;
 };
 
@@ -1088,7 +1089,7 @@ export const eventImageCriteria = (event: Event) =>
 		{
 			id: 'context_alignment',
 			weight: 0.5,
-			ideal: `The caption clearly connects visible elements in the image to the event's activities (${eventActivitiesList(event).join(', ')}), without speculation.`
+			ideal: `People participating in the activities (${eventActivitiesList(event).join(', ')}) with visible details showing how it relates to the event. `
 		},
 		{
 			id: 'descriptive_specificity',

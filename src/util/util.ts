@@ -748,7 +748,6 @@ export async function submitEventImage(
 			}
 		}),
 		addSubmissionToIndex(`event:${eventId}:submission_ids`, id, timestamp, bindings.KV),
-		addSubmissionToIndex(`event:${eventId}:submission_ids`, id, timestamp, bindings.KV),
 		addSubmissionToIndex(`user:${userId}:submission_ids`, id, timestamp, bindings.KV),
 		addSubmissionToIndex(
 			`event:${eventId}:user:${userId}:submission_ids`,
@@ -783,12 +782,16 @@ export async function submitEventImage(
 					contentType: 'application/octet-stream' // encrypted data
 				}
 			}),
-			// invalidate all caches related to this event and user
 			bindings.CACHE.delete(`event:${eventId}:submissions`),
 			bindings.CACHE.delete(`user:${userId}:submissions`),
 			bindings.CACHE.delete(`event:${eventId}:submissions:full`),
 			bindings.CACHE.delete(`user:${userId}:submissions:full`),
-			bindings.CACHE.delete(`event:${eventId}:user:${userId}:submissions:full`)
+			bindings.CACHE.delete(`event:${eventId}:user:${userId}:submissions:full`),
+			bindings.CACHE.delete(`event:${eventId}:submissions:full:desc:no-search:page:1:limit:100`),
+			bindings.CACHE.delete(`user:${userId}:submissions:full:desc:no-search:page:1:limit:100`),
+			bindings.CACHE.delete(
+				`event:${eventId}:user:${userId}:submissions:full:desc:no-search:page:1:limit:100`
+			)
 		])
 	);
 
@@ -820,7 +823,12 @@ export async function deleteEventImageSubmission(
 			bindings.CACHE.delete(`user:${userId}:submissions`),
 			bindings.CACHE.delete(`event:${eventId}:submissions:full`),
 			bindings.CACHE.delete(`user:${userId}:submissions:full`),
-			bindings.CACHE.delete(`event:${eventId}:user:${userId}:submissions:full`)
+			bindings.CACHE.delete(`event:${eventId}:user:${userId}:submissions:full`),
+			bindings.CACHE.delete(`event:${eventId}:submissions:full:desc:no-search:page:1:limit:100`),
+			bindings.CACHE.delete(`user:${userId}:submissions:full:desc:no-search:page:1:limit:100`),
+			bindings.CACHE.delete(
+				`event:${eventId}:user:${userId}:submissions:full:desc:no-search:page:1:limit:100`
+			)
 		])
 	);
 }
