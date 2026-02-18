@@ -833,6 +833,73 @@ export async function deleteEventImageSubmission(
 	);
 }
 
+export async function deleteEventImageSubmissions(
+	eventId: bigint | null,
+	userId: bigint | null,
+	bindings: Bindings,
+	ctx: ExecutionContext
+) {
+	if (!eventId && !userId) {
+		return;
+	}
+
+	// Fetch all relevant submission IDs based on provided filters
+	let submissionIds: string[] = [];
+
+	if (eventId && userId) {
+		// intersection of event and specific user
+		const [eventIds, userIds] = await Promise.all([
+			bindings.KV.get<string[]>(`event:${eventId}:submission_ids`, 'json'),
+			bindings.KV.get<string[]>(`user:${userId}:submission_ids`, 'json')
+		]);
+
+		if (!eventIds || !userIds) {
+			return;
+		}
+
+		const eventIdsSet = new Set(eventIds);
+		submissionIds = userIds.filter((id) => eventIdsSet.has(id));
+	} else if (eventId) {
+		// submissions under an event
+		const ids = await bindings.KV.get<string[]>(`event:${eventId}:submission_ids`, 'json');
+		submissionIds = ids || [];
+	} else if (userId) {
+		// submissions of a user
+		const ids = await bindings.KV.get<string[]>(`user:${userId}:submission_ids`, 'json');
+		submissionIds = ids || [];
+	}
+
+	if (submissionIds.length === 0) {
+		return;
+	}
+
+	// delete all submissions in parallel with batching
+	const promises = submissionIds.map(async (submissionId) => {
+		const imagePath = `events/${eventId}/submissions/${userId}_${submissionId}.webp`;
+
+		await Promise.all([
+			bindings.R2.delete(imagePath),
+			bindings.KV.delete(`event:submission:${submissionId}`),
+			removeSubmissionFromIndex(`event:${eventId}:submission_ids`, submissionId, bindings.KV),
+			removeSubmissionFromIndex(`user:${userId}:submission_ids`, submissionId, bindings.KV),
+			removeSubmissionFromIndex(
+				`event:${eventId}:user:${userId}:submission_ids`,
+				submissionId,
+				bindings.KV
+			)
+		]);
+	});
+
+	ctx.waitUntil(
+		(async () => {
+			await batchProcess(promises);
+			console.log(
+				`Deleted ${submissionIds.length} submissions for eventId=${eventId} userId=${userId}`
+			);
+		})()
+	);
+}
+
 export async function getEventImage(
 	submissionId: string,
 	bindings: Bindings

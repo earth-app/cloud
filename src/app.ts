@@ -31,7 +31,8 @@ import {
 	migrateAllLegacyKeys,
 	deleteEventImageSubmission,
 	getEventImage,
-	getEventImageSubmissionsWithData
+	getEventImageSubmissionsWithData,
+	deleteEventImageSubmissions
 } from './util/util';
 import { tryCache } from './util/cache';
 import {
@@ -1787,20 +1788,58 @@ app.get('/events/retrieve_image', async (c) => {
 
 app.delete('/events/delete_image', async (c) => {
 	const submissionId = c.req.query('submission_id');
-	if (!submissionId || submissionId.trim().length === 0) {
-		return c.text('submission_id is required', 400);
+	const eventIdParam = c.req.query('event_id');
+	const userIdParam = c.req.query('user_id');
+
+	if (!submissionId && !eventIdParam && !userIdParam) {
+		return c.text('At least one of submission_id, event_id, or user_id is required', 400);
 	}
 
-	if (!/^[0-9a-f]{32}$/i.test(submissionId)) {
-		return c.text('Invalid submission_id format', 400);
+	// handle single delete
+	if (submissionId) {
+		if (submissionId.trim().length === 0) {
+			return c.text('submission_id is required', 400);
+		}
+
+		if (!/^[0-9a-f]{32}$/i.test(submissionId)) {
+			return c.text('Invalid submission_id format', 400);
+		}
+
+		const [image, eventId, userId, timestamp] = await getEventImage(submissionId, c.env);
+		if (!image || !eventId || !userId || timestamp === null) {
+			return c.text('Image not found', 404);
+		}
+
+		await deleteEventImageSubmission(eventId, userId, submissionId, c.env, c.executionCtx);
 	}
 
-	const [image, eventId, userId, timestamp] = await getEventImage(submissionId, c.env);
-	if (!image || !eventId || !userId || timestamp === null) {
-		return c.text('Image not found', 404);
+	// handle multiple delete
+	if (eventIdParam || userIdParam) {
+		let eventId: bigint | null = null;
+		if (eventIdParam) {
+			if (!/^\d+$/.test(eventIdParam)) {
+				return c.text('Invalid event_id', 400);
+			}
+			eventId = BigInt(eventIdParam);
+			if (eventId <= 0n) {
+				return c.text('Invalid event_id', 400);
+			}
+		}
+
+		let userId: bigint | null = null;
+		if (userIdParam) {
+			if (!/^\d+$/.test(userIdParam)) {
+				return c.text('Invalid user_id', 400);
+			}
+			userId = BigInt(userIdParam);
+			if (userId <= 0n) {
+				return c.text('Invalid user_id', 400);
+			}
+		}
+
+		await deleteEventImageSubmissions(eventId, userId, c.env, c.executionCtx);
 	}
 
-	await deleteEventImageSubmission(eventId, userId, submissionId, c.env, c.executionCtx);
 	return c.body(null, 204);
 });
 
