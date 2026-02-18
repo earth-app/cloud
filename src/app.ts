@@ -1,5 +1,5 @@
 import { com, kotlin } from '@earth-app/ocean';
-import { Context, Hono } from 'hono';
+import { Hono } from 'hono';
 
 import {
 	ArticleQuizQuestion,
@@ -16,7 +16,7 @@ import {
 import { getSynonyms } from './util/dictionary';
 import * as prompts from './util/ai';
 
-import { Article, Bindings, Event, EventImage, EventImageSubmission } from './util/types';
+import { Article, Bindings, Event } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
@@ -29,7 +29,6 @@ import {
 	submitEventImage,
 	normalizeId,
 	migrateAllLegacyKeys,
-	batchProcess,
 	deleteEventImageSubmission,
 	getEventImage,
 	getEventImageSubmissionsWithData

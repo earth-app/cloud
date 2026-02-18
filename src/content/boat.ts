@@ -1043,7 +1043,11 @@ export function extractLocationFromEventName(eventName: string): string | null {
 	// Match: "Location's Birthday" or "Location's 158th Birthday"
 	// Capture group 1: the location name (non-greedy)
 	// Optional non-capturing group: ordinal number like "158th"
-	const birthdayMatch = eventName.match(/^(.+?)'s(?:\s+\d+(?:st|nd|rd|th))?\s+Birthday$/i);
+	// Accept both possessive forms: "'s" (e.g., "O'Fallon's") and just trailing "'"
+	// (e.g., "Minneapolis' 128th Birthday"). Also accept curly apostrophe (\u2019).
+	const birthdayMatch = eventName.match(
+		/^(.+?)(?:['\u2019]s|['\u2019])(?:\s+\d+(?:st|nd|rd|th))?\s+Birthday$/i
+	);
 	if (!birthdayMatch || !birthdayMatch[1]) {
 		return null;
 	}
