@@ -1640,7 +1640,7 @@ app.post('/events/submit_image', async (c) => {
 			const endDate = body.event.end_date || body.event.date;
 			await c.env.KV.put(key, JSON.stringify(score), {
 				expiration: Math.floor(new Date(endDate).getTime() / 1000) + 60 * 60 * 24 * 3, // 3 days after event end
-				metadata: { caption, scored_at: Date.now(), user_id: userId }
+				metadata: { caption, scored_at: Date.now(), user_id: userId.toString() }
 			});
 		})()
 	);
