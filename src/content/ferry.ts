@@ -115,7 +115,7 @@ export async function scoreImage(
 	const caption = await env.AI.run(imageCaptionModel, {
 		image: [...new Uint8Array(image)],
 		prompt,
-		max_tokens: 128
+		max_tokens: 2048
 	});
 
 	const text = caption?.description?.trim();

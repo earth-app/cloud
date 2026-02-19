@@ -1073,33 +1073,44 @@ export const eventImageCaptionPrompt = (event: Event) => {
 	return `Write a concise caption describing what is visible in the image and how it relates to the event.
 
 Event: "${event.name}"
-Description: ${event.description.substring(0, 300)}
+Description: ${event.description.substring(0, 400)}
 Activities: ${eventActivitiesList(event).join(', ')}
 
 Guidelines:
-- Describe observable elements in the image and their connection to the event
+- Describe observable elements in the image and their connection to the event in great detail
 - Use concrete details rather than general statements
 - Avoid promotional or generic language
+- Focus on what can be seen in the image and how it reflects the event's theme or activities
 - Mention at least one specific activity from the list if visible
-- Keep the caption under 50 words`;
+- Keep the caption under 150 words`;
 };
 
 export const eventImageCriteria = (event: Event) =>
 	[
 		{
 			id: 'context_alignment',
-			weight: 0.5,
+			weight: 0.4,
 			ideal: `People participating in the activities (${eventActivitiesList(event).join(', ')}) with visible details showing how it relates to the event. `
 		},
 		{
 			id: 'descriptive_specificity',
-			weight: 0.3,
+			weight: 0.25,
 			ideal: `The caption references concrete, observable details rather than vague or generic descriptions.`
 		},
 		{
 			id: 'linguistic_precision',
-			weight: 0.2,
+			weight: 0.15,
 			ideal: `The caption is concise, clearly written, and avoids clichés or filler phrases.`
+		},
+		{
+			id: 'event_reflection',
+			weight: 0.1,
+			ideal: `The caption effectively connects the visual elements to the event's theme or activities, enhancing understanding of the event.`
+		},
+		{
+			id: 'activity_mention',
+			weight: 0.1,
+			ideal: `The caption mentions at least one specific activity from the event's activities list if it is visible in the image.`
 		}
 	] as ScoringCriterion[];
 
