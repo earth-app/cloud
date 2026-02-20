@@ -1,53 +1,117 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
-import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
+import { normalizeId } from '../util/util';
 
-export async function getImpactPoints(id: string, kv: KVNamespace): Promise<number> {
+export type ImpactPointsChange = {
+	reason: string;
+	difference: number;
+	timestamp?: number;
+};
+
+export async function getImpactPoints(
+	id: string,
+	kv: KVNamespace
+): Promise<[number, ImpactPointsChange[]]> {
 	const normalizedId = normalizeId(id);
 	const key = `user:impact_points:${normalizedId}`;
-	let points = await kv.get(key);
+	const result = await kv.getWithMetadata<{ total: number }>(key);
+	let points = 0;
+	let history: ImpactPointsChange[] = [];
 
-	// Fallback: check for legacy zero-padded key
-	if (!points && isLegacyPaddedId(id)) {
-		const legacyKey = `user:impact_points:${id}`;
-		const legacyPoints = await kv.get(legacyKey);
-		if (legacyPoints) {
-			// Migrate in background
-			await migrateLegacyKey(legacyKey, key, kv);
-			points = legacyPoints;
+	if (result && result.value) {
+		try {
+			const parsed = JSON.parse(result.value as string);
+			if (Array.isArray(parsed)) {
+				history = parsed as ImpactPointsChange[];
+			}
+		} catch (e) {
+			history = [];
+			console.warn(
+				`Failed to parse impact points history for user ${id}, deleting and defaulting to empty history.`,
+				e
+			);
+
+			// clear the invalid value to prevent future parsing issues
+			await kv.delete(key);
 		}
 	}
 
-	return points ? parseInt(points) : 0;
+	if (
+		result &&
+		result.metadata &&
+		typeof result.metadata === 'object' &&
+		result.metadata.total !== undefined
+	) {
+		points = Number(result.metadata.total) || 0;
+	} else {
+		points = history.reduce((s, h) => s + h.difference, 0);
+		console.warn(
+			`Impact points total for user ${id} is missing or invalid in metadata, calculated from history as ${points}. Setting total in metadata for future consistency.`
+		);
+
+		// update the KV entry to include the total in metadata for future consistency
+		await kv.put(key, JSON.stringify(history), { metadata: { total: points } });
+	}
+
+	return [points, history];
 }
 
 export async function addImpactPoints(
 	id: string,
 	pointsToAdd: number,
+	reason: string,
 	kv: KVNamespace
 ): Promise<number> {
 	const normalizedId = normalizeId(id);
 	const key = `user:impact_points:${normalizedId}`;
-	const currentPoints = await getImpactPoints(normalizedId, kv);
+	const [currentPoints, history] = await getImpactPoints(normalizedId, kv);
 	const newPoints = currentPoints + pointsToAdd;
-	await kv.put(key, newPoints.toString());
+	const newHistory = [...history, { reason, difference: pointsToAdd, timestamp: Date.now() }];
+
+	await kv.put(key, JSON.stringify(newHistory), { metadata: { total: newPoints } });
 	return newPoints;
 }
 
 export async function removeImpactPoints(
 	id: string,
 	pointsToRemove: number,
+	reason: string,
 	kv: KVNamespace
 ): Promise<number> {
 	const normalizedId = normalizeId(id);
 	const key = `user:impact_points:${normalizedId}`;
-	const currentPoints = await getImpactPoints(normalizedId, kv);
+	const [currentPoints, history] = await getImpactPoints(normalizedId, kv);
 	const newPoints = Math.max(0, currentPoints - pointsToRemove);
-	await kv.put(key, newPoints.toString());
+	const newHistory = [...history, { reason, difference: -pointsToRemove, timestamp: Date.now() }];
+	await kv.put(key, JSON.stringify(newHistory), { metadata: { total: newPoints } });
 	return newPoints;
 }
 
-export async function setImpactPoints(id: string, points: number, kv: KVNamespace): Promise<void> {
+export async function setImpactPoints(
+	id: string,
+	points: number,
+	reason: string,
+	kv: KVNamespace
+): Promise<void> {
+	const points0 = Math.max(0, points);
 	const normalizedId = normalizeId(id);
 	const key = `user:impact_points:${normalizedId}`;
-	await kv.put(key, points.toString());
+
+	const existing = await kv.getWithMetadata<{ total: number }>(key);
+	const history =
+		existing && existing.value
+			? (JSON.parse(existing.value as string) as ImpactPointsChange[])
+			: [];
+	const oldPoints =
+		existing &&
+		existing.metadata &&
+		typeof existing.metadata === 'object' &&
+		existing.metadata.total !== undefined
+			? Number(existing.metadata.total) || 0
+			: history.reduce((s, h) => s + h.difference, 0);
+
+	const difference = points0 - oldPoints;
+
+	await kv.put(key, JSON.stringify([...history, { reason, difference, timestamp: Date.now() }]), {
+		metadata: { total: points0 }
+	});
 }

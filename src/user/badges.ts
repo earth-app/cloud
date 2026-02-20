@@ -2,6 +2,23 @@ import type { KVNamespace } from '@cloudflare/workers-types';
 import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
 import { sendUserNotification } from './notifications';
 import { Bindings } from '../util/types';
+import { addImpactPoints } from './points';
+
+export type BadgeTracker =
+	| 'activities_added'
+	| 'impact_points_earned'
+	| 'prompts_responded'
+	| 'events_created'
+	| 'articles_read'
+	| 'articles_read_time'
+	| 'events_attended'
+	| 'prompts_created'
+	| 'event_images_submitted'
+	| 'friends_added'
+	| 'article_quizzes_completed'
+	| 'event_types_attended'
+	| 'event_countries_photographed'
+	| 'article_quizzes_completed_perfect_score';
 
 export type Badge = {
 	id: string;
@@ -11,7 +28,7 @@ export type Badge = {
 	rarity: 'normal' | 'rare' | 'amazing' | 'green';
 	// on request, badges are either granted automatically or based on this function; args are passed from the request
 	progress?: (...args: any[]) => Promise<number> | number;
-	tracker_id?: string; // if provided, links to a tracker in KV, an array of { date: number, value: string }
+	tracker_id?: BadgeTracker; // if provided, links to a tracker in KV, an array of { date: number, value: string }
 };
 
 // use function instead of constant to avoid loading at import time
@@ -726,6 +743,37 @@ export async function grantBadge(userId: string, badgeId: string, kv: KVNamespac
 	};
 
 	await kv.put(metadataKey, JSON.stringify(metadata));
+
+	// add impact points for granting this badge
+	// wrap in try/catch to prevent any issues with impact points from blocking badge grants
+	try {
+		if (badge.tracker_id === 'impact_points_earned') {
+			// if this badge is directly related to impact points, don't add points to prevent loops
+			return;
+		}
+
+		// add impact points based on badge rarity
+		let pointsToAdd = 0;
+		switch (badge.rarity) {
+			case 'normal':
+				pointsToAdd = 10;
+				break;
+			case 'rare':
+				pointsToAdd = 25;
+				break;
+			case 'amazing':
+				pointsToAdd = 60;
+				break;
+			case 'green':
+				pointsToAdd = 150;
+				break;
+		}
+
+		await addImpactPoints(normalizedUserId, pointsToAdd, `Badge Unlocked: ${badge.name}`, kv);
+		await addBadgeProgress(normalizedUserId, 'impact_points_earned', pointsToAdd, kv);
+	} catch (error) {
+		console.error('Error adding impact points for badge grant:', error);
+	}
 }
 
 export async function isBadgeGranted(

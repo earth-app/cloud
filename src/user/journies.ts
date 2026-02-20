@@ -1,6 +1,7 @@
 import { KVNamespace } from '@cloudflare/workers-types';
-import { cache, tryCache } from '../util/cache';
-import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
+import { tryCache } from '../util/cache';
+import { normalizeId, isLegacyPaddedId, migrateLegacyKey, capitalizeFully } from '../util/util';
+import { addImpactPoints } from './points';
 
 const journeyTypes = ['article', 'prompt', 'event'];
 
@@ -29,7 +30,12 @@ export async function getJourney(
 	return [result.metadata.streak || 0, result.metadata.lastWrite || 0];
 }
 
-export async function incrementJourney(id: string, type: string, kv: KVNamespace): Promise<number> {
+export async function incrementJourney(
+	id: string,
+	type: string,
+	kv: KVNamespace,
+	ctx: ExecutionContext
+): Promise<number> {
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 
 	const normalizedId = normalizeId(id);
@@ -52,6 +58,31 @@ export async function incrementJourney(id: string, type: string, kv: KVNamespace
 		expirationTtl: 60 * 60 * 24 * 2,
 		metadata: { lastWrite: Date.now(), streak: newValue }
 	});
+
+	// add impact points for journey increment + incrementing while in top leaderboard
+	ctx.waitUntil(
+		(async () => {
+			try {
+				await addImpactPoints(normalizedId, 5, `${capitalizeFully(type)} Journey`, kv);
+
+				const rank = await retrieveLeaderboardRank(normalizedId, type, kv, kv);
+				if (rank > 0 && rank <= TOP_LEADERBOARD_COUNT) {
+					// bonus points for being in the leaderboard, scaled by rank (1st gets 260, 250th gets 10)
+					const bonusPoints = Math.min(260, Math.max(10, 260 - rank)); // ensure at least 10 points for being in the leaderboard
+					if (bonusPoints > 0) {
+						await addImpactPoints(
+							normalizedId,
+							bonusPoints,
+							`${capitalizeFully(type)} Journey Leaderboard Bonus (Rank #${rank})`,
+							kv
+						);
+					}
+				}
+			} catch (err) {
+				console.error(`Failed to add impact points for journey increment for user '${id}':`, err);
+			}
+		})()
+	);
 
 	return newValue;
 }

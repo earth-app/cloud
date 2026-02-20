@@ -1,8 +1,12 @@
 import { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
 import { generateProfilePhoto, UserProfilePromptData } from './ai';
-import { Bindings, EventImageSubmission } from './types';
+import { Bindings } from './types';
 import { tryCache } from './cache';
 import { ScoreResult } from '../content/ferry';
+
+export function capitalizeFully(str: string): string {
+	return str;
+}
 
 export function toDataURL(image: Uint8Array | ArrayBuffer, type = 'image/png'): string {
 	const bytes = image instanceof Uint8Array ? image : new Uint8Array(image);

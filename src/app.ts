@@ -859,7 +859,7 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 	}
 
 	try {
-		const newCount = await incrementJourney(id, type, c.env.KV);
+		const newCount = await incrementJourney(id, type, c.env.KV, c.executionCtx);
 		return c.json({ count: newCount }, 201);
 	} catch (err) {
 		console.error(`Error incrementing journey '${type}' for ID '${id}':`, err);
@@ -1232,13 +1232,17 @@ app.post('/users/impact_points/:id/add', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
-	const body = await c.req.json<{ points: number }>();
+	const body = await c.req.json<{ points: number; reason?: string }>();
 	if (!body.points || body.points <= 0) {
 		return c.text('Points must be a positive number', 400);
 	}
 
+	if (body.reason && body.reason.length > 200) {
+		return c.text('Reason cannot exceed 200 characters', 400);
+	}
+
 	try {
-		const newPoints = await addImpactPoints(id, body.points, c.env.KV);
+		const newPoints = await addImpactPoints(id, body.points, body.reason || 'Unknown', c.env.KV);
 
 		// Track for badge progress
 		c.executionCtx.waitUntil(
@@ -1272,13 +1276,17 @@ app.post('/users/impact_points/:id/remove', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
-	const body = await c.req.json<{ points: number }>();
+	const body = await c.req.json<{ points: number; reason?: string }>();
 	if (!body.points || body.points <= 0) {
 		return c.text('Points must be a positive number', 400);
 	}
 
+	if (body.reason && body.reason.length > 200) {
+		return c.text('Reason cannot exceed 200 characters', 400);
+	}
+
 	try {
-		const newPoints = await removeImpactPoints(id, body.points, c.env.KV);
+		const newPoints = await removeImpactPoints(id, body.points, body.reason || 'Unknown', c.env.KV);
 		return c.json({ points: newPoints }, 200);
 	} catch (err) {
 		console.error(`Error removing impact points for user '${id}':`, err);
@@ -1296,13 +1304,17 @@ app.put('/users/impact_points/:id/set', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
-	const body = await c.req.json<{ points: number }>();
+	const body = await c.req.json<{ points: number; reason?: string }>();
 	if (typeof body.points !== 'number' || body.points < 0) {
 		return c.text('Points must be a non-negative number', 400);
 	}
 
+	if (body.reason && body.reason.length > 200) {
+		return c.text('Reason cannot exceed 200 characters', 400);
+	}
+
 	try {
-		await setImpactPoints(id, body.points, c.env.KV);
+		await setImpactPoints(id, body.points, body.reason || 'Unknown', c.env.KV);
 		return c.json({ points: body.points }, 200);
 	} catch (err) {
 		console.error(`Error setting impact points for user '${id}':`, err);
