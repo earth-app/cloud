@@ -16,7 +16,7 @@ import {
 import { getSynonyms } from './util/dictionary';
 import * as prompts from './util/ai';
 
-import { Article, Bindings, Event } from './util/types';
+import { ActivityType, Article, Bindings, Event } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
@@ -488,7 +488,7 @@ app.post('/users/recommend_activities', async (c) => {
 			name: string;
 			description: string;
 			aliases: string[];
-			activity_types: (typeof com.earthapp.activity.ActivityType.prototype.name)[];
+			activity_types: ActivityType[];
 		}[];
 		user: {
 			type: 'com.earthapp.activity.Activity';
@@ -496,7 +496,7 @@ app.post('/users/recommend_activities', async (c) => {
 			name: string;
 			description: string;
 			aliases: string[];
-			activity_types: (typeof com.earthapp.activity.ActivityType.prototype.name)[];
+			activity_types: ActivityType[];
 		}[];
 	}>();
 
@@ -1214,8 +1214,8 @@ app.get('/users/impact_points/:id', async (c) => {
 	}
 
 	try {
-		const points = await getImpactPoints(id, c.env.KV);
-		return c.json({ points }, 200);
+		const [points, history] = await getImpactPoints(id, c.env.KV);
+		return c.json({ points, history }, 200);
 	} catch (err) {
 		console.error(`Error getting impact points for user '${id}':`, err);
 		return c.text('Failed to get impact points', 500);
@@ -1242,7 +1242,12 @@ app.post('/users/impact_points/:id/add', async (c) => {
 	}
 
 	try {
-		const newPoints = await addImpactPoints(id, body.points, body.reason || 'Unknown', c.env.KV);
+		const [newPoints, newHistory] = await addImpactPoints(
+			id,
+			body.points,
+			body.reason || 'Unknown',
+			c.env.KV
+		);
 
 		// Track for badge progress
 		c.executionCtx.waitUntil(
@@ -1259,7 +1264,7 @@ app.post('/users/impact_points/:id/add', async (c) => {
 			)
 		);
 
-		return c.json({ points: newPoints }, 200);
+		return c.json({ points: newPoints, history: newHistory }, 200);
 	} catch (err) {
 		console.error(`Error adding impact points for user '${id}':`, err);
 		return c.text('Failed to add impact points', 500);
@@ -1286,8 +1291,13 @@ app.post('/users/impact_points/:id/remove', async (c) => {
 	}
 
 	try {
-		const newPoints = await removeImpactPoints(id, body.points, body.reason || 'Unknown', c.env.KV);
-		return c.json({ points: newPoints }, 200);
+		const [newPoints, newHistory] = await removeImpactPoints(
+			id,
+			body.points,
+			body.reason || 'Unknown',
+			c.env.KV
+		);
+		return c.json({ points: newPoints, history: newHistory }, 200);
 	} catch (err) {
 		console.error(`Error removing impact points for user '${id}':`, err);
 		return c.text('Failed to remove impact points', 500);
@@ -1314,8 +1324,14 @@ app.put('/users/impact_points/:id/set', async (c) => {
 	}
 
 	try {
-		await setImpactPoints(id, body.points, body.reason || 'Unknown', c.env.KV);
-		return c.json({ points: body.points }, 200);
+		const [newPoints, newHistory] = await setImpactPoints(
+			id,
+			body.points,
+			body.reason || 'Unknown',
+			c.env.KV
+		);
+
+		return c.json({ points: newPoints, history: newHistory }, 200);
 	} catch (err) {
 		console.error(`Error setting impact points for user '${id}':`, err);
 		return c.text('Failed to set impact points', 500);

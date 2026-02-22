@@ -60,7 +60,7 @@ export async function addImpactPoints(
 	pointsToAdd: number,
 	reason: string,
 	kv: KVNamespace
-): Promise<number> {
+): Promise<[number, ImpactPointsChange[]]> {
 	const normalizedId = normalizeId(id);
 	const key = `user:impact_points:${normalizedId}`;
 	const [currentPoints, history] = await getImpactPoints(normalizedId, kv);
@@ -68,7 +68,7 @@ export async function addImpactPoints(
 	const newHistory = [...history, { reason, difference: pointsToAdd, timestamp: Date.now() }];
 
 	await kv.put(key, JSON.stringify(newHistory), { metadata: { total: newPoints } });
-	return newPoints;
+	return [newPoints, newHistory];
 }
 
 export async function removeImpactPoints(
@@ -76,14 +76,15 @@ export async function removeImpactPoints(
 	pointsToRemove: number,
 	reason: string,
 	kv: KVNamespace
-): Promise<number> {
+): Promise<[number, ImpactPointsChange[]]> {
 	const normalizedId = normalizeId(id);
 	const key = `user:impact_points:${normalizedId}`;
 	const [currentPoints, history] = await getImpactPoints(normalizedId, kv);
 	const newPoints = Math.max(0, currentPoints - pointsToRemove);
 	const newHistory = [...history, { reason, difference: -pointsToRemove, timestamp: Date.now() }];
+
 	await kv.put(key, JSON.stringify(newHistory), { metadata: { total: newPoints } });
-	return newPoints;
+	return [newPoints, newHistory];
 }
 
 export async function setImpactPoints(
@@ -91,7 +92,7 @@ export async function setImpactPoints(
 	points: number,
 	reason: string,
 	kv: KVNamespace
-): Promise<void> {
+): Promise<[number, ImpactPointsChange[]]> {
 	const points0 = Math.max(0, points);
 	const normalizedId = normalizeId(id);
 	const key = `user:impact_points:${normalizedId}`;
@@ -111,7 +112,10 @@ export async function setImpactPoints(
 
 	const difference = points0 - oldPoints;
 
-	await kv.put(key, JSON.stringify([...history, { reason, difference, timestamp: Date.now() }]), {
+	const newHistory = [...history, { reason, difference, timestamp: Date.now() }];
+	await kv.put(key, JSON.stringify(newHistory), {
 		metadata: { total: points0 }
 	});
+
+	return [points0, newHistory];
 }

@@ -19,12 +19,15 @@ export type Bindings = {
 	ENCRYPTION_KEY: string;
 };
 
+export type ActivityType = typeof com.earthapp.activity.ActivityType.prototype.name;
+export type Privacy = typeof com.earthapp.account.Privacy.prototype.name;
+
 export type Activity = {
 	id: string;
 	name: string;
 	description: string;
 	aliases: string[];
-	types: string[];
+	types: ActivityType[];
 	fields: {
 		[key: string]: string;
 	};
@@ -65,7 +68,7 @@ export type Prompt = {
 	id: string;
 	owner_id: string;
 	prompt: string;
-	visibility: typeof com.earthapp.account.Privacy.prototype.name;
+	visibility: Privacy;
 	created_at: Date;
 	updated_at?: Date;
 };
@@ -73,7 +76,7 @@ export type Prompt = {
 export type EventActivity =
 	| {
 			type: 'activity_type';
-			value: typeof com.earthapp.activity.ActivityType.prototype.name;
+			value: ActivityType;
 	  }
 	| ({
 			type: 'activity';
@@ -86,7 +89,7 @@ export type Event = {
 	type: 'ONLINE' | 'IN_PERSON' | 'HYBRID';
 	date: number;
 	end_date?: number;
-	visibility: typeof com.earthapp.account.Privacy.prototype.name;
+	visibility: Privacy;
 	activities: EventActivity[];
 	location?: {
 		latitude: number;
@@ -111,7 +114,7 @@ export function eventActivitiesList(event: Event): string[] {
 }
 
 export type EventData = Omit<Event, 'id' | 'activities'> & {
-	activities: (string | typeof com.earthapp.activity.ActivityType.prototype.name)[];
+	activities: (string | ActivityType)[];
 };
 
 export type EventImageSubmission = {
