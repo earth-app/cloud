@@ -5,18 +5,18 @@ import { Bindings } from '../util/types';
 import { addImpactPoints } from './points';
 
 export type BadgeTracker =
-	| 'activities_added'
+	| 'activities_added' // handled over mantle2
 	| 'impact_points_earned'
-	| 'prompts_responded'
-	| 'events_created'
+	| 'prompts_responded' // handled over mantle2
+	| 'events_created' // handled over mantle2
 	| 'articles_read'
 	| 'articles_read_time'
-	| 'events_attended'
-	| 'prompts_created'
+	| 'events_attended' // handled over mantle2
+	| 'prompts_created' // handled over mantle2
 	| 'event_images_submitted'
-	| 'friends_added'
+	| 'friends_added' // handled over mantle2
 	| 'article_quizzes_completed'
-	| 'event_types_attended'
+	| 'event_types_attended' // handled over mantle2
 	| 'event_countries_photographed'
 	| 'article_quizzes_completed_perfect_score';
 

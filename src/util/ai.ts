@@ -1,5 +1,12 @@
 import * as ocean from '@earth-app/ocean';
-import { Article, Event, eventActivitiesList, EventData, OceanArticle } from './types';
+import {
+	ActivityType,
+	Article,
+	Event,
+	eventActivitiesList,
+	EventData,
+	OceanArticle
+} from './types';
 import { Ai } from '@cloudflare/workers-types';
 import { Entry } from '@earth-app/moho';
 import { ScoringCriterion } from '../content/ferry';
@@ -294,7 +301,7 @@ export function validateActivityDescription(
 	}
 }
 
-export function validateActivityTags(tagsResponse: string, activityName: string): string[] {
+export function validateActivityTags(tagsResponse: string, activityName: string): ActivityType[] {
 	try {
 		if (!tagsResponse || typeof tagsResponse !== 'string') {
 			logAIFailure('ActivityTags', activityName, tagsResponse, 'Invalid response type');
@@ -322,10 +329,10 @@ export function validateActivityTags(tagsResponse: string, activityName: string)
 
 		if (tags.length > 5) {
 			console.warn('Too many tags generated, limiting to 5', { tags, activityName });
-			return tags.slice(0, 5);
+			return tags.slice(0, 5) as ActivityType[];
 		}
 
-		return tags;
+		return tags as ActivityType[];
 	} catch (error) {
 		logAIFailure('ActivityTags', activityName, tagsResponse, `Validation error: ${error}`);
 		return ['OTHER'];

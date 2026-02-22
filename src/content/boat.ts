@@ -3,24 +3,17 @@
 import { com } from '@earth-app/ocean';
 
 import { Activity, Article, Bindings, Event, EventData, OceanArticle, Prompt } from '../util/types';
-import { getSynonyms } from '../util/dictionary';
 import * as prompts from '../util/ai';
 import { Ai } from '@cloudflare/workers-types';
-import {
-	chunkArray,
-	splitContent,
-	stripMarkdownCodeFence,
-	toOrdinal,
-	uploadEventThumbnail,
-	batchProcess,
-	normalizeId
-} from '../util/util';
+import { chunkArray, batchProcess, normalizeId } from '../util/util';
+import { toOrdinal, splitContent, stripMarkdownCodeFence, getSynonyms } from '../util/lang';
 import {
 	Entry,
 	ExactDateWithYearEntry,
 	getAllEntries,
 	getEntriesInNextWeeks
 } from '@earth-app/moho';
+import { extractLocationFromEventName, uploadPlaceThumbnail } from './thumbnails';
 
 const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1030,138 +1023,6 @@ export async function createEvent(
 	} satisfies EventData;
 
 	return event;
-}
-
-/**
- * Extracts the searchable location name from a full event name.
- * Only works for birthday events (names ending with "'s Birthday" or "'s [ordinal] Birthday").
- * Converts parenthetical state/country codes to comma format for better disambiguation.
- * @param eventName - Full event name (e.g., "Springfield (IL)'s Birthday", "Vallejo's 158th Birthday")
- * @returns Searchable location name (e.g., "Springfield, IL", "Vallejo") or null if not a birthday event
- */
-export function extractLocationFromEventName(eventName: string): string | null {
-	// Match: "Location's Birthday" or "Location's 158th Birthday"
-	// Capture group 1: the location name (non-greedy)
-	// Optional non-capturing group: ordinal number like "158th"
-	// Accept both possessive forms: "'s" (e.g., "O'Fallon's") and just trailing "'"
-	// (e.g., "Minneapolis' 128th Birthday"). Also accept curly apostrophe (\u2019).
-	const birthdayMatch = eventName.match(
-		/^(.+?)(?:['\u2019]s|['\u2019])(?:\s+\d+(?:st|nd|rd|th))?\s+Birthday$/i
-	);
-	if (!birthdayMatch || !birthdayMatch[1]) {
-		return null;
-	}
-
-	const locationName = birthdayMatch[1].trim();
-
-	// Convert parenthetical state/country codes to comma format
-	// e.g., "Arlington (TX)" -> "Arlington, TX" for better place disambiguation
-	// e.g., "Springfield (IL)" -> "Springfield, IL"
-	return locationName.replace(/\s*\(([^)]+)\)\s*/g, ', $1').trim();
-}
-
-// returns [imageData, authorName]
-export async function findPlaceThumbnail(
-	name: string,
-	bindings: Bindings
-): Promise<[Uint8Array | null, string | null]> {
-	const cleanedName = name.replace(/\s*\(([^)]+)\)\s*/g, ', $1').trim();
-
-	const search = await fetch('https://places.googleapis.com/v1/places:searchText', {
-		method: 'POST',
-		body: JSON.stringify({
-			textQuery: cleanedName,
-			includedType: 'locality',
-			maxResultCount: 1
-		}),
-		headers: {
-			'Content-Type': 'application/json',
-			'X-Goog-Api-Key': bindings.MAPS_API_KEY,
-			'X-Goog-FieldMask': 'places.name'
-		}
-	});
-
-	if (!search.ok) {
-		console.error('Failed to search for place thumbnail', {
-			name,
-			cleanedName,
-			status: search.status,
-			statusText: search.statusText,
-			body: await search.text()
-		});
-
-		throw new Error('Place search request failed');
-	}
-
-	const places = await search.json<{ places: { name: string }[] }>();
-
-	if (!places.places || places.places.length === 0) {
-		console.warn('No places found for thumbnail search', { name, cleanedName });
-		return [null, null];
-	}
-
-	const placeName = places.places[0].name;
-
-	const data = await fetch(`https://places.googleapis.com/v1/${placeName}`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			'X-Goog-Api-Key': bindings.MAPS_API_KEY,
-			'X-Goog-FieldMask': 'photos'
-		}
-	}).then((res) =>
-		res.json<{
-			photos: {
-				name: string;
-				authorAttributions: {
-					displayName: string;
-				}[];
-			}[];
-		}>()
-	);
-
-	if (!data.photos || data.photos.length === 0) {
-		console.warn('No photos found for place thumbnail', { name, placeName });
-		return [null, null];
-	}
-
-	const { name: photoName, authorAttributions: author } = data.photos[0];
-
-	const photoData = await fetch(
-		`https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=720&maxWidthPx=1280&key=${bindings.MAPS_API_KEY}`
-	);
-
-	if (!photoData.ok) {
-		console.error('Failed to fetch place photo media', {
-			name,
-			placeName,
-			photoName,
-			status: photoData.status,
-			statusText: photoData.statusText
-		});
-		return [null, null];
-	}
-
-	const blob = await photoData.blob();
-	const arrayBuffer = await blob.arrayBuffer();
-	return [new Uint8Array(arrayBuffer), author?.[0]?.displayName || null];
-}
-
-export async function uploadPlaceThumbnail(
-	name: string,
-	eventId: bigint,
-	bindings: Bindings,
-	ctx: ExecutionContext
-): Promise<[Uint8Array | null, string | null]> {
-	const [image0, author] = await findPlaceThumbnail(name, bindings);
-	if (!image0) {
-		console.warn('No thumbnail image found for event place', { name, eventId });
-		return [null, null];
-	}
-
-	await uploadEventThumbnail(eventId, image0, author || 'Unknown', bindings, ctx);
-
-	return [image0, author || 'Unknown'];
 }
 
 export async function recommendEvents(

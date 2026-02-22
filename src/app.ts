@@ -5,35 +5,30 @@ import {
 	ArticleQuizQuestion,
 	createActivityData,
 	createArticleQuiz,
-	extractLocationFromEventName,
 	findArticles,
 	recommendArticles,
 	recommendEvents,
 	recommendSimilarArticles,
-	recommendSimilarEvents,
-	uploadPlaceThumbnail
+	recommendSimilarEvents
 } from './content/boat';
-import { getSynonyms } from './util/dictionary';
+import { extractLocationFromEventName } from './content/thumbnails';
+import { uploadPlaceThumbnail } from './content/thumbnails';
+import { getSynonyms } from './util/lang';
 import * as prompts from './util/ai';
 
 import { ActivityType, Article, Bindings, Event } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
-import {
-	toDataURL,
-	newProfilePhoto,
-	getProfileVariation,
-	ImageSizes,
-	getEventThumbnail,
-	uploadEventThumbnail,
-	deleteEventThumbnail,
-	submitEventImage,
-	normalizeId,
-	migrateAllLegacyKeys,
-	deleteEventImageSubmission,
-	getEventImage,
-	getEventImageSubmissionsWithData,
-	deleteEventImageSubmissions
-} from './util/util';
+import { toDataURL, normalizeId, migrateAllLegacyKeys } from './util/util';
+import { getEventThumbnail } from './content/thumbnails';
+import { deleteEventThumbnail, uploadEventThumbnail } from './content/thumbnails';
+import { getEventImageSubmissionsWithData } from './user/submissions';
+import { getEventImage } from './user/submissions';
+import { deleteEventImageSubmissions } from './user/submissions';
+import { deleteEventImageSubmission } from './user/submissions';
+import { submitEventImage } from './user/submissions';
+import { getProfileVariation } from './util/profile';
+import { newProfilePhoto } from './util/profile';
+import { ImageSizes } from './util/profile';
 import { tryCache } from './util/cache';
 import {
 	addActivityToJourney,
