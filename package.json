@@ -15,6 +15,7 @@
     "@earth-app/moho": "^1.0.1",
     "@earth-app/ocean": "1.0.1",
     "@types/pako": "^2.0.4",
+    "exifreader": "^4.36.2",
     "hono": "^4.11.7",
     "pako": "^2.1.0"
   },

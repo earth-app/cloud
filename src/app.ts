@@ -1586,7 +1586,7 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	if (!body.photo_url.match(/^data:image\/(png|jpeg|webp);base64,/)) {
+	if (!body.photo_url.startsWith('data:image/') || !body.photo_url.includes(';base64,')) {
 		return c.text('photo_url must be a data URL with base64-encoded image', 400);
 	}
 

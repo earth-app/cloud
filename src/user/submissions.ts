@@ -10,6 +10,59 @@ import {
 } from '../util/util';
 import { ScoreResult } from '../content/ferry';
 import { tryCache } from '../util/cache';
+import ExifReader from 'exifreader';
+import { getCountry as extractCountry, reverseGeocode } from '../util/maps';
+import { addBadgeProgress } from './badges';
+
+// Helper functions for managing submission ID indices
+
+export async function addSubmissionToIndex(
+	indexKey: string,
+	submissionId: string,
+	timestamp: number,
+	bindings: KVNamespace
+): Promise<void> {
+	const existing = await bindings.get<string[]>(indexKey, 'json');
+	const ids = existing || [];
+
+	// Avoid duplicates
+	if (!ids.includes(submissionId)) {
+		ids.push(submissionId);
+		await bindings.put(indexKey, JSON.stringify(ids), {
+			metadata: { last_updated: timestamp },
+			expirationTtl: 60 * 60 * 24 * 90 // 90 days - cleanup old indices
+		});
+	} else {
+		// Refresh TTL even if duplicate (bumps expiration)
+		await bindings.put(indexKey, JSON.stringify(ids), {
+			metadata: { last_updated: timestamp },
+			expirationTtl: 60 * 60 * 24 * 90
+		});
+	}
+}
+
+export async function removeSubmissionFromIndex(
+	indexKey: string,
+	submissionId: string,
+	bindings: KVNamespace
+): Promise<void> {
+	const existing = await bindings.get<string[]>(indexKey, 'json');
+	if (!existing) return;
+
+	const filtered = existing.filter((id) => id !== submissionId);
+	if (filtered.length !== existing.length) {
+		if (filtered.length === 0) {
+			// Clean up empty indices
+			await bindings.delete(indexKey);
+		} else {
+			await bindings.put(indexKey, JSON.stringify(filtered), {
+				metadata: { last_updated: Date.now() }
+			});
+		}
+	}
+}
+
+// implementation of submission management
 
 export async function submitEventImage(
 	eventId: bigint,
@@ -18,6 +71,14 @@ export async function submitEventImage(
 	bindings: Bindings,
 	ctx: ExecutionContext
 ) {
+	if (!eventId || !userId) {
+		throw new Error('Event ID and User ID are required for submitting an image');
+	}
+
+	if (image.length === 0) {
+		throw new Error('Image data cannot be empty');
+	}
+
 	const id = crypto.randomUUID().replace(/-/g, '');
 	const timestamp = Date.now();
 	const imagePath = `events/${eventId}/submissions/${userId}_${id}.webp`;
@@ -75,12 +136,45 @@ export async function submitEventImage(
 			bindings.CACHE.delete(`user:${userId}:submissions:full:desc:no-search:page:1:limit:100`),
 			bindings.CACHE.delete(
 				`event:${eventId}:user:${userId}:submissions:full:desc:no-search:page:1:limit:100`
-			)
+			),
+			// check countries photographed badge based on metadata from original image
+			(async () => {
+				try {
+					const metadata = ExifReader.load(image);
+
+					// try IPTC first, may not be available
+					let country = metadata['Country/Primary Location Name']?.value?.toString();
+					if (!country) {
+						// try and use EXIF GPS data
+						const latitude = Number(metadata.GPSLatitude?.value?.toString() || '0');
+						const longitude = Number(metadata.GPSLongitude?.value?.toString() || '0');
+
+						// ignore if no GPS data found in EXIF
+						if (!latitude || !longitude) return;
+						country = extractCountry(await reverseGeocode(latitude, longitude, bindings));
+					}
+
+					if (country) {
+						// add progress to badge tracker
+						const country0 = country.toLowerCase().replace(/\s/g, '_');
+						await addBadgeProgress(
+							userId.toString(),
+							'event_countries_photographed',
+							country0,
+							bindings.KV
+						);
+					}
+				} catch (err) {
+					console.error('Failed to read EXIF metadata for badge checking:', err);
+					return;
+				}
+			})()
 		])
 	);
 
 	return { id, timestamp, image: image0 }; // return unencrypted image to caller
 }
+
 export async function deleteEventImageSubmission(
 	eventId: bigint,
 	userId: bigint,
@@ -115,6 +209,7 @@ export async function deleteEventImageSubmission(
 		])
 	);
 }
+
 export async function deleteEventImageSubmissions(
 	eventId: bigint | null,
 	userId: bigint | null,
@@ -181,6 +276,7 @@ export async function deleteEventImageSubmissions(
 		})()
 	);
 }
+
 export async function getEventImage(
 	submissionId: string,
 	bindings: Bindings
@@ -207,7 +303,9 @@ export async function getEventImage(
 	const timestamp = data.metadata.timestamp;
 
 	return [decryptedImage, eventId, userId, timestamp];
-} /**
+}
+
+/**
  * Retrieve event image submissions with full image data as data URLs.
  * Supports filtering by eventId, userId, or both (intersection).
  * Uses reverse indices and caching for optimal performance.
@@ -379,50 +477,4 @@ export async function getEventImageSubmissionsWithData(
 		},
 		60 * 60 * 24 * 30 // 30 days cache for better performance, invalidated on submission/deletion
 	);
-}
-export async function removeSubmissionFromIndex(
-	indexKey: string,
-	submissionId: string,
-	bindings: KVNamespace
-): Promise<void> {
-	const existing = await bindings.get<string[]>(indexKey, 'json');
-	if (!existing) return;
-
-	const filtered = existing.filter((id) => id !== submissionId);
-	if (filtered.length !== existing.length) {
-		if (filtered.length === 0) {
-			// Clean up empty indices
-			await bindings.delete(indexKey);
-		} else {
-			await bindings.put(indexKey, JSON.stringify(filtered), {
-				metadata: { last_updated: Date.now() }
-			});
-		}
-	}
-} // event image submissions
-// Helper functions for managing submission ID indices
-
-export async function addSubmissionToIndex(
-	indexKey: string,
-	submissionId: string,
-	timestamp: number,
-	bindings: KVNamespace
-): Promise<void> {
-	const existing = await bindings.get<string[]>(indexKey, 'json');
-	const ids = existing || [];
-
-	// Avoid duplicates
-	if (!ids.includes(submissionId)) {
-		ids.push(submissionId);
-		await bindings.put(indexKey, JSON.stringify(ids), {
-			metadata: { last_updated: timestamp },
-			expirationTtl: 60 * 60 * 24 * 90 // 90 days - cleanup old indices
-		});
-	} else {
-		// Refresh TTL even if duplicate (bumps expiration)
-		await bindings.put(indexKey, JSON.stringify(ids), {
-			metadata: { last_updated: timestamp },
-			expirationTtl: 60 * 60 * 24 * 90
-		});
-	}
 }

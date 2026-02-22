@@ -86,3 +86,59 @@ export async function findPlaceThumbnail(
 	const arrayBuffer = await blob.arrayBuffer();
 	return [new Uint8Array(arrayBuffer), author?.[0]?.displayName || null];
 }
+
+// geocoding & reverse geocoding
+
+export type ReverseGeocodeResult = {
+	address_components: {
+		long_name: string;
+		short_name: string;
+		types: string[];
+	}[];
+	formatted_address: string;
+	geometry: {
+		location: {
+			lat: number;
+			lng: number;
+		};
+	};
+	place_id: string;
+	types: string[];
+};
+
+export async function reverseGeocode(
+	latitude: number,
+	longitude: number,
+	bindings: Bindings
+): Promise<ReverseGeocodeResult[]> {
+	const res = await fetch(
+		`https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${bindings.MAPS_API_KEY}`
+	);
+
+	if (!res.ok) {
+		console.error('Failed to reverse geocode coordinates', {
+			latitude,
+			longitude,
+			status: res.status,
+			statusText: res.statusText,
+			body: await res.text()
+		});
+		throw new Error('Reverse geocoding request failed');
+	}
+
+	const data = await res.json<{ results: ReverseGeocodeResult[] }>();
+	return data.results;
+}
+
+export function getCountry(results: ReverseGeocodeResult[]): string {
+	for (const result of results) {
+		for (const component of result.address_components) {
+			if (component.types.includes('country')) {
+				return component.long_name;
+			}
+		}
+	}
+
+	// return falsy value
+	return '';
+}
