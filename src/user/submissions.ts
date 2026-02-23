@@ -11,7 +11,7 @@ import {
 import { ScoreResult } from '../content/ferry';
 import { tryCache } from '../util/cache';
 import ExifReader from 'exifreader';
-import { getCountry as extractCountry, reverseGeocode } from '../util/maps';
+import { extractCountry, reverseGeocode } from '../util/maps';
 import { addBadgeProgress } from './badges';
 
 // Helper functions for managing submission ID indices

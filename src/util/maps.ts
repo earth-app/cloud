@@ -130,7 +130,7 @@ export async function reverseGeocode(
 	return data.results;
 }
 
-export function getCountry(results: ReverseGeocodeResult[]): string {
+export function extractCountry(results: ReverseGeocodeResult[]): string {
 	for (const result of results) {
 		for (const component of result.address_components) {
 			if (component.types.includes('country')) {
@@ -141,4 +141,37 @@ export function getCountry(results: ReverseGeocodeResult[]): string {
 
 	// return falsy value
 	return '';
+}
+
+export function extractState(results: ReverseGeocodeResult[]): string {
+	for (const result of results) {
+		for (const component of result.address_components) {
+			if (component.types.includes('administrative_area_level_1')) {
+				return component.long_name;
+			}
+		}
+	}
+
+	// return falsy value
+	return '';
+}
+
+export function extractLocality(results: ReverseGeocodeResult[]): string[] {
+	const localities: string[] = [];
+
+	const validTypes = [
+		'administrative_area_level_2', // county
+		'locality', // city/town
+		'sublocality', // district
+		'neighborhood' // smaller area within sublocality
+	];
+	for (const result of results) {
+		for (const component of result.address_components) {
+			if (component.types.some((type) => validTypes.includes(type))) {
+				localities.push(component.long_name);
+			}
+		}
+	}
+
+	return localities;
 }
