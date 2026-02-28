@@ -4,6 +4,8 @@ import { tryCache } from '../util/cache';
 import { Bindings } from '../util/types';
 
 const embedModel = '@cf/baai/bge-m3';
+const imageClassificationModel = '@cf/microsoft/resnet-50';
+const objectDetectionModel = '@cf/facebook/detr-resnet-50';
 const imageCaptionModel = '@cf/llava-hf/llava-1.5-7b-hf';
 
 export interface ScoringCriterion {
@@ -112,6 +114,7 @@ export async function scoreImage(
 	prompt: string,
 	rubric: ScoringCriterion[]
 ): Promise<[string, ScoreResult]> {
+	// caption, score
 	const caption = await env.AI.run(imageCaptionModel, {
 		image: [...new Uint8Array(image)],
 		prompt,
@@ -124,4 +127,42 @@ export async function scoreImage(
 	}
 
 	return [text, await scoreText(env, text, rubric)];
+}
+
+export async function classifyImage(
+	env: Bindings,
+	image: Uint8Array
+): Promise<{ label: string; confidence: number }[]> {
+	const response = await env.AI.run(imageClassificationModel, {
+		image: [...new Uint8Array(image)]
+	});
+
+	return response
+		.filter((r) => r.score && r.label) // filter out invalid results
+		.filter((r) => r.score! > 0.01)
+		.map((r) => ({ label: r.label!.toLowerCase().replace(/\s+/g, '_'), confidence: r.score! }));
+}
+
+export async function detectObjects(
+	env: Bindings,
+	image: Uint8Array
+): Promise<{ label: string; confidence: number; box: [number, number, number, number] }[]> {
+	const response = await env.AI.run(objectDetectionModel as any, {
+		image: [...new Uint8Array(image)]
+	});
+
+	const results: {
+		label?: string;
+		score?: number;
+		box?: { xmin: number; ymin: number; xmax: number; ymax: number };
+	}[] = response.result || [];
+
+	return results
+		.filter((r) => r.score && r.label && r.box) // filter out invalid results
+		.filter((r) => r.score! > 0.01)
+		.map((r) => ({
+			label: r.label!.toLowerCase().replace(/\s+/g, '_'),
+			confidence: r.score!,
+			box: [r.box!.xmin, r.box!.ymin, r.box!.xmax, r.box!.ymax]
+		}));
 }
