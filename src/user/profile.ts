@@ -1,7 +1,7 @@
 import { ExecutionContext } from '@cloudflare/workers-types';
-import { UserProfilePromptData, generateProfilePhoto } from './ai';
-import { Bindings } from './types';
-import { streamToUint8Array } from './util';
+import { UserProfilePromptData, generateProfilePhoto } from '../util/ai';
+import { Bindings } from '../util/types';
+import { streamToUint8Array } from '../util/util';
 
 export type ImageSizes = 32 | 128 | 1024 | null;
 export const validSizes = [32, 128, 1024, null];

@@ -129,3 +129,5 @@ export type EventImage = Omit<EventImageSubmission, 'image'> & {
 	scored_at?: Date;
 	user_id?: string;
 };
+
+export type Rarity = 'normal' | 'rare' | 'amazing' | 'green';

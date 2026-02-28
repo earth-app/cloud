@@ -1,7 +1,7 @@
 import type { KVNamespace } from '@cloudflare/workers-types';
 import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
 import { sendUserNotification } from './notifications';
-import { Bindings } from '../util/types';
+import { Bindings, Rarity } from '../util/types';
 import { addImpactPoints } from './points';
 
 export type BadgeTracker =
@@ -25,7 +25,7 @@ export type Badge = {
 	name: string; // if not provided, normalized id is used
 	description: string;
 	icon: string;
-	rarity: 'normal' | 'rare' | 'amazing' | 'green';
+	rarity: Rarity;
 	// on request, badges are either granted automatically or based on this function; args are passed from the request
 	progress?: (...args: any[]) => Promise<number> | number;
 	tracker_id?: BadgeTracker; // if provided, links to a tracker in KV, an array of { date: number, value: string }
