@@ -3,9 +3,9 @@ import { Bindings } from '../util/types';
 import {
 	normalizeId,
 	streamToUint8Array,
-	encryptImage,
+	encrypt,
 	batchProcess,
-	decryptImage,
+	decrypt,
 	toDataURL
 } from '../util/util';
 import { ScoreResult } from '../content/ferry';
@@ -118,7 +118,7 @@ export async function submitEventImage(
 	const image0 = await streamToUint8Array(transformedStream);
 
 	// Encrypt the image data before storing
-	const encryptedImage = await encryptImage(image0, bindings.ENCRYPTION_KEY);
+	const encryptedImage = await encrypt(image0, bindings.ENCRYPTION_KEY);
 
 	ctx.waitUntil(
 		Promise.all([
@@ -140,7 +140,7 @@ export async function submitEventImage(
 			// check countries photographed badge based on metadata from original image
 			(async () => {
 				try {
-					const metadata = ExifReader.load(image);
+					const metadata = ExifReader.load(image.buffer);
 
 					// try IPTC first, may not be available
 					let country = metadata['Country/Primary Location Name']?.value?.toString();
@@ -296,7 +296,7 @@ export async function getEventImage(
 
 	// Decrypt the encrypted image data
 	const encryptedData = new Uint8Array(buf);
-	const decryptedImage = await decryptImage(encryptedData, bindings.ENCRYPTION_KEY);
+	const decryptedImage = await decrypt(encryptedData, bindings.ENCRYPTION_KEY);
 
 	const eventId = BigInt(data.metadata.eventId);
 	const userId = BigInt(data.metadata.userId);

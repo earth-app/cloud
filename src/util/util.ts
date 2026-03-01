@@ -1,4 +1,5 @@
 import { KVNamespace } from '@cloudflare/workers-types';
+import Pako from 'pako';
 
 export function capitalizeFully(str: string): string {
 	return str;
@@ -15,6 +16,19 @@ export function toDataURL(image: Uint8Array | ArrayBuffer, type = 'image/png'): 
 	}
 
 	return `data:${type};base64,` + btoa(binary);
+}
+
+export function fromDataURL(dataUrl: string): { mimeType: string; data: Uint8Array } | null {
+	const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+	if (!match) return null;
+	try {
+		const binary = atob(match[2]);
+		const bytes = new Uint8Array(binary.length);
+		for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+		return { mimeType: match[1], data: bytes };
+	} catch {
+		return null;
+	}
 }
 
 /**
@@ -166,7 +180,7 @@ export async function batchProcess<T>(
 	return results;
 }
 
-export async function encryptImage(data: Uint8Array, encryptionKey: string): Promise<Uint8Array> {
+export async function encrypt(data: Uint8Array, encryptionKey: string): Promise<Uint8Array> {
 	const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
 	const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
 		'encrypt'
@@ -174,11 +188,7 @@ export async function encryptImage(data: Uint8Array, encryptionKey: string): Pro
 
 	// Generate a random 12-byte IV
 	const iv = crypto.getRandomValues(new Uint8Array(12));
-	const encrypted = await crypto.subtle.encrypt(
-		{ name: 'AES-GCM', iv },
-		key,
-		data.buffer as ArrayBuffer
-	);
+	const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data as BufferSource);
 
 	// Prepend IV to ciphertext
 	const result = new Uint8Array(iv.length + encrypted.byteLength);
@@ -188,7 +198,7 @@ export async function encryptImage(data: Uint8Array, encryptionKey: string): Pro
 	return result;
 }
 
-export async function decryptImage(
+export async function decrypt(
 	encryptedData: Uint8Array,
 	encryptionKey: string
 ): Promise<Uint8Array> {
@@ -198,13 +208,17 @@ export async function decryptImage(
 			'decrypt'
 		]);
 
+		if (encryptedData.length < 13) {
+			throw new Error('Encrypted data is too short to contain IV and ciphertext');
+		}
+
 		// Extract IV (first 12 bytes) and ciphertext
 		const iv = encryptedData.slice(0, 12);
 		const ciphertext = encryptedData.slice(12);
 		const decrypted = await crypto.subtle.decrypt(
 			{ name: 'AES-GCM', iv },
 			key,
-			ciphertext.buffer as ArrayBuffer
+			ciphertext as BufferSource
 		);
 
 		return new Uint8Array(decrypted);
@@ -214,4 +228,48 @@ export async function decryptImage(
 			'Failed to decrypt image data - image may be corrupted or encryption key changed'
 		);
 	}
+}
+
+export async function deflate(data: Uint8Array): Promise<Uint8Array> {
+	const compressed = Pako.deflate(data);
+	return compressed;
+}
+
+export async function inflate(data: Uint8Array): Promise<Uint8Array> {
+	const decompressed = Pako.inflate(data);
+	return decompressed;
+}
+
+export function isInsideLocation(
+	current: [number, number],
+	target: [number, number],
+	radius: number
+): boolean {
+	const [currentLat, currentLng] = current;
+	const [targetLat, targetLng] = target;
+
+	const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
+	const earthRadius = 6371000; // meters
+
+	const dLat = toRadians(targetLat - currentLat);
+	const dLng = toRadians(targetLng - currentLng);
+	const a =
+		Math.sin(dLat / 2) ** 2 +
+		Math.cos(toRadians(currentLat)) * Math.cos(toRadians(targetLat)) * Math.sin(dLng / 2) ** 2;
+	const distance = 2 * earthRadius * Math.asin(Math.sqrt(a));
+
+	return distance <= radius;
+}
+
+export function detectAudioFormat(data: Uint8Array): 'mp3' | 'flac' | 'aac' | null {
+	if (data.length < 4) return null;
+	// ID3 tag header (mp3)
+	if (data[0] === 0x49 && data[1] === 0x44 && data[2] === 0x33) return 'mp3';
+	// MPEG sync word: top 3 bits of byte 1 set + Layer bits 2-1 = 01 (Layer 3 = mp3)
+	if (data[0] === 0xff && (data[1] & 0xe0) === 0xe0 && (data[1] & 0x06) === 0x02) return 'mp3';
+	// fLaC magic (flac)
+	if (data[0] === 0x66 && data[1] === 0x4c && data[2] === 0x61 && data[3] === 0x43) return 'flac';
+	// AAC ADTS sync: 0xFF + top 3 bits set + Layer bits != 01
+	if (data[0] === 0xff && (data[1] & 0xe0) === 0xe0 && (data[1] & 0x06) !== 0x02) return 'aac';
+	return null;
 }
