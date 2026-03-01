@@ -1,5 +1,6 @@
 // ferry - user content grading
 
+import { Buffer } from 'node:buffer';
 import { tryCache } from '../util/cache';
 import { Bindings } from '../util/types';
 
@@ -7,6 +8,7 @@ const embedModel = '@cf/baai/bge-m3';
 const imageClassificationModel = '@cf/microsoft/resnet-50';
 const objectDetectionModel = '@cf/facebook/detr-resnet-50';
 const imageCaptionModel = '@cf/llava-hf/llava-1.5-7b-hf';
+const audioTranscriptionModel = '@cf/openai/whisper-large-v3-turbo';
 
 export interface ScoringCriterion {
 	id: string;
@@ -129,6 +131,28 @@ export async function scoreImage(
 	return [text, await scoreText(env, text, rubric)];
 }
 
+export async function scoreAudio(
+	env: Bindings,
+	audio: Uint8Array,
+	prompt: string,
+	rubric: ScoringCriterion[]
+): Promise<[string, ScoreResult]> {
+	const base64 = Buffer.from(audio).toString('base64');
+
+	// transcript, score
+	const transcript = await env.AI.run(audioTranscriptionModel, {
+		audio: base64,
+		initial_prompt: prompt
+	});
+
+	const text = transcript?.text?.trim();
+	if (!text) {
+		throw new Error('Audio transcription failed');
+	}
+
+	return [text, await scoreText(env, text, rubric)];
+}
+
 export async function classifyImage(
 	env: Bindings,
 	image: Uint8Array
@@ -137,10 +161,16 @@ export async function classifyImage(
 		image: [...new Uint8Array(image)]
 	});
 
-	return response
-		.filter((r) => r.score && r.label) // filter out invalid results
-		.filter((r) => r.score! > 0.01)
-		.map((r) => ({ label: r.label!.toLowerCase().replace(/\s+/g, '_'), confidence: r.score! }));
+	return (
+		response
+			.filter((r) => r.score && r.label) // filter out invalid results
+			.filter((r) => r.score! > 0.01)
+			// take primary label (before first comma) to normalize multi-name imagenet labels e.g. "ant, emmet, pismire" -> "ant"
+			.map((r) => ({
+				label: r.label!.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_'),
+				confidence: r.score!
+			}))
+	);
 }
 
 export async function detectObjects(
@@ -157,12 +187,15 @@ export async function detectObjects(
 		box?: { xmin: number; ymin: number; xmax: number; ymax: number };
 	}[] = response.result || [];
 
-	return results
-		.filter((r) => r.score && r.label && r.box) // filter out invalid results
-		.filter((r) => r.score! > 0.01)
-		.map((r) => ({
-			label: r.label!.toLowerCase().replace(/\s+/g, '_'),
-			confidence: r.score!,
-			box: [r.box!.xmin, r.box!.ymin, r.box!.xmax, r.box!.ymax]
-		}));
+	return (
+		results
+			.filter((r) => r.score && r.label && r.box) // filter out invalid results
+			.filter((r) => r.score! > 0.01)
+			// take primary label (before first comma) to normalize multi-name coco labels
+			.map((r) => ({
+				label: r.label!.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_'),
+				confidence: r.score!,
+				box: [r.box!.xmin, r.box!.ymin, r.box!.xmax, r.box!.ymax]
+			}))
+	);
 }
