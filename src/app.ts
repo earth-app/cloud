@@ -18,7 +18,13 @@ import * as prompts from './util/ai';
 
 import { ActivityType, Article, Bindings, Event } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
-import { toDataURL, normalizeId, migrateAllLegacyKeys } from './util/util';
+import {
+	toDataURL,
+	normalizeId,
+	migrateAllLegacyKeys,
+	fromDataURL,
+	detectAudioFormat
+} from './util/util';
 import {} from './content/thumbnails';
 import {
 	getEventThumbnail,
@@ -64,6 +70,18 @@ import {
 } from './user/points';
 import { scoreImage, ScoreResult, scoreText } from './content/ferry';
 import { sendUserNotification } from './user/notifications';
+import { quests } from './user/quests';
+import {
+	getCurrentQuestProgress,
+	getCompletedQuestProgress,
+	getQuestHistory,
+	QuestStepResponse,
+	resetQuestProgress,
+	startQuest,
+	updateQuestProgress
+} from './user/quests/tracking';
+import { QuestDeviceMetadata } from './user/quests/validation';
+import { HTTPException } from 'hono/http-exception';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -1334,6 +1352,326 @@ app.put('/users/impact_points/:id/set', async (c) => {
 	} catch (err) {
 		console.error(`Error setting impact points for user '${id}':`, err);
 		return c.text('Failed to set impact points', 500);
+	}
+});
+
+// User Quests
+
+app.get('/users/quests', async (c) => {
+	return c.json(quests, 200);
+});
+
+app.get('/users/quests/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('Quest ID is required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const quest = quests.find((q) => q.id === id);
+		if (!quest) {
+			return c.text('Quest not found', 404);
+		}
+
+		return c.json(quest, 200);
+	} catch (err) {
+		console.error(`Error getting quest '${id}':`, err);
+		return c.text('Failed to get quest', 500);
+	}
+});
+
+app.get('/users/quests/progress/:user_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const progress = await getCurrentQuestProgress(userId, c.env);
+		return c.json(progress, 200);
+	} catch (err) {
+		console.error(`Error getting quest progress for user '${userId}':`, err);
+		return c.text('Failed to get quest progress', 500);
+	}
+});
+
+// get progress for a specific step index
+app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	const stepIndexParam = c.req.param('step_index');
+	if (!userId || !stepIndexParam) {
+		return c.text('User ID and step index are required', 400);
+	}
+
+	const stepIndex = parseInt(stepIndexParam, 10);
+	if (isNaN(stepIndex) || stepIndex < 0) {
+		return c.text('Step index must be a non-negative integer', 400);
+	}
+
+	try {
+		const { progress, quest, currentStepIndex, completed } = await getCurrentQuestProgress(
+			userId,
+			c.env
+		);
+		if (!quest) {
+			return c.text('No active quest found for user', 404);
+		}
+
+		if (stepIndex >= quest.steps.length) {
+			return c.text('Step index out of range', 404);
+		}
+
+		// only return progress for steps the user has reached
+		if (stepIndex > currentStepIndex && !completed) {
+			return c.text('Step not yet reached', 403);
+		}
+
+		const stepDef = quest.steps[stepIndex];
+		const stepProgress = progress[stepIndex] ?? null;
+
+		return c.json(
+			{
+				stepIndex,
+				stepDef,
+				// for alt steps: array of completed alt responses; for normal steps: single response or null
+				response: stepProgress,
+				isAltStep: Array.isArray(stepDef),
+				completed: stepProgress !== null && stepProgress !== undefined
+			},
+			200
+		);
+	} catch (err) {
+		console.error(`Error getting step progress for user '${userId}':`, err);
+		return c.text('Failed to get step progress', 500);
+	}
+});
+
+// start new quest (will override existing progress)
+app.post('/users/quests/progress/:user_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const body = await c.req.json<{ quest_id: string }>();
+	if (!body.quest_id) {
+		return c.text('Quest ID is required', 400);
+	}
+
+	const questId = body.quest_id.toLowerCase();
+	const quest = quests.find((q) => q.id === questId);
+	if (!quest) {
+		return c.text('Quest not found', 404);
+	}
+
+	try {
+		await startQuest(userId, questId, c.env);
+		return c.text('Quest started', 201);
+	} catch (err) {
+		console.error(`Error starting quest '${questId}' for user '${userId}':`, err);
+		return c.text('Failed to start quest', 500);
+	}
+});
+
+// update quest progress
+app.patch('/users/quests/progress/:user_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	const body = await c.req.json<{
+		quest_id: string;
+		device: QuestDeviceMetadata;
+		response: {
+			type: string;
+			index: number;
+			altIndex?: number;
+			dataUrl?: string;
+			lat?: number;
+			lng?: number;
+			eventId?: string;
+			timestamp?: number;
+			scoreKey?: string;
+			score?: number;
+		};
+	}>();
+
+	if (!body.quest_id) {
+		return c.text('Quest ID is required', 400);
+	}
+
+	const questId = body.quest_id.toLowerCase();
+	const quest = quests.find((q) => q.id === questId);
+	if (!quest) {
+		return c.text('Quest not found', 404);
+	}
+
+	if (!body.device) {
+		return c.text('Device metadata is required', 400);
+	}
+
+	if (!body.response) {
+		return c.text('Step response is required', 400);
+	}
+
+	const binaryTypes = [
+		'take_photo_location',
+		'take_photo_classification',
+		'take_photo_caption',
+		'take_photo_objects',
+		'draw_picture',
+		'transcribe_audio'
+	];
+	const isBinaryType = binaryTypes.includes(body.response.type);
+
+	let response: QuestStepResponse;
+
+	if (isBinaryType) {
+		if (!body.response.dataUrl) {
+			return c.text('A base64 data URL is required for this step type', 400);
+		}
+
+		const parsed = fromDataURL(body.response.dataUrl);
+		if (!parsed) {
+			return c.text('Invalid data URL format. Expected: data:<mime>;base64,<data>', 400);
+		}
+
+		const isAudio = body.response.type === 'transcribe_audio';
+		const maxBytes = isAudio ? 5 * 1024 * 1024 : 10 * 1024 * 1024;
+
+		if (parsed.data.length > maxBytes) {
+			return c.text(
+				`${isAudio ? 'Audio' : 'Image'} data exceeds the ${isAudio ? '5 MB' : '10 MB'} size limit`,
+				400
+			);
+		}
+
+		if (isAudio) {
+			const fmt = detectAudioFormat(parsed.data);
+			if (!fmt) {
+				return c.text('Unsupported audio format. Only MP3, FLAC, and AAC are accepted.', 415);
+			}
+		}
+
+		response = {
+			type: body.response.type,
+			index: body.response.index,
+			altIndex: body.response.altIndex,
+			data: parsed.data,
+			lat: body.response.lat,
+			lng: body.response.lng
+		} as QuestStepResponse;
+	} else {
+		response = {
+			type: body.response.type,
+			index: body.response.index,
+			altIndex: body.response.altIndex,
+			...(body.response.eventId !== undefined && { eventId: body.response.eventId }),
+			...(body.response.timestamp !== undefined && { timestamp: body.response.timestamp }),
+			...(body.response.scoreKey !== undefined && { scoreKey: body.response.scoreKey }),
+			...(body.response.score !== undefined && { score: body.response.score })
+		} as QuestStepResponse;
+	}
+
+	try {
+		const result = await updateQuestProgress(userId, response, body.device, c.env, c.executionCtx);
+
+		return c.json(result, 200);
+	} catch (error) {
+		if (error instanceof HTTPException) {
+			return c.json({ message: error.message, code: error.status }, error.status);
+		}
+
+		console.error(`Error updating quest progress:`, error);
+		return c.text('Failed to update quest progress', 500);
+	}
+});
+
+app.delete('/users/quests/progress/:user_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		await resetQuestProgress(userId, c.env);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error resetting quest progress for user '${userId}':`, err);
+		return c.text('Failed to reset quest progress', 500);
+	}
+});
+
+// get list of completed quests for a user
+app.get('/users/quests/history/:user_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const questIds = await getQuestHistory(userId, c.env);
+		const history = questIds.map((questId) => ({
+			questId,
+			quest: quests.find((q) => q.id === questId) ?? null
+		}));
+		return c.json(history, 200);
+	} catch (err) {
+		console.error(`Error getting quest history for user '${userId}':`, err);
+		return c.text('Failed to get quest history', 500);
+	}
+});
+
+// get completed progress for a specific quest
+app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	const questId = c.req.param('quest_id')?.toLowerCase();
+	if (!userId || !questId) {
+		return c.text('User ID and Quest ID are required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (questId.length < 3 || questId.length > 50) {
+		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const result = await getCompletedQuestProgress(userId, questId, c.env);
+		if (!result) {
+			return c.text('Completed quest not found', 404);
+		}
+		return c.json(result, 200);
+	} catch (err) {
+		console.error(`Error getting completed quest '${questId}' for user '${userId}':`, err);
+		return c.text('Failed to get completed quest progress', 500);
 	}
 });
 
