@@ -1497,7 +1497,6 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 	}
 
 	const body = await c.req.json<{
-		quest_id: string;
 		device: QuestDeviceMetadata;
 		response: {
 			type: string;
@@ -1510,16 +1509,6 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			score?: number;
 		};
 	}>();
-
-	if (!body.quest_id) {
-		return c.text('Quest ID is required', 400);
-	}
-
-	const questId = body.quest_id.toLowerCase();
-	const quest = quests.find((q) => q.id === questId);
-	if (!quest) {
-		return c.text('Quest not found', 404);
-	}
 
 	if (!body.device) {
 		return c.text('Device metadata is required', 400);
