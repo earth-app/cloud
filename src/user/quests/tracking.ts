@@ -23,8 +23,6 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 				| 'draw_picture'
 				| 'take_photo_objects';
 			data: Uint8Array;
-			lat?: number;
-			lng?: number;
 	  }
 	| { type: 'attend_event'; eventId: string; timestamp: number }
 	| { type: 'transcribe_audio'; data: Uint8Array }
@@ -51,8 +49,6 @@ export type QuestStepProgressEntry = {
 				| 'draw_picture'
 				| 'take_photo_objects';
 			r2Key: string;
-			lat?: number;
-			lng?: number;
 	  }
 	| { type: 'attend_event'; eventId: string; timestamp: number }
 	| { type: 'transcribe_audio'; r2Key: string }
@@ -118,9 +114,7 @@ async function toProgressEntry(
 			index: response.index,
 			altIndex: response.altIndex,
 			submittedAt,
-			r2Key,
-			lat: response.lat,
-			lng: response.lng
+			r2Key
 		} as QuestStepProgressEntry;
 		return entry;
 	}

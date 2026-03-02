@@ -1504,8 +1504,6 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			index: number;
 			altIndex?: number;
 			dataUrl?: string;
-			lat?: number;
-			lng?: number;
 			eventId?: string;
 			timestamp?: number;
 			scoreKey?: string;
@@ -1574,9 +1572,7 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			type: body.response.type,
 			index: body.response.index,
 			altIndex: body.response.altIndex,
-			data: parsed.data,
-			lat: body.response.lat,
-			lng: body.response.lng
+			data: parsed.data
 		} as QuestStepResponse;
 	} else {
 		response = {
