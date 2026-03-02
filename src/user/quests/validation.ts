@@ -132,16 +132,41 @@ async function validateStepPhoto(
 
 	// global validation
 	const make = metadata.Make?.value.toString();
-	if (make && make !== data.make) {
-		return { success: false, message: `Expected device make ${data.make}, got ${make}` };
+	if (data.make === 'apple') {
+		if (!make?.toLowerCase().includes('apple')) {
+			return { success: false, message: 'Invalid Apple device' };
+		}
+	}
+
+	if (make && data.make !== 'unknown') {
+		const expectedMake = data.make.toLowerCase().trim();
+		const actualMake = make.toLowerCase().trim();
+
+		if (!actualMake.includes(expectedMake)) {
+			return {
+				success: false,
+				message: `Expected device make ${data.make}, got ${make}`
+			};
+		}
 	}
 
 	const model = metadata.Model?.value.toString();
-	if (model && model !== data.model) {
-		return {
-			success: false,
-			message: `Expected device model ${data.model}, got ${model}`
-		};
+	if (model && data.model !== 'unknown') {
+		const expectedModel = data.model
+			.toLowerCase()
+			.trim()
+			.replace(/[^a-z0-9\-]/g, '');
+		const actualModel = model
+			.toLowerCase()
+			.trim()
+			.replace(/[^a-z0-9\-]/g, '');
+
+		if (!actualModel.includes(expectedModel)) {
+			return {
+				success: false,
+				message: `Expected device model ${data.model}, got ${model}`
+			};
+		}
 	}
 
 	const now = Date.now(); // in utc milliseconds
