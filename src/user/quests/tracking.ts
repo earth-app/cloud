@@ -24,7 +24,11 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 				| 'take_photo_objects';
 			data: Uint8Array;
 	  }
-	| { type: 'attend_event'; eventId: string; timestamp: number }
+	| {
+			type: 'attend_event';
+			eventId: string;
+			timestamp: number; // unix ms when the event was attended
+	  }
 	| { type: 'transcribe_audio'; data: Uint8Array }
 	| {
 			type: 'article_quiz';
