@@ -9,11 +9,69 @@ import { QuestStepResponse } from './tracking';
 export type QuestDeviceMetadata = {
 	latitude?: number;
 	longitude?: number;
-	make: 'apple' | 'samsung' | 'google' | 'oneplus' | string;
-	model: string;
-	os: 'ios' | 'android' | 'windows' | 'macos' | 'linux' | string;
+	make:
+		| 'apple'
+		| 'samsung'
+		| 'google'
+		| 'oneplus'
+		| 'huawei'
+		| 'xiaomi'
+		| 'lg'
+		| 'motorola'
+		| 'sony'
+		| 'nokia'
+		| 'microsoft'
+		| 'linux'
+		| 'android'
+		| 'unknown'
+		| string;
+	model: 'iPhone' | 'iPad' | 'Mac' | 'Android' | 'PC' | 'Desktop' | 'unknown' | string;
+	os: 'ios' | 'android' | 'windows' | 'macos' | 'linux' | 'unknown' | string;
+	version?: string;
 	[other: string]: any; // allow for additional metadata fields as needed
 };
+
+// Helper to extract major version number from version strings
+function extractMajorVersion(versionStr: string | undefined): string | null {
+	if (!versionStr) return null;
+	const match = versionStr.match(/\b(\d+)(?:\.\d+)*/);
+	return match ? match[1] : null;
+}
+
+// Detect Virtual Camera / Screen Capture / Photo Editing Software
+function detectNonCameraSoftware(softwareRaw: string | undefined): string | null {
+	if (!softwareRaw) return null;
+
+	const software = softwareRaw.toLowerCase();
+	const screenCapture =
+		/\bobs\s*studio\b|screenflow|camtasia|sharex|screentoaster|bandicam|action\s*cam|fraps|plays\.tv|nvidia\s*share|xbox\s*game\s*bar/i.test(
+			software
+		);
+	if (screenCapture) return 'Screen capture software detected';
+
+	const photoEditor =
+		/\badobe\s*photoshop\b|lightroom|gimp|snapseed|pixlr|photopea|krita|affinity\s*photo|capture\s*one|darktable|rawtherapee/i.test(
+			software
+		);
+	if (photoEditor) return 'Photo editing software detected';
+	const rendering =
+		/\bblender\b|cinema\s*4d|3ds\s*max|maya\b|houdini|unreal\s*engine|unity\b|godot|substance\s*painter/i.test(
+			software
+		);
+	if (rendering) return '3D rendering software detected';
+	const online =
+		/\bimgur\b|imgur\s*editor|photoshop\s*online|pixlr\s*editor|pixlr\s*express|canva|procreate|photopea|befunky/i.test(
+			software
+		);
+	if (online) return 'Online editor detected';
+
+	const aiGenerated = /\bdalle\b|stable\s*diffusion|midjourney|diffusion|texttoimage|txt2img/i.test(
+		software
+	);
+	if (aiGenerated) return 'AI image generation detected';
+
+	return null;
+}
 
 // main validation function
 
@@ -142,7 +200,9 @@ async function validateStepAudio(
 			allSignals
 		);
 		const hasAndroidEncoderSignal =
-			/\bandroid\b|samsung\s*voice\s*recorder|google\s*recorder/i.test(allSignals);
+			/\bandroid\b|samsung\s*voice\s*recorder|google\s*recorder|oneplus|huawei|xiaomi|lg|motorola|sony|nokia/i.test(
+				allSignals
+			);
 
 		const os = data.os?.toLowerCase()?.trim() ?? '';
 		const makeIsApple = data.make?.toLowerCase()?.trim() === 'apple';
@@ -197,6 +257,8 @@ async function validateStepAudio(
 				};
 			}
 		}
+
+		// macOS: CAF is valid (QuickTime/GarageBand/Voice Memos produce it); no hard blocks apply
 	} catch {
 		// Metadata absent or unparseable — not itself suspicious for audio; proceed to AI scoring
 	}
@@ -240,8 +302,6 @@ async function validateStepPhoto(
 		return { success: false, message: 'Failed to parse photo EXIF metadata.' };
 	}
 
-	// --- Required fields ---
-
 	// Make is required: its absence indicates the image was not taken by a real camera app
 	const makeRaw = metadata.Make?.value?.toString()?.trim();
 	if (!makeRaw) {
@@ -284,7 +344,55 @@ async function validateStepPhoto(
 		};
 	}
 
-	// --- Optional fields (only validated when both EXIF and declared values are present/known) ---
+	const softwareRaw = metadata.Software?.value?.toString()?.trim() ?? '';
+	const nonCameraReason = detectNonCameraSoftware(softwareRaw);
+	if (nonCameraReason) {
+		return {
+			success: false,
+			message: `${nonCameraReason}: "${softwareRaw}".`
+		};
+	}
+
+	// focal length of 0 is physically impossible in real cameras
+	const focalLength = metadata.FocalLength?.value;
+	if (focalLength != null && Number(focalLength) === 0) {
+		return {
+			success: false,
+			message: 'Photo has invalid focal length (0), indicating a virtual or manipulated image.'
+		};
+	}
+
+	// DateTime Digitized should match Original; large gaps indicate editing/conversion
+	const dateDigitized = metadata.DateTimeDigitized?.value?.toString()?.trim();
+	if (dateDigitized && dateRaw && dateDigitized !== dateRaw) {
+		// Parse the digitized date
+		const digitizedTime = new Date(
+			dateDigitized.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3')
+		).getTime();
+
+		if (Number.isFinite(digitizedTime)) {
+			// Allow 1 second of difference (clock sync variations), but flag larger gaps
+			const timeDiff = Math.abs(dateTaken - digitizedTime);
+			if (timeDiff > 1000) {
+				return {
+					success: false,
+					message: `DateTime Original and DateTime Digitized mismatch (${(timeDiff / 1000).toFixed(0)}s apart), indicating post-processing.`
+				};
+			}
+		}
+	}
+
+	const hasAperture = metadata.ApertureValue != null || metadata.FNumber != null;
+	const hasLens = metadata.LensModel != null;
+	const hasExposure = metadata.ExposureTime != null;
+	const isSuspiciouslyBare = !hasLens && !hasAperture && !hasExposure;
+	if (isSuspiciouslyBare && make) {
+		return {
+			success: false,
+			message:
+				'Photo is missing critical camera EXIF fields (aperture, lens, exposure), indicating a synthetic or heavily manipulated image.'
+		};
+	}
 
 	// Make cross-check: accept if either string contains the other to handle verbose OEM strings
 	// e.g. "SAMSUNG ELECTRONICS" still matches declared "samsung"
@@ -298,7 +406,7 @@ async function validateStepPhoto(
 		}
 	}
 
-	// Model cross-check: normalise aggressively since OEM model strings vary wildly in punctuation
+	// model cross-check: normalise aggressively since OEM model strings vary wildly in punctuation
 	const modelRaw = metadata.Model?.value?.toString()?.trim();
 	if (modelRaw && data.model && data.model !== 'unknown') {
 		const normalise = (s: string) =>
@@ -324,25 +432,89 @@ async function validateStepPhoto(
 	// OS cross-validation
 	const os = data.os?.toLowerCase()?.trim() ?? '';
 	if (os && os !== 'unknown') {
-		const makeIsApple = make.includes('apple');
+		const makeNorm = make.toLowerCase().trim();
 
-		// Hard constraint: iOS/macOS run exclusively on Apple hardware, and vice versa
-		if ((os === 'ios' || os === 'macos') && !makeIsApple) {
-			return {
-				success: false,
-				message: `${os === 'ios' ? 'iOS' : 'macOS'} requires Apple hardware, but EXIF Make is "${makeRaw}".`
-			};
+		// Hard constraint: OS ↔ Make mapping is strictly enforced
+		// iOS/iPadOS run exclusively on Apple hardware
+		if (os === 'ios') {
+			if (!makeNorm.includes('apple')) {
+				return {
+					success: false,
+					message: `iOS requires Apple hardware, but EXIF Make is "${makeRaw}".`
+				};
+			}
 		}
-		if ((os === 'android' || os === 'windows' || os === 'linux') && makeIsApple) {
-			return {
-				success: false,
-				message: `${data.os} cannot run on Apple hardware, but EXIF Make is "${makeRaw}".`
-			};
+		// macOS runs exclusively on Apple hardware
+		else if (os === 'macos') {
+			if (!makeNorm.includes('apple')) {
+				return {
+					success: false,
+					message: `macOS requires Apple hardware, but EXIF Make is "${makeRaw}".`
+				};
+			}
+		}
+		// Android runs on any non-Apple hardware
+		else if (os === 'android') {
+			if (makeNorm.includes('apple')) {
+				return {
+					success: false,
+					message: `Android cannot run on Apple hardware, but EXIF Make is "${makeRaw}".`
+				};
+			}
+		}
+		// Windows runs on desktop hardware (typically Microsoft, Intel, AMD), not mobile
+		else if (os === 'windows') {
+			if (makeNorm.includes('apple')) {
+				return {
+					success: false,
+					message: `Windows cannot run on Apple hardware, but EXIF Make is "${makeRaw}".`
+				};
+			}
+		}
+
+		const modelNorm = modelRaw?.toLowerCase().trim() ?? '';
+		if (modelNorm) {
+			const isIphoneIpad = modelNorm.includes('iphone') || modelNorm.includes('ipad');
+			const isAndroidModel =
+				/^(sm-|pixel|oneplus|huawei|mi|redmi|poco|lg-|moto|xperia|nokia|android)/i.test(modelNorm);
+			const isMac = modelNorm.includes('mac') && !modelNorm.includes('apple');
+			const isPC = modelNorm.includes('pc') || modelNorm === 'desktop';
+
+			// iPhone/iPad should only be with iOS
+			if (isIphoneIpad && os !== 'ios') {
+				return {
+					success: false,
+					message: `Model "${modelRaw}" is iOS-only, but declared OS is "${data.os}".`
+				};
+			}
+
+			// Android-pattern models should only be with Android
+			if (isAndroidModel && os !== 'android') {
+				return {
+					success: false,
+					message: `Model "${modelRaw}" is Android-only, but declared OS is "${data.os}".`
+				};
+			}
+
+			// Mac should only be with macOS
+			if (isMac && os !== 'macos') {
+				return {
+					success: false,
+					message: `Model "${modelRaw}" indicates macOS, but declared OS is "${data.os}".`
+				};
+			}
+
+			// PC/Desktop should be with Windows/Linux, not mobile
+			if (isPC && (os === 'ios' || os === 'android')) {
+				return {
+					success: false,
+					message: `Model "${modelRaw}" is desktop-only, but declared OS is "${data.os}".`
+				};
+			}
 		}
 
 		// Soft constraint: EXIF Software field — only reject on unambiguous OS contradictions.
 		// Many apps write their own name or a bare version string here, so patterns must be precise.
-		const softwareRaw = metadata.Software?.value?.toString()?.trim() ?? '';
 		if (softwareRaw) {
 			const indicatesIos = /\biphone\s*os\b|\bipad\s*os\b/i.test(softwareRaw);
 			const indicatesAndroid = /\bandroid\b/i.test(softwareRaw);
@@ -365,6 +537,26 @@ async function validateStepPhoto(
 					success: false,
 					message: `EXIF Software field "${softwareRaw}" is inconsistent with declared OS "${data.os}".`
 				};
+			}
+
+			// Soft constraint: OS version validation
+			// Extract version from Software field and compare against declared version
+			if (data.version) {
+				const declaredMajor = extractMajorVersion(data.version);
+				const softwareMajor = extractMajorVersion(softwareRaw);
+
+				// Only reject on clear major version mismatch (not nil/ambiguous cases)
+				if (declaredMajor && softwareMajor && declaredMajor !== softwareMajor) {
+					// Allow 1-version tolerance (common for photos from older devices or timing skew)
+					const declaredNum = Number(declaredMajor);
+					const softwareNum = Number(softwareMajor);
+					if (Math.abs(declaredNum - softwareNum) > 1) {
+						return {
+							success: false,
+							message: `OS version mismatch: declared ${data.version}, but EXIF Software indicates version ${softwareMajor}.`
+						};
+					}
+				}
 			}
 		}
 	}
