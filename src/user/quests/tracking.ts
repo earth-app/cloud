@@ -460,5 +460,5 @@ export async function updateQuestProgress(
 		])
 	);
 
-	return { completed, message: validation.message };
+	return { completed, message: validation.message, validated: validation.success };
 }
