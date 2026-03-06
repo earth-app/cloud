@@ -9,7 +9,7 @@ import { QuestDeviceMetadata, validateStep } from './validation';
 export type QuestProgress = {
 	questId: string;
 	currentStep: number; // index of the current step the user is on
-	completed: boolean;
+	completed: boolean; // whether the quest has been completed
 	startedAt?: number; // unix ms when the quest was started
 };
 
