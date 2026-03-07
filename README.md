@@ -3,7 +3,7 @@
 > The Automaton behind The Earth App
 
 A sophisticated Cloudflare Workers-based microservice that powers The Earth App's
-AI-driven content generation, recommendation engine, and user journey tracking.
+AI-driven content generation, recommendation engine, user content tracking.
 Built with Hono.js, this service orchestrates multiple AI models, manages
 distributed caching, and provides a comprehensive REST API for activity
 discovery, article curation, and personalized recommendations.
