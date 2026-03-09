@@ -396,7 +396,8 @@ app.post('/articles/quiz/submit', async (c) => {
 	const scorePercent = (score / quizData.length) * 100;
 
 	const data = { score, scorePercent, total: quizData.length, results };
-	c.executionCtx.waitUntil(c.env.KV.put(scoreKey, JSON.stringify(data))); // scores are persistent, no expiration
+	// score must be written before returning so that quest validation can read it from KV
+	await c.env.KV.put(scoreKey, JSON.stringify(data)); // scores are persistent, no expiration
 
 	// increment badge progress
 	c.executionCtx.waitUntil(

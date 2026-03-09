@@ -273,6 +273,8 @@ export async function startQuest(userId: string, questId: string, bindings: Bind
 	await bindings.KV.put(`user:quest_progress:${userId0}`, JSON.stringify([]), {
 		metadata: { questId, currentStep: 0, completed: false, startedAt: Date.now() }
 	});
+
+	console.log(`User ${userId} started quest "${questId}"`);
 }
 
 export async function resetQuestProgress(userId: string, bindings: Bindings) {
@@ -289,6 +291,7 @@ export async function resetQuestProgress(userId: string, bindings: Bindings) {
 	}
 
 	await bindings.KV.delete(`user:quest_progress:${userId0}`);
+	console.log(`User ${userId} reset their active quest progress`);
 }
 
 export async function updateQuestProgress(
@@ -429,12 +432,16 @@ export async function updateQuestProgress(
 		? metadata.currentStep
 		: metadata.currentStep + (advancesStep ? 1 : 0);
 
+	await bindings.KV.put(`user:quest_progress:${userId0}`, JSON.stringify(updatedProgress), {
+		metadata: { questId: metadata.questId, currentStep: newStepIndex, completed }
+	});
+
+	console.log(
+		`User ${userId} submitted step ${idx}${isAltStep ? ` alt ${stepResponse.altIndex}` : ''} for quest "${quest.title}" - validation: ${validation.success}, completed: ${completed}`
+	);
+
 	ctx.waitUntil(
 		Promise.all([
-			// write updated progress to kv
-			bindings.KV.put(`user:quest_progress:${userId0}`, JSON.stringify(updatedProgress), {
-				metadata: { questId: metadata.questId, currentStep: newStepIndex, completed }
-			}),
 			// archive to history when quest is completed (immutable, r2 keys preserved)
 			completed
 				? archiveCompletedQuest(userId0, quest.id, updatedProgress, bindings)
@@ -550,6 +557,9 @@ export async function handleQuizQuestStep(
 			})()
 		);
 
+		console.log(
+			`Auto-handled article_quiz step for user ${userId} on quest "${currentQuest.title}" with score ${scorePercent}% (threshold: ${thresholdPercent}%) - completed: ${questResult.completed}`
+		);
 		return { handled: true, completed: questResult.completed, message: questResult.message };
 	} catch (err) {
 		console.error('Error auto-handling article_quiz quest step:', err);
