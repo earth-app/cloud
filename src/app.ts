@@ -78,7 +78,8 @@ import {
 	QuestStepResponse,
 	resetQuestProgress,
 	startQuest,
-	updateQuestProgress
+	updateQuestProgress,
+	handleQuizQuestStep
 } from './user/quests/tracking';
 import { QuestDeviceMetadata } from './user/quests/validation';
 import { HTTPException } from 'hono/http-exception';
@@ -322,6 +323,7 @@ app.get('/articles/quiz/score', async (c) => {
 app.post('/articles/quiz/submit', async (c) => {
 	const body = await c.req.json<{
 		articleId: string;
+		articleTypes: ActivityType[];
 		userId: string;
 		answers: {
 			question: string;
@@ -406,6 +408,11 @@ app.post('/articles/quiz/submit', async (c) => {
 			addBadgeProgress(body.userId, 'article_quizzes_completed_perfect_score', id, c.env.KV)
 		);
 	}
+
+	// handle article_quiz quest steps
+	c.executionCtx.waitUntil(
+		handleQuizQuestStep(userId, scoreKey, scorePercent, body.articleTypes, c.env, c.executionCtx)
+	);
 
 	return c.json(data, 200);
 });

@@ -1,8 +1,10 @@
 import { HTTPException } from 'hono/http-exception';
 import { quests, QuestStep } from '.';
 import { Bindings } from '../../util/types';
+import { ActivityType } from '../../util/types';
 import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util';
 import { addImpactPoints } from '../points';
+import { sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
 import { QuestDeviceMetadata, validateStep } from './validation';
 
@@ -461,4 +463,97 @@ export async function updateQuestProgress(
 	);
 
 	return { completed, message: validation.message, validated: validation.success };
+}
+
+export async function handleQuizQuestStep(
+	userId: string,
+	scoreKey: string,
+	scorePercent: number,
+	articleTypes: ActivityType[] | undefined,
+	bindings: Bindings,
+	ctx: ExecutionContext
+): Promise<{ handled: boolean; completed?: boolean; message?: string }> {
+	try {
+		const questProgress = await getCurrentQuestProgress(userId, bindings);
+		const currentQuest = questProgress.quest;
+		const currentStepIndex = questProgress.currentStepIndex;
+
+		// check if there's an active quest and the current step is article_quiz
+		if (!currentQuest || questProgress.completed || currentStepIndex >= currentQuest.steps.length) {
+			return { handled: false };
+		}
+
+		const currentStepDef = currentQuest.steps[currentStepIndex];
+		const isAltStep = Array.isArray(currentStepDef);
+
+		if (isAltStep || currentStepDef.type !== 'article_quiz') {
+			return { handled: false };
+		}
+
+		const [requiredActivityType, scoreThreshold] = currentStepDef.parameters;
+
+		if (!articleTypes || !articleTypes.includes(requiredActivityType)) {
+			return { handled: false };
+		}
+
+		// check if score meets the threshold
+		const thresholdPercent = scoreThreshold * 100;
+		if (scorePercent < thresholdPercent) {
+			return { handled: false };
+		}
+
+		const questResponse: QuestStepResponse = {
+			type: 'article_quiz',
+			index: currentStepIndex,
+			scoreKey,
+			score: Math.round(scorePercent)
+		};
+
+		const deviceMetadata: QuestDeviceMetadata = {
+			make: 'unknown',
+			model: 'API',
+			os: 'web'
+		};
+
+		const questResult = await updateQuestProgress(
+			userId,
+			questResponse,
+			deviceMetadata,
+			bindings,
+			ctx
+		);
+
+		// send notifications
+		ctx.waitUntil(
+			(async () => {
+				if (questResult.completed) {
+					await sendUserNotification(
+						bindings,
+						userId,
+						`Quest "${currentQuest.title}" Completed!`,
+						'You have successfully completed the quest and earned impact points!',
+						undefined,
+						'success',
+						'quest'
+					);
+				} else {
+					await sendUserNotification(
+						bindings,
+						userId,
+						`Progress on Quest "${currentQuest.title}"`,
+						`Step completed: ${currentStepDef.description}`,
+						undefined,
+						'info',
+						'quest'
+					);
+				}
+			})()
+		);
+
+		return { handled: true, completed: questResult.completed, message: questResult.message };
+	} catch (err) {
+		console.error('Error auto-handling article_quiz quest step:', err);
+		// Don't throw - let quiz submission succeed even if quest handling fails
+		return { handled: false };
+	}
 }

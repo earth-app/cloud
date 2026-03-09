@@ -36,7 +36,7 @@ export type QuestStep = {
 			parameters: [ScoringCriterion[], string, number]; // rubric criteria, caption prompt, score threshold
 	  }
 	| {
-			type: 'article_quiz';
+			type: 'article_quiz'; // handled automatically by cloud
 			parameters: [ActivityType, number]; // article type, score threshold
 	  }
 	| {
