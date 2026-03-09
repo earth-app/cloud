@@ -1384,76 +1384,6 @@ app.get('/users/quests/:id', async (c) => {
 	}
 });
 
-app.get('/users/quests/progress/:user_id', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
-	if (!userId) {
-		return c.text('User ID is required', 400);
-	}
-
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
-	}
-
-	try {
-		const progress = await getCurrentQuestProgress(userId, c.env);
-		return c.json(progress, 200);
-	} catch (err) {
-		console.error(`Error getting quest progress for user '${userId}':`, err);
-		return c.text('Failed to get quest progress', 500);
-	}
-});
-
-// get progress for a specific step index
-app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
-	const stepIndexParam = c.req.param('step_index');
-	if (!userId || !stepIndexParam) {
-		return c.text('User ID and step index are required', 400);
-	}
-
-	const stepIndex = parseInt(stepIndexParam, 10);
-	if (isNaN(stepIndex) || stepIndex < 0) {
-		return c.text('Step index must be a non-negative integer', 400);
-	}
-
-	try {
-		const { progress, quest, currentStepIndex, completed } = await getCurrentQuestProgress(
-			userId,
-			c.env
-		);
-		if (!quest) {
-			return c.text('No active quest found for user', 404);
-		}
-
-		if (stepIndex >= quest.steps.length) {
-			return c.text('Step index out of range', 404);
-		}
-
-		// only return progress for steps the user has reached
-		if (stepIndex > currentStepIndex && !completed) {
-			return c.text('Step not yet reached', 403);
-		}
-
-		const stepDef = quest.steps[stepIndex];
-		const stepProgress = progress[stepIndex] ?? null;
-
-		return c.json(
-			{
-				stepIndex,
-				stepDef,
-				// for alt steps: array of completed alt responses; for normal steps: single response or null
-				response: stepProgress,
-				isAltStep: Array.isArray(stepDef),
-				completed: stepProgress !== null && stepProgress !== undefined
-			},
-			200
-		);
-	} catch (err) {
-		console.error(`Error getting step progress for user '${userId}':`, err);
-		return c.text('Failed to get step progress', 500);
-	}
-});
-
 // start new quest (will override existing progress)
 app.post('/users/quests/progress/:user_id', async (c) => {
 	const userId = c.req.param('user_id')?.toLowerCase();
@@ -1465,7 +1395,13 @@ app.post('/users/quests/progress/:user_id', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
-	const body = await c.req.json<{ quest_id: string }>();
+	let body: { quest_id: string };
+	try {
+		body = await c.req.json<{ quest_id: string }>();
+	} catch (err) {
+		return c.text('Request body must be valid JSON', 400);
+	}
+
 	if (!body.quest_id) {
 		return c.text('Quest ID is required', 400);
 	}
@@ -1496,7 +1432,7 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
-	const body = await c.req.json<{
+	let body: {
 		device: QuestDeviceMetadata;
 		response: {
 			type: string;
@@ -1508,7 +1444,25 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			scoreKey?: string;
 			score?: number;
 		};
-	}>();
+	};
+
+	try {
+		body = await c.req.json<{
+			device: QuestDeviceMetadata;
+			response: {
+				type: string;
+				index: number;
+				altIndex?: number;
+				dataUrl?: string;
+				eventId?: string;
+				timestamp?: number;
+				scoreKey?: string;
+				score?: number;
+			};
+		}>();
+	} catch (jsonErr) {
+		return c.text('Request body must be valid JSON', 400);
+	}
 
 	if (!body.device) {
 		return c.text('Device metadata is required', 400);
@@ -1577,7 +1531,6 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 
 	try {
 		const result = await updateQuestProgress(userId, response, body.device, c.env, c.executionCtx);
-
 		return c.json(result, 200);
 	} catch (error) {
 		if (error instanceof HTTPException) {
@@ -1605,6 +1558,76 @@ app.delete('/users/quests/progress/:user_id', async (c) => {
 	} catch (err) {
 		console.error(`Error resetting quest progress for user '${userId}':`, err);
 		return c.text('Failed to reset quest progress', 500);
+	}
+});
+
+app.get('/users/quests/progress/:user_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const progress = await getCurrentQuestProgress(userId, c.env);
+		return c.json(progress, 200);
+	} catch (err) {
+		console.error(`Error getting quest progress for user '${userId}':`, err);
+		return c.text('Failed to get quest progress', 500);
+	}
+});
+
+// get progress for a specific step index
+app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	const stepIndexParam = c.req.param('step_index');
+	if (!userId || !stepIndexParam) {
+		return c.text('User ID and step index are required', 400);
+	}
+
+	const stepIndex = parseInt(stepIndexParam, 10);
+	if (isNaN(stepIndex) || stepIndex < 0) {
+		return c.text('Step index must be a non-negative integer', 400);
+	}
+
+	try {
+		const { progress, quest, currentStepIndex, completed } = await getCurrentQuestProgress(
+			userId,
+			c.env
+		);
+		if (!quest) {
+			return c.text('No active quest found for user', 404);
+		}
+
+		if (stepIndex >= quest.steps.length) {
+			return c.text('Step index out of range', 404);
+		}
+
+		// only return progress for steps the user has reached
+		if (stepIndex > currentStepIndex && !completed) {
+			return c.text('Step not yet reached', 403);
+		}
+
+		const stepDef = quest.steps[stepIndex];
+		const stepProgress = progress[stepIndex] ?? null;
+
+		return c.json(
+			{
+				stepIndex,
+				stepDef,
+				// for alt steps: array of completed alt responses; for normal steps: single response or null
+				response: stepProgress,
+				isAltStep: Array.isArray(stepDef),
+				completed: stepProgress !== null && stepProgress !== undefined
+			},
+			200
+		);
+	} catch (err) {
+		console.error(`Error getting step progress for user '${userId}':`, err);
+		return c.text('Failed to get step progress', 500);
 	}
 });
 
