@@ -480,38 +480,83 @@ export async function handleQuizQuestStep(
 	bindings: Bindings,
 	ctx: ExecutionContext
 ): Promise<{ handled: boolean; completed?: boolean; message?: string }> {
+	if (!articleTypes || articleTypes.length === 0) {
+		console.log(`handleQuizQuestStep: no article types provided for user ${userId}, skipping`);
+		return { handled: false };
+	}
+
 	try {
 		const questProgress = await getCurrentQuestProgress(userId, bindings);
 		const currentQuest = questProgress.quest;
 		const currentStepIndex = questProgress.currentStepIndex;
+		const progress = questProgress.progress;
 
-		// check if there's an active quest and the current step is article_quiz
-		if (!currentQuest || questProgress.completed || currentStepIndex >= currentQuest.steps.length) {
+		if (!currentQuest) {
+			console.log(`handleQuizQuestStep: no active quest for user ${userId}, skipping`);
 			return { handled: false };
 		}
 
-		const currentStepDef = currentQuest.steps[currentStepIndex];
-		const isAltStep = Array.isArray(currentStepDef);
-
-		if (isAltStep || currentStepDef.type !== 'article_quiz') {
+		if (questProgress.completed) {
+			console.log(
+				`handleQuizQuestStep: quest "${currentQuest.title}" already completed for user ${userId}, skipping`
+			);
 			return { handled: false };
 		}
 
-		const [requiredActivityType, scoreThreshold] = currentStepDef.parameters;
+		let matchedStepIndex: number | null = null;
+		let matchedAltIndex: number | undefined = undefined;
+		let matchedStepDef: QuestStep | null = null;
+		let thresholdPercent = 0;
 
-		if (!articleTypes || !articleTypes.includes(requiredActivityType)) {
-			return { handled: false };
+		for (let idx = currentStepIndex; idx >= 0; idx--) {
+			const stepDef = currentQuest.steps[idx];
+			if (!stepDef) continue;
+
+			if (Array.isArray(stepDef)) {
+				// alt step group — find any article_quiz alt not yet submitted
+				const existingAlts = (progress[idx] as QuestStepProgressEntry[] | undefined) ?? [];
+				const completedAltIndices = new Set(existingAlts.map((e) => e.altIndex ?? 0));
+
+				for (let altIdx = 0; altIdx < stepDef.length; altIdx++) {
+					const alt = stepDef[altIdx];
+					if (alt.type !== 'article_quiz') continue;
+					if (completedAltIndices.has(altIdx)) continue;
+					const [requiredActivityType, scoreThreshold] = alt.parameters;
+					if (!articleTypes.includes(requiredActivityType)) continue;
+					if (scorePercent < scoreThreshold * 100) continue;
+					matchedStepIndex = idx;
+					matchedAltIndex = altIdx;
+					matchedStepDef = alt;
+					thresholdPercent = scoreThreshold * 100;
+					break;
+				}
+			} else {
+				// normal step — only the current step is eligible; past ones are already completed
+				if (idx !== currentStepIndex) continue;
+				if (stepDef.type !== 'article_quiz') continue;
+				const [requiredActivityType, scoreThreshold] = stepDef.parameters;
+				if (!articleTypes.includes(requiredActivityType)) continue;
+				if (scorePercent < scoreThreshold * 100) continue;
+				matchedStepIndex = idx;
+				matchedStepDef = stepDef;
+				thresholdPercent = scoreThreshold * 100;
+			}
+
+			if (matchedStepIndex !== null) break;
 		}
 
-		// check if score meets the threshold
-		const thresholdPercent = scoreThreshold * 100;
-		if (scorePercent < thresholdPercent) {
+		if (matchedStepIndex === null || matchedStepDef === null) {
+			console.log(
+				`handleQuizQuestStep: no matching article_quiz step found for user ${userId} on quest "${currentQuest.title}" ` +
+					`with types [${articleTypes.join(', ')}] and score ${scorePercent}% (step ${currentStepIndex}), skipping`
+			);
 			return { handled: false };
 		}
 
 		const questResponse: QuestStepResponse = {
 			type: 'article_quiz',
-			index: currentStepIndex,
+			index: matchedStepIndex,
+			altIndex: matchedAltIndex,
 			scoreKey,
 			score: Math.round(scorePercent)
 		};
@@ -531,6 +576,7 @@ export async function handleQuizQuestStep(
 		);
 
 		// send notifications
+		const stepDesc = matchedStepDef.description;
 		ctx.waitUntil(
 			(async () => {
 				if (questResult.completed) {
@@ -548,7 +594,7 @@ export async function handleQuizQuestStep(
 						bindings,
 						userId,
 						`Progress on Quest "${currentQuest.title}"`,
-						`Step completed: ${currentStepDef.description}`,
+						`Step completed: ${stepDesc}`,
 						undefined,
 						'info',
 						'quest'
@@ -558,11 +604,16 @@ export async function handleQuizQuestStep(
 		);
 
 		console.log(
-			`Auto-handled article_quiz step for user ${userId} on quest "${currentQuest.title}" with score ${scorePercent}% (threshold: ${thresholdPercent}%) - completed: ${questResult.completed}`
+			`handleQuizQuestStep: auto-handled article_quiz step for user ${userId} on quest "${currentQuest.title}" ` +
+				`step ${matchedStepIndex}${matchedAltIndex !== undefined ? ` alt ${matchedAltIndex}` : ''} ` +
+				`with score ${scorePercent}% (threshold: ${thresholdPercent}%) - completed: ${questResult.completed}`
 		);
 		return { handled: true, completed: questResult.completed, message: questResult.message };
 	} catch (err) {
-		console.error('Error auto-handling article_quiz quest step:', err);
+		console.error(
+			`handleQuizQuestStep: error auto-handling article_quiz quest step for user ${userId}:`,
+			err
+		);
 		// Don't throw - let quiz submission succeed even if quest handling fails
 		return { handled: false };
 	}

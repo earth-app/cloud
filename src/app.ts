@@ -399,9 +399,14 @@ app.post('/articles/quiz/submit', async (c) => {
 	// score must be written before returning so that quest validation can read it from KV
 	await c.env.KV.put(scoreKey, JSON.stringify(data)); // scores are persistent, no expiration
 
-	// increment badge progress
 	c.executionCtx.waitUntil(
-		addBadgeProgress(body.userId, 'article_quizzes_completed', id, c.env.KV)
+		Promise.all([
+			// increment badge progress
+			addBadgeProgress(userId, 'article_quizzes_completed', id, c.env.KV),
+
+			// handle article_quiz quest steps
+			handleQuizQuestStep(userId, scoreKey, scorePercent, body.articleTypes, c.env, c.executionCtx)
+		])
 	);
 
 	if (data.scorePercent === 100) {
@@ -409,11 +414,6 @@ app.post('/articles/quiz/submit', async (c) => {
 			addBadgeProgress(body.userId, 'article_quizzes_completed_perfect_score', id, c.env.KV)
 		);
 	}
-
-	// handle article_quiz quest steps
-	c.executionCtx.waitUntil(
-		handleQuizQuestStep(userId, scoreKey, scorePercent, body.articleTypes, c.env, c.executionCtx)
-	);
 
 	return c.json(data, 200);
 });
