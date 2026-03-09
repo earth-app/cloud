@@ -27,6 +27,21 @@ export default async function scheduled(
 		console.log('Created new prompt:', prompt);
 
 		console.log('Finished at', new Date().toISOString());
+
+		console.log('Running scheduled task: Cleanup deprecated CollegeDB keys');
+		console.log('Started at', new Date().toISOString());
+
+		let shards = await env.KV.list({ prefix: 'shard:' });
+		while (!shards.list_complete) {
+			for (const key of shards.keys) {
+				await env.KV.delete(key.name);
+			}
+
+			console.log(`Deleted ${shards.keys.length} keys from shard listing, continuing...`);
+			shards = await env.KV.list({ prefix: 'shard:', cursor: shards.cursor });
+		}
+
+		console.log('Finished at', new Date().toISOString());
 		return;
 	}
 
