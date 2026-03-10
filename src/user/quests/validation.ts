@@ -89,13 +89,19 @@ export async function validateStep(
 		case 'take_photo_location':
 		case 'take_photo_classification':
 		case 'take_photo_caption':
-		case 'draw_picture':
 		case 'take_photo_objects': {
 			if (!response.data) {
 				return { success: false, message: 'No photo data provided in response.' };
 			}
 
 			return await validateStepPhoto(step, response.data, bindings, data);
+		}
+		case 'draw_picture': {
+			if (!response.data) {
+				return { success: false, message: 'No drawing data provided in response.' };
+			}
+
+			return await validateDrawing(step, response.data, bindings);
 		}
 		case 'transcribe_audio': {
 			if (!response.data) {
@@ -654,7 +660,29 @@ async function validateStepPhoto(
 		}
 	}
 
-	if (step.type === 'draw_picture') {
+	return { success: true };
+}
+
+async function validateDrawing(
+	step: QuestStep,
+	image: Uint8Array,
+	bindings: Bindings
+): Promise<{ success: boolean; message?: string }> {
+	if (step.type !== 'draw_picture') {
+		return { success: false, message: `Expected draw_picture step, got ${step.type}` };
+	}
+
+	// Canvas-drawn images from canvas.toDataURL() should have no EXIF data at all.
+	// Attempt to parse EXIF; if it exists and has camera metadata, it's a photo, not a drawing.
+	let metadata: ExifReader.Tags | null = null;
+	try {
+		metadata = ExifReader.load(image.buffer as ArrayBuffer);
+	} catch {
+		// No EXIF data or corrupt — expected for canvas drawings. Continue validation.
+	}
+
+	// Reject if camera metadata is present
+	if (metadata) {
 		const hasExifData =
 			metadata.Make != null ||
 			metadata.Model != null ||
@@ -667,29 +695,29 @@ async function validateStepPhoto(
 					'Drawing submission contains camera EXIF metadata, indicating it was not created with a drawing tool. Please draw a new picture in the browser.'
 			};
 		}
+	}
 
-		const [prompt, threshold] = step.parameters;
+	const [prompt, threshold] = step.parameters;
 
-		// ask the model to describe what is drawn so we can score accuracy against the prompt
-		const captionPrompt = 'Describe the main object or subject that is drawn in this image.';
-		const [_, score] = await scoreImage(bindings, image, captionPrompt, [
-			{
-				id: 'accuracy',
-				weight: 0.7,
-				ideal: `The image clearly shows a drawing of a ${prompt}`
-			},
-			{
-				id: 'effort',
-				weight: 0.3,
-				ideal: 'The drawing shows recognizable detail and clear intent in depicting the subject'
-			}
-		]);
-		if (score.score < threshold) {
-			return {
-				success: false,
-				message: `Drawing does not meet the required score threshold of ${threshold}. Got ${score.score.toFixed(2)}.`
-			};
+	// ask the model to describe what is drawn so we can score accuracy against the prompt
+	const captionPrompt = 'Describe the main object or subject that is drawn in this image.';
+	const [_, score] = await scoreImage(bindings, image, captionPrompt, [
+		{
+			id: 'accuracy',
+			weight: 0.7,
+			ideal: `The image clearly shows a drawing of a ${prompt}`
+		},
+		{
+			id: 'effort',
+			weight: 0.3,
+			ideal: 'The drawing shows recognizable detail and clear intent in depicting the subject'
 		}
+	]);
+	if (score.score < threshold) {
+		return {
+			success: false,
+			message: `Drawing does not meet the required score threshold of ${threshold}. Got ${score.score.toFixed(2)}.`
+		};
 	}
 
 	return { success: true };
