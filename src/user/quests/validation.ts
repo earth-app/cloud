@@ -345,8 +345,7 @@ async function validateStepPhoto(
 	if (Math.abs(now - dateTaken + offsetMs) > 5 * 60 * 1000) {
 		return {
 			success: false,
-			message:
-				'Photo timestamp is not within the acceptable range (possible clock skew or old photo).'
+			message: `Photo timestamp is not within the acceptable range (possible clock skew or old photo). Found ${new Date(dateTaken + offsetMs).toISOString()}, but expected around ${new Date(now).toISOString()}.`
 		};
 	}
 
