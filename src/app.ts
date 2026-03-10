@@ -81,7 +81,8 @@ import {
 	updateQuestProgress,
 	handleQuizQuestStep,
 	enrichProgressEntries,
-	maybeArchiveCompletedQuest
+	maybeArchiveCompletedQuest,
+	checkStepDelay
 } from './user/quests/tracking';
 import { QuestDeviceMetadata } from './user/quests/validation';
 import { HTTPException } from 'hono/http-exception';
@@ -1480,6 +1481,24 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 
 	if (!body.response) {
 		return c.text('Step response is required', 400);
+	}
+
+	const delayCheck = await checkStepDelay(
+		userId,
+		body.response.index,
+		body.response.altIndex,
+		c.env
+	);
+	if (!delayCheck.available) {
+		const s = delayCheck.secondsRemaining!;
+		return c.json(
+			{
+				message: `Step not yet available. Try again in ${s} second${s === 1 ? '' : 's'}.`,
+				code: 425,
+				availableAt: delayCheck.availableAt
+			},
+			425
+		);
 	}
 
 	const binaryTypes = [

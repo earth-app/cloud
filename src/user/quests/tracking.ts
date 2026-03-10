@@ -282,6 +282,59 @@ async function archiveCompletedQuest(
 	await bindings.KV.delete(`user:quest_progress:${userId}`);
 }
 
+export async function checkStepDelay(
+	userId: string,
+	stepIndex: number,
+	altIndex: number | undefined,
+	bindings: Bindings
+): Promise<{ available: boolean; secondsRemaining?: number; availableAt?: number }> {
+	const userId0 = normalizeId(userId);
+	const res = await bindings.KV.getWithMetadata<
+		(QuestStepProgressEntry | QuestStepProgressEntry[])[],
+		QuestProgress
+	>(`user:quest_progress:${userId0}`, 'json');
+
+	const progress = res.value || [];
+	const metadata = res.metadata;
+
+	// No active quest or step is not current — delay does not apply
+	if (!metadata || stepIndex !== metadata.currentStep) return { available: true };
+
+	const quest = quests.find((q) => q.id === metadata.questId);
+	if (!quest) return { available: true };
+
+	const targetStepDef = quest.steps[stepIndex];
+	if (!targetStepDef) return { available: true };
+
+	const isAltStep = Array.isArray(targetStepDef);
+	const stepDef = isAltStep
+		? (targetStepDef as QuestStep[])[altIndex ?? 0]
+		: (targetStepDef as QuestStep);
+
+	if (!stepDef?.delay) return { available: true };
+
+	let baseTime: number;
+	if (stepIndex === 0) {
+		baseTime = metadata.startedAt ?? 0;
+	} else {
+		const prevEntry = progress[stepIndex - 1];
+		if (Array.isArray(prevEntry)) {
+			baseTime = (prevEntry as QuestStepProgressEntry[])[0]?.submittedAt ?? 0;
+		} else {
+			baseTime = (prevEntry as QuestStepProgressEntry)?.submittedAt ?? 0;
+		}
+	}
+
+	const availableAt = baseTime + stepDef.delay * 1000;
+	const now = Date.now();
+	if (now < availableAt) {
+		const secondsRemaining = Math.ceil((availableAt - now) / 1000);
+		return { available: false, secondsRemaining, availableAt };
+	}
+
+	return { available: true };
+}
+
 /**
  * If the active progress KV entry is marked completed but was never archived
  * (e.g. the background task crashed), archive it now and send the completion
@@ -493,31 +546,12 @@ export async function updateQuestProgress(
 	const isAltStep = Array.isArray(targetStepDef);
 
 	// delay validation: only gates advancement of the current step, not backfilling of past alt steps.
-	// the unlock time is delay seconds after the first completion of the previous step
-	// (or quest startedAt for the very first step).
-	const submittingStepDef = isAltStep
-		? (targetStepDef as QuestStep[])[stepResponse.altIndex ?? 0]
-		: (targetStepDef as QuestStep);
-	if (submittingStepDef?.delay && idx === metadata.currentStep) {
-		let baseTime: number;
-		if (idx === 0) {
-			// no previous step — measure from quest start
-			baseTime = metadata.startedAt ?? 0;
-		} else {
-			// measure from the first submission of the previous step
-			const prevEntry = progress[idx - 1];
-			if (Array.isArray(prevEntry)) {
-				baseTime = (prevEntry as QuestStepProgressEntry[])[0]?.submittedAt ?? 0;
-			} else {
-				baseTime = (prevEntry as QuestStepProgressEntry)?.submittedAt ?? 0;
-			}
-		}
-		const availableAt = baseTime + submittingStepDef.delay * 1000;
-		const now = Date.now();
-		if (now < availableAt) {
-			const secondsRemaining = Math.ceil((availableAt - now) / 1000);
+	if (idx === metadata.currentStep) {
+		const delayStatus = await checkStepDelay(userId, idx, stepResponse.altIndex, bindings);
+		if (!delayStatus.available) {
+			const s = delayStatus.secondsRemaining!;
 			throw new HTTPException(425, {
-				message: `Step not yet available. Try again in ${secondsRemaining} second${secondsRemaining === 1 ? '' : 's'}.`
+				message: `Step not yet available. Try again in ${s} second${s === 1 ? '' : 's'}.`
 			});
 		}
 	}
