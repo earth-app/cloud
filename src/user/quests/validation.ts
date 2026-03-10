@@ -80,7 +80,7 @@ export async function validateStep(
 	response: QuestStepResponse,
 	bindings: Bindings,
 	data: QuestDeviceMetadata
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; message?: string; score?: number }> {
 	if (step.type !== response.type) {
 		return { success: false, message: `Expected response type ${step.type}, got ${response.type}` };
 	}
@@ -290,7 +290,7 @@ async function validateStepAudio(
 		};
 	}
 
-	return { success: true };
+	return { success: true, score: score.score };
 }
 
 async function validateStepPhoto(
@@ -298,7 +298,7 @@ async function validateStepPhoto(
 	image: Uint8Array,
 	bindings: Bindings,
 	data: QuestDeviceMetadata
-) {
+): Promise<{ success: boolean; message?: string; score?: number }> {
 	// EXIF parse failure is treated as a hard rejection — a missing or corrupt EXIF block
 	// is a strong signal of tampering (re-encoding, screenshot, etc.)
 	let metadata!: ExifReader.Tags;
@@ -567,6 +567,8 @@ async function validateStepPhoto(
 		}
 	}
 
+	let aiScore = 0;
+
 	// type-based validation
 	if (step.type === 'take_photo_location' || step.type === 'take_photo_classification') {
 		let label: string | undefined;
@@ -628,6 +630,8 @@ async function validateStepPhoto(
 					message: `Photo does not meet the required classification label "${label}" with confidence ${score}.`
 				};
 			}
+
+			aiScore = classification.confidence;
 		}
 	}
 
@@ -647,6 +651,8 @@ async function validateStepPhoto(
 				};
 			}
 		}
+
+		aiScore = detections.reduce((acc, d) => acc + d.confidence, 0) / detections.length;
 	}
 
 	if (step.type === 'take_photo_caption') {
@@ -658,16 +664,18 @@ async function validateStepPhoto(
 				message: `Photo caption does not meet the required score threshold of ${threshold}. Got ${score.score}.`
 			};
 		}
+
+		aiScore = score.score;
 	}
 
-	return { success: true };
+	return { success: true, score: aiScore };
 }
 
 async function validateDrawing(
 	step: QuestStep,
 	image: Uint8Array,
 	bindings: Bindings
-): Promise<{ success: boolean; message?: string }> {
+): Promise<{ success: boolean; message?: string; score?: number }> {
 	if (step.type !== 'draw_picture') {
 		return { success: false, message: `Expected draw_picture step, got ${step.type}` };
 	}
@@ -720,5 +728,5 @@ async function validateDrawing(
 		};
 	}
 
-	return { success: true };
+	return { success: true, score: score.score };
 }

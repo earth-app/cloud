@@ -54,6 +54,7 @@ export type QuestStepProgressEntry = {
 				| 'take_photo_caption'
 				| 'draw_picture'
 				| 'take_photo_objects';
+			score?: number; // validation score (e.g. confidence) for this step submission, if applicable
 			r2Key: string;
 	  }
 	| { type: 'attend_event'; eventId: string; timestamp: number }
@@ -102,7 +103,8 @@ async function toProgressEntry(
 	userId: string,
 	questId: string,
 	submittedAt: number,
-	bindings: Bindings
+	bindings: Bindings,
+	score?: number
 ): Promise<QuestStepProgressEntry> {
 	const altIdx = response.altIndex ?? 0;
 
@@ -120,6 +122,7 @@ async function toProgressEntry(
 			index: response.index,
 			altIndex: response.altIndex,
 			submittedAt,
+			score,
 			r2Key
 		} as QuestStepProgressEntry;
 		return entry;
@@ -412,7 +415,8 @@ export async function updateQuestProgress(
 		userId0,
 		quest.id,
 		submittedAt,
-		bindings
+		bindings,
+		validation.score
 	);
 
 	// update progress array
