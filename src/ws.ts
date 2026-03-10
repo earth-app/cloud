@@ -33,7 +33,7 @@ ws.post(
 
 ws.get('/users/:id', async (c) => {
 	const userId = normalizeId(c.req.param('id'));
-	const sessionToken = getCookie(c, 'session_token');
+	const sessionToken = c.req.query('session_token') || getCookie(c, 'session_token');
 
 	if (!userId) {
 		return c.json({ error: 'Invalid user ID' }, 400);
