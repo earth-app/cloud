@@ -655,6 +655,19 @@ async function validateStepPhoto(
 	}
 
 	if (step.type === 'draw_picture') {
+		const hasExifData =
+			metadata.Make != null ||
+			metadata.Model != null ||
+			metadata.DateTimeOriginal != null ||
+			metadata.Software != null;
+		if (hasExifData) {
+			return {
+				success: false,
+				message:
+					'Drawing submission contains camera EXIF metadata, indicating it was not created with a drawing tool. Please draw a new picture in the browser.'
+			};
+		}
+
 		const [prompt, threshold] = step.parameters;
 
 		// ask the model to describe what is drawn so we can score accuracy against the prompt
