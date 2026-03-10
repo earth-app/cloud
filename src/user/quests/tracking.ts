@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { HTTPException } from 'hono/http-exception';
 import { quests, QuestStep } from '.';
 import { Bindings } from '../../util/types';
@@ -55,6 +56,7 @@ export type QuestStepProgressEntry = {
 				| 'draw_picture'
 				| 'take_photo_objects';
 			score?: number; // validation score (e.g. confidence) for this step submission, if applicable
+			prompt?: string; // generated prompt from take_photo_caption
 			r2Key: string;
 	  }
 	| { type: 'attend_event'; eventId: string; timestamp: number }
@@ -97,6 +99,93 @@ export async function downloadStepData(
 	return decryptFromR2(new Uint8Array(buffer), bindings.ENCRYPTION_KEY);
 }
 
+// Detect MIME type from magic bytes
+function detectMimeType(data: Uint8Array, stepType: string): string {
+	if (stepType === 'draw_picture') return 'image/png';
+	if (stepType === 'transcribe_audio') {
+		// MP3: sync word or ID3 tag
+		if (data.length >= 3 && data[0] === 0x49 && data[1] === 0x44 && data[2] === 0x33)
+			return 'audio/mpeg';
+		if (data.length >= 2 && data[0] === 0xff && (data[1] & 0xe0) === 0xe0) return 'audio/mpeg';
+		// WAV: RIFF....WAVE
+		if (
+			data.length >= 12 &&
+			data[0] === 0x52 &&
+			data[1] === 0x49 &&
+			data[2] === 0x46 &&
+			data[3] === 0x46 &&
+			data[8] === 0x57 &&
+			data[9] === 0x41 &&
+			data[10] === 0x56 &&
+			data[11] === 0x45
+		)
+			return 'audio/wav';
+		// CAF: caff
+		if (
+			data.length >= 4 &&
+			data[0] === 0x63 &&
+			data[1] === 0x61 &&
+			data[2] === 0x66 &&
+			data[3] === 0x66
+		)
+			return 'audio/x-caf';
+		return 'audio/octet-stream';
+	}
+	// Photos
+	if (data.length >= 2 && data[0] === 0xff && data[1] === 0xd8) return 'image/jpeg';
+	if (
+		data.length >= 4 &&
+		data[0] === 0x89 &&
+		data[1] === 0x50 &&
+		data[2] === 0x4e &&
+		data[3] === 0x47
+	)
+		return 'image/png';
+	if (
+		data.length >= 12 &&
+		data[0] === 0x52 &&
+		data[1] === 0x49 &&
+		data[2] === 0x46 &&
+		data[3] === 0x46 &&
+		data[8] === 0x57 &&
+		data[9] === 0x45 &&
+		data[10] === 0x42 &&
+		data[11] === 0x50
+	)
+		return 'image/webp';
+	return 'image/jpeg';
+}
+
+// Enrich a single progress entry that has an r2Key by downloading and converting to data URL
+async function enrichEntry(
+	entry: QuestStepProgressEntry,
+	bindings: Bindings
+): Promise<QuestStepProgressEntry & { data?: string }> {
+	if (!('r2Key' in entry)) return entry;
+	const raw = await downloadStepData(
+		(entry as QuestStepProgressEntry & { r2Key: string }).r2Key,
+		bindings
+	);
+	if (!raw) return entry;
+	const mime = detectMimeType(raw, entry.type);
+	const base64 = Buffer.from(raw).toString('base64');
+	return { ...entry, data: `data:${mime};base64,${base64}` };
+}
+
+// Enrich all entries in a progress array with data URLs for binary payloads
+export async function enrichProgressEntries(
+	entries: (QuestStepProgressEntry | QuestStepProgressEntry[])[],
+	bindings: Bindings
+): Promise<(QuestStepProgressEntry | QuestStepProgressEntry[])[]> {
+	return Promise.all(
+		entries.map((entry) =>
+			Array.isArray(entry)
+				? Promise.all(entry.map((e) => enrichEntry(e, bindings)))
+				: enrichEntry(entry, bindings)
+		)
+	);
+}
+
 // convert a QuestStepResponse (with binary) to a QuestStepProgressEntry (with r2 key)
 async function toProgressEntry(
 	response: QuestStepResponse,
@@ -104,7 +193,8 @@ async function toProgressEntry(
 	questId: string,
 	submittedAt: number,
 	bindings: Bindings,
-	score?: number
+	score?: number,
+	prompt?: string
 ): Promise<QuestStepProgressEntry> {
 	const altIdx = response.altIndex ?? 0;
 
@@ -123,6 +213,7 @@ async function toProgressEntry(
 			altIndex: response.altIndex,
 			submittedAt,
 			score,
+			prompt,
 			r2Key
 		} as QuestStepProgressEntry;
 		return entry;
@@ -185,6 +276,54 @@ async function archiveCompletedQuest(
 	const existing = (await bindings.KV.get<string[]>(indexKey, 'json')) || [];
 	if (!existing.includes(questId)) {
 		await bindings.KV.put(indexKey, JSON.stringify([...existing, questId]));
+	}
+
+	// remove the active progress key — quest is now immutably in history
+	await bindings.KV.delete(`user:quest_progress:${userId}`);
+}
+
+/**
+ * If the active progress KV entry is marked completed but was never archived
+ * (e.g. the background task crashed), archive it now and send the completion
+ * notification.  Safe to call multiple times — archiveCompletedQuest is idempotent
+ * because it overwrites the same R2 key and only appends to the history index if
+ * the quest is not already present.
+ */
+export async function maybeArchiveCompletedQuest(
+	userId: string,
+	bindings: Bindings,
+	ctx?: ExecutionContext
+): Promise<void> {
+	const userId0 = normalizeId(userId);
+	const res = await bindings.KV.getWithMetadata<
+		(QuestStepProgressEntry | QuestStepProgressEntry[])[],
+		QuestProgress
+	>(`user:quest_progress:${userId0}`, 'json');
+
+	if (!res.metadata?.completed || !res.metadata?.questId) return;
+
+	const quest = quests.find((q) => q.id === res.metadata!.questId) || null;
+	const progress = res.value || [];
+
+	const doArchive = async () => {
+		await archiveCompletedQuest(userId0, res.metadata!.questId, progress, bindings);
+		if (quest) {
+			await sendUserNotification(
+				bindings,
+				userId0,
+				`Quest "${quest.title}" Completed!`,
+				`You have successfully completed the quest and earned ${quest.reward} impact points!`,
+				undefined,
+				'success',
+				'quest'
+			);
+		}
+	};
+
+	if (ctx) {
+		ctx.waitUntil(doArchive());
+	} else {
+		await doArchive();
 	}
 }
 
@@ -261,6 +400,15 @@ export async function getCompletedQuestProgress(
 // starts a new quest - cleans up r2 data for unfinished quests, preserves completed history
 export async function startQuest(userId: string, questId: string, bindings: Bindings) {
 	const userId0 = normalizeId(userId);
+
+	// block restarting a quest the user has already completed
+	const historyIndex =
+		(await bindings.KV.get<string[]>(`user:quest_history_index:${userId0}`, 'json')) || [];
+	if (historyIndex.includes(questId)) {
+		throw new HTTPException(409, {
+			message: `Quest "${questId}" has already been completed and cannot be restarted`
+		});
+	}
 
 	// check for existing quest and clean up r2 if it was unfinished (not yet archived)
 	const existing = await bindings.KV.getWithMetadata<
@@ -416,7 +564,8 @@ export async function updateQuestProgress(
 		quest.id,
 		submittedAt,
 		bindings,
-		validation.score
+		validation.score,
+		validation.prompt
 	);
 
 	// update progress array
@@ -450,7 +599,7 @@ export async function updateQuestProgress(
 			completed
 				? archiveCompletedQuest(userId0, quest.id, updatedProgress, bindings)
 				: Promise.resolve(),
-			// award step reward and/or quest completion points
+			// award step reward and/or quest completion points, then notify
 			(async () => {
 				if (submittingStep.reward) {
 					await addImpactPoints(
@@ -467,6 +616,15 @@ export async function updateQuestProgress(
 						quest.reward,
 						`Quest "${quest.title}" Completion`,
 						bindings.KV
+					);
+					await sendUserNotification(
+						bindings,
+						userId0,
+						`Quest "${quest.title}" Completed!`,
+						`You have successfully completed the quest and earned ${quest.reward} impact points!`,
+						undefined,
+						'success',
+						'quest'
 					);
 				}
 			})()

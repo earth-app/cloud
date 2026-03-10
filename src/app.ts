@@ -79,7 +79,9 @@ import {
 	resetQuestProgress,
 	startQuest,
 	updateQuestProgress,
-	handleQuizQuestStep
+	handleQuizQuestStep,
+	enrichProgressEntries,
+	maybeArchiveCompletedQuest
 } from './user/quests/tracking';
 import { QuestDeviceMetadata } from './user/quests/validation';
 import { HTTPException } from 'hono/http-exception';
@@ -1581,7 +1583,17 @@ app.get('/users/quests/progress/:user_id', async (c) => {
 
 	try {
 		const progress = await getCurrentQuestProgress(userId, c.env);
-		return c.json(progress, 200);
+
+		if (progress.completed) {
+			await maybeArchiveCompletedQuest(userId, c.env, c.executionCtx);
+
+			// after archiving the active key is deleted; return the snapshot we already read.
+			const enrichedProgress = await enrichProgressEntries(progress.progress, c.env);
+			return c.json({ ...progress, progress: enrichedProgress }, 200);
+		}
+
+		const enrichedProgress = await enrichProgressEntries(progress.progress, c.env);
+		return c.json({ ...progress, progress: enrichedProgress }, 200);
 	} catch (err) {
 		console.error(`Error getting quest progress for user '${userId}':`, err);
 		return c.text('Failed to get quest progress', 500);
@@ -1652,10 +1664,19 @@ app.get('/users/quests/history/:user_id', async (c) => {
 
 	try {
 		const questIds = await getQuestHistory(userId, c.env);
-		const history = questIds.map((questId) => ({
-			questId,
-			quest: quests.find((q) => q.id === questId) ?? null
-		}));
+		const history = await Promise.all(
+			questIds.map(async (questId) => {
+				const completed = await getCompletedQuestProgress(userId, questId, c.env);
+				const enrichedProgress = completed
+					? await enrichProgressEntries(completed.progress, c.env)
+					: null;
+				return {
+					questId,
+					quest: quests.find((q) => q.id === questId) ?? null,
+					...(completed ? { completedAt: completed.completedAt, progress: enrichedProgress } : {})
+				};
+			})
+		);
 		return c.json(history, 200);
 	} catch (err) {
 		console.error(`Error getting quest history for user '${userId}':`, err);

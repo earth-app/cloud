@@ -80,7 +80,7 @@ export async function validateStep(
 	response: QuestStepResponse,
 	bindings: Bindings,
 	data: QuestDeviceMetadata
-): Promise<{ success: boolean; message?: string; score?: number }> {
+): Promise<{ success: boolean; message?: string; score?: number; prompt?: string }> {
 	if (step.type !== response.type) {
 		return { success: false, message: `Expected response type ${step.type}, got ${response.type}` };
 	}
@@ -274,12 +274,12 @@ async function validateStepAudio(
 		{
 			id: 'relevance',
 			weight: 0.7,
-			ideal: 'Audio is relevant to the prompt and demonstrates understanding'
+			ideal: `The audio clearly discusses and is relevant to: ${prompt}`
 		},
 		{
 			id: 'clarity',
 			weight: 0.3,
-			ideal: 'Audio is clear and intelligible'
+			ideal: 'The audio is clear, intelligible, and demonstrates understanding of the topic'
 		}
 	]);
 
@@ -298,7 +298,7 @@ async function validateStepPhoto(
 	image: Uint8Array,
 	bindings: Bindings,
 	data: QuestDeviceMetadata
-): Promise<{ success: boolean; message?: string; score?: number }> {
+): Promise<{ success: boolean; message?: string; score?: number; prompt?: string }> {
 	// EXIF parse failure is treated as a hard rejection — a missing or corrupt EXIF block
 	// is a strong signal of tampering (re-encoding, screenshot, etc.)
 	let metadata!: ExifReader.Tags;
@@ -681,15 +681,17 @@ async function validateStepPhoto(
 
 	if (step.type === 'take_photo_caption') {
 		const [criteria, prompt, threshold] = step.parameters;
-		const [_, score] = await scoreImage(bindings, image, prompt, criteria);
+		// Use a descriptive captioning instruction for LLaVA rather than the raw task prompt,
+		// which is not a valid VQA question and causes unreliable/inflated model outputs.
+		const captionPrompt = `Describe this photo in detail: what is the main subject, what is the setting, and what context is visible? The photo is expected to show: ${prompt}.`;
+		const [generatedCaption, score] = await scoreImage(bindings, image, captionPrompt, criteria);
 		if (score.score < threshold) {
 			return {
 				success: false,
 				message: `Photo caption does not meet the required score threshold of ${threshold}. Got ${score.score}.`
 			};
 		}
-
-		aiScore = score.score;
+		return { success: true, score: score.score, prompt: generatedCaption };
 	}
 
 	return { success: true, score: aiScore };
