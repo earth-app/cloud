@@ -31,9 +31,11 @@ ws.post(
 	}
 );
 
-ws.get('/users/:id', async (c) => {
+// ticket generation endpoints to avoid logging session tokens in query parameters
+ws.get('/users/:id/ticket', async (c) => {
 	const userId = normalizeId(c.req.param('id'));
-	const sessionToken = c.req.query('session_token') || getCookie(c, 'session_token');
+	const sessionToken =
+		c.req.header('Authorization')?.replace('Bearer ', '') || getCookie(c, 'session_token');
 
 	if (!userId) {
 		return c.json({ error: 'Invalid user ID' }, 400);
@@ -64,6 +66,35 @@ ws.get('/users/:id', async (c) => {
 	if (normalizeId(userData.id) !== userId && userData.account.account_type !== 'ADMINISTRATOR') {
 		return c.json({ error: 'Forbidden' }, 403);
 	}
+
+	const ticket = crypto.randomUUID();
+	await c.env.KV.put(`ticket:${ticket}`, userId, { expirationTtl: 60 }); // ticket valid for 60 seconds
+
+	return c.json({ ticket });
+});
+
+// websocket channels
+
+ws.get('/users/:id/notifications', async (c) => {
+	const userId = normalizeId(c.req.param('id'));
+	const ticket = c.req.query('ticket');
+
+	if (!userId) {
+		return c.json({ error: 'Invalid user ID' }, 400);
+	}
+
+	if (!ticket) {
+		return c.json({ error: 'Unauthorized' }, 401);
+	}
+
+	// Verify ticket with primary API
+	const userIdFromTicket = await c.env.KV.get(`ticket:${ticket}`);
+	if (!userIdFromTicket || normalizeId(userIdFromTicket) !== userId) {
+		return c.json({ error: 'Invalid ticket' }, 401);
+	}
+
+	// Consume ticket immediately to prevent reuse or logging exposure
+	await c.env.KV.delete(`ticket:${ticket}`);
 
 	const channel = `users:${userId}`;
 	const id = c.env.NOTIFIER.idFromName(channel);
