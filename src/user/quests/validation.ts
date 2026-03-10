@@ -323,29 +323,54 @@ async function validateStepPhoto(
 			message: 'Photo is missing the required EXIF DateTimeOriginal field.'
 		};
 	}
-	// EXIF format: "YYYY:MM:DD HH:MM:SS" — normalise separator to ISO-8601 for Date parsing
-	const dateTaken = new Date(dateRaw.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3')).getTime();
+
+	// EXIF DateTimeOriginal is a naive local time (YYYY:MM:DD HH:MM:SS format)
+	const dateMatch = dateRaw.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+	if (!dateMatch) {
+		return { success: false, message: 'Photo has an unparseable EXIF DateTimeOriginal value.' };
+	}
+
+	const [, year, month, day, hour, minute, second] = dateMatch;
+	const utcDate = new Date(
+		Date.UTC(
+			parseInt(year),
+			parseInt(month) - 1,
+			parseInt(day),
+			parseInt(hour),
+			parseInt(minute),
+			parseInt(second)
+		)
+	);
+	let dateTaken = utcDate.getTime();
+
 	if (!Number.isFinite(dateTaken)) {
 		return { success: false, message: 'Photo has an unparseable EXIF DateTimeOriginal value.' };
 	}
 
-	// OffsetTimeOriginal is optional; default to UTC (0) if absent or malformed.
-	// Minutes always adopt the sign of hours so that zones like -05:30 are handled correctly.
+	// OffsetTimeOriginal (e.g., "-05:00" for UTC-5) tells us the timezone offset of the naive local time.
+	// to convert from naive local time (parsed as UTC above) to true UTC:
+	// true_utc = parsed_as_utc - offsetMs
 	const offsetRaw = metadata.OffsetTimeOriginal?.value?.toString()?.trim() ?? null;
-	let offsetMs = 0;
 	if (offsetRaw) {
 		const parts = offsetRaw.split(':').map(Number);
 		if (parts.length >= 2 && parts.every(Number.isFinite)) {
-			offsetMs = (parts[0] * 60 + Math.sign(parts[0]) * Math.abs(parts[1])) * 60 * 1000;
+			// parts[0] is hours (can be negative), parts[1] is minutes (always positive magnitude)
+			// For "-05:30", parts = [-5, 30], offsetMinutes = -5*60 - 30 = -330
+			// For "+05:30", parts = [5, 30], offsetMinutes = 5*60 + 30 = 330
+			const offsetMinutes =
+				parts[0] * 60 + (parts[0] < 0 ? -Math.abs(parts[1]) : Math.abs(parts[1]));
+			const offsetMs = offsetMinutes * 60 * 1000;
+			// Convert naive local time (parsed as UTC) to actual UTC
+			dateTaken -= offsetMs;
 		}
 	}
 
 	// Allow 5-minute clock skew
 	const now = Date.now();
-	if (Math.abs(now - dateTaken + offsetMs) > 5 * 60 * 1000) {
+	if (Math.abs(now - dateTaken) > 5 * 60 * 1000) {
 		return {
 			success: false,
-			message: `Photo timestamp is not within the acceptable range (possible clock skew or old photo). Found ${new Date(dateTaken + offsetMs).toISOString()}, but expected around ${new Date(now).toISOString()}.`
+			message: `Photo timestamp is not within the acceptable range (possible clock skew or old photo). Found ${new Date(dateTaken).toISOString()}, but expected around ${new Date(now).toISOString()}.`
 		};
 	}
 
