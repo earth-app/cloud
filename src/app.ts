@@ -1634,12 +1634,16 @@ app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
 		const stepDef = quest.steps[stepIndex];
 		const stepProgress = progress[stepIndex] ?? null;
 
+		// enrich with data URLs for binary payloads (photos, drawings, audio)
+		const enrichedStepProgress =
+			stepProgress !== null ? (await enrichProgressEntries([stepProgress], c.env))[0] : null;
+
 		return c.json(
 			{
 				stepIndex,
 				stepDef,
 				// for alt steps: array of completed alt responses; for normal steps: single response or null
-				response: stepProgress,
+				response: enrichedStepProgress,
 				isAltStep: Array.isArray(stepDef),
 				completed: stepProgress !== null && stepProgress !== undefined
 			},
@@ -1705,7 +1709,8 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 		if (!result) {
 			return c.text('Completed quest not found', 404);
 		}
-		return c.json(result, 200);
+		const enrichedProgress = await enrichProgressEntries(result.progress, c.env);
+		return c.json({ ...result, progress: enrichedProgress }, 200);
 	} catch (err) {
 		console.error(`Error getting completed quest '${questId}' for user '${userId}':`, err);
 		return c.text('Failed to get completed quest progress', 500);
