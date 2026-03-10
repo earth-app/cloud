@@ -2,7 +2,10 @@ import { KVNamespace } from '@cloudflare/workers-types';
 import Pako from 'pako';
 
 export function capitalizeFully(str: string): string {
-	return str;
+	return str
+		.split(' ')
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+		.join(' ');
 }
 
 export function toDataURL(image: Uint8Array | ArrayBuffer, type = 'image/png'): string {
