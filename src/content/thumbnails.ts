@@ -29,13 +29,19 @@ export async function uploadPlaceThumbnail(
  * @returns Searchable location name (e.g., "Springfield, IL", "Vallejo") or null if not a birthday event
  */
 export function extractLocationFromEventName(eventName: string): string | null {
+	const normalizedEventName = eventName.trim().replace(/\s+/g, ' ');
+	if (!normalizedEventName) {
+		return null;
+	}
+
 	// Match: "Location's Birthday" or "Location's 158th Birthday"
 	// Capture group 1: the location name (non-greedy)
 	// Optional non-capturing group: ordinal number like "158th"
 	// Accept both possessive forms: "'s" (e.g., "O'Fallon's") and just trailing "'"
-	// (e.g., "Minneapolis' 128th Birthday"). Also accept curly apostrophe (\u2019).
-	const birthdayMatch = eventName.match(
-		/^(.+?)(?:['\u2019]s|['\u2019])(?:\s+\d+(?:st|nd|rd|th))?\s+Birthday$/i
+	// (e.g., "Minneapolis' 128th Birthday"). Also accept normalized forms
+	// where apostrophes are stripped (e.g., "Minneapolis 128th Birthday").
+	const birthdayMatch = normalizedEventName.match(
+		/^(.+?)(?:['\u2019\u2018\u02BC]s|['\u2019\u2018\u02BC]|\s+s)?(?:\s+\d+(?:st|nd|rd|th))?\s+Birthday$/i
 	);
 	if (!birthdayMatch || !birthdayMatch[1]) {
 		return null;

@@ -1249,13 +1249,24 @@ export async function postEvent(
 
 	// Only generate thumbnails for birthday events (location-based)
 	// This includes countries, cities, and other places with birthdays
-	// Extract location name from "Location's Birthday" or "Location's 158th Birthday" format
-	const locationName = extractLocationFromEventName(event.name);
+	// Extract from persisted name first, because downstream callers (like crust)
+	// use the saved event name when generating thumbnails manually.
+	const persistedName = typeof data.name === 'string' ? data.name : '';
+	const sourceName = event.name;
+	const locationName =
+		extractLocationFromEventName(persistedName) || extractLocationFromEventName(sourceName);
 	if (locationName) {
 		console.log(`Generating thumbnail for birthday event: ${locationName}`);
 		await uploadPlaceThumbnail(locationName, BigInt(data.id), bindings, ctx);
 	} else {
-		console.log(`Skipping thumbnail generation for non-birthday event: ${event.name}`);
+		if (persistedName.includes('Birthday') || sourceName.includes('Birthday')) {
+			console.warn('Skipping thumbnail generation: failed to parse birthday location', {
+				sourceName,
+				persistedName
+			});
+		} else {
+			console.log(`Skipping thumbnail generation for non-birthday event: ${sourceName}`);
+		}
 	}
 
 	return data;
