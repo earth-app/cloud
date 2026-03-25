@@ -19,6 +19,38 @@ export default async function scheduled(
 	ctx: ExecutionContext
 ) {
 	if (controller.cron === '0 * * * *') {
+		console.log('Running scheduled task: Cache leaderboards');
+		console.log('Started at', new Date().toISOString());
+
+		const types = ['article', 'prompt', 'event'];
+		await Promise.all(
+			types.map(async (type) => {
+				await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
+				console.log(`Cached leaderboard for journey type: ${type}`);
+			})
+		);
+
+		console.log('Finished at', new Date().toISOString());
+		return;
+	}
+
+	if (controller.cron === '0 * * * *') {
+		console.log('Running scheduled task: Cache leaderboards');
+		console.log('Started at', new Date().toISOString());
+
+		const types = ['article', 'prompt', 'event'];
+		await Promise.all(
+			types.map(async (type) => {
+				await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
+				console.log(`Cached leaderboard for journey type: ${type}`);
+			})
+		);
+
+		console.log('Finished at', new Date().toISOString());
+		return;
+	}
+
+	if (controller.cron === '*/12 * * * *') {
 		console.log('Running scheduled task: Create new prompt');
 		console.log('Started at', new Date().toISOString());
 
@@ -30,48 +62,37 @@ export default async function scheduled(
 		return;
 	}
 
-	if (controller.cron === '0 */4 * * *') {
-		console.log('Running scheduled task: Create new article and cache leaderboards');
+	if (controller.cron === '*/24 * * * *') {
+		console.log('Running scheduled task: Create new articles (best + worst ranked)');
 		console.log('Started at', new Date().toISOString());
 
-		await Promise.all([
-			// article creation pipeline
-			(async () => {
-				const [ocean, tags] = await findArticle(env);
-				console.log('Found article and tags:', ocean.title, tags);
+		const [oceans, tags] = await findArticle(env);
+		console.log(`Found ${oceans.length} articles (best & worst ranked) with tags:`, tags);
 
-				const article = await createArticle(ocean, env.AI, tags);
-				console.log('Created article content:', article.content?.slice(0, 100) + '...');
+		for (let i = 0; i < oceans.length; i++) {
+			const ocean = oceans[i];
+			const rankLabel = i === 0 ? 'best-ranked' : 'worst-ranked';
+			console.log(`Processing '${rankLabel}' article: ${ocean.title}`);
 
-				const quiz = await createArticleQuiz(article, env.AI);
-				console.log('Created article quiz with questions:', quiz);
+			const article = await createArticle(ocean, env.AI, tags);
+			console.log('Created article content:', article.content?.slice(0, 100) + '...');
 
-				await postArticle(article, quiz.length > 0 ? quiz : null, env);
+			const quiz = await createArticleQuiz(article, env.AI);
+			console.log('Created article quiz with questions:', quiz);
 
-				console.log(
-					'Created new article and quiz:',
-					`"${article.title}" | `,
-					article.content?.slice(0, 100) + '...'
-				);
-			})(),
+			await postArticle(article, quiz.length > 0 ? quiz : null, env);
 
-			// leaderboard caching (3 independent operations)
-			(async () => {
-				const types = ['article', 'prompt', 'event'];
-				await Promise.all(
-					types.map(async (type) => {
-						await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
-						console.log(`Cached leaderboard for journey type: ${type}`);
-					})
-				);
-			})()
-		]);
+			console.log(
+				`Created new '${rankLabel}' article and quiz: "${article.title}" | `,
+				article.content?.slice(0, 100) + '...'
+			);
+		}
 
 		console.log('Finished at', new Date().toISOString());
 		return;
 	}
 
-	if (controller.cron === '0 0 */7 * *') {
+	if (controller.cron === '0 0 */2 * *') {
 		console.log('Running scheduled task: Event creation from calendar');
 		console.log('Started at', new Date().toISOString());
 

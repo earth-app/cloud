@@ -688,7 +688,17 @@ const topicExamples = [
 	'sociology',
 	'community building',
 	'education',
-	'learning science'
+	'learning science',
+	'kids development',
+	'animal studies',
+	'sports medicine',
+	'aviation',
+	'computer science',
+	'psychiatry',
+	'computer art',
+	'historical science',
+	'social studies',
+	'education'
 ];
 
 export const articleTopicPrompt = (): string => {

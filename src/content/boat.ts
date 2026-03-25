@@ -210,7 +210,7 @@ export async function postActivity(bindings: Bindings, activity: Activity): Prom
 }
 
 // Article Endpoints
-export async function findArticle(bindings: Bindings): Promise<[OceanArticle, string[]]> {
+export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], string[]]> {
 	const ai = bindings.AI as Ai;
 
 	let topicRaw;
@@ -303,49 +303,53 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle, st
 		);
 	}
 
-	// Find highest-ranked article
-	const best = allRanked.sort((a, b) => b.score - a.score)[0];
-	if (!best) {
-		throw new Error('No best article found after ranking: length ' + allRanked.length);
+	// Find highest-ranked and lowest-ranked articles
+	const sortedByScore = allRanked.sort((a, b) => b.score - a.score);
+	const best = sortedByScore[0];
+	const worst = sortedByScore[sortedByScore.length - 1];
+
+	if (!best || !worst) {
+		throw new Error('Failed to find best/worst articles: length ' + allRanked.length);
 	}
 
-	// Bounds check before accessing array
-	if (best.id < 0 || best.id >= allArticles.length) {
-		throw new Error(`Invalid article index: ${best.id} (array length: ${allArticles.length})`);
+	// Select indices: best (0) and worst (last) for bookend diversity
+	const selectedIndices = [best.id, worst.id];
+	const selectedArticles: OceanArticle[] = [];
+
+	for (const idx of selectedIndices) {
+		if (idx < 0 || idx >= allArticles.length) {
+			throw new Error(`Invalid article index: ${idx} (array length: ${allArticles.length})`);
+		}
+		const article = allArticles[idx].ocean;
+		if (!article) {
+			throw new Error('Article data not found: index ' + idx);
+		}
+		selectedArticles.push(article);
 	}
 
-	const bestArticle = allArticles[best.id].ocean;
-	if (!bestArticle) {
-		throw new Error('Best article data not found: index ' + best.id + ' of ' + allArticles.length);
-	}
-
-	// Sanitize keywords
-	const keywords: string[] = [];
-	for (const kw of bestArticle.keywords || []) {
-		if (keywords.length >= 25) break;
-
-		const cleaned = kw.trim().split(/\. +/g); // sometimes keywords are split by ". "
-		for (const c of cleaned) {
+	// Sanitize keywords and clean selected articles
+	for (const article of selectedArticles) {
+		const keywords: string[] = [];
+		for (const kw of article.keywords || []) {
 			if (keywords.length >= 25) break;
-
-			const c2 = c.trim();
-			if (c2.length > 0 && c2.length < 35 && !keywords.includes(c2)) {
-				keywords.push(c2);
+			const cleaned = kw.trim().split(/\. +/g);
+			for (const c of cleaned) {
+				if (keywords.length >= 25) break;
+				const c2 = c.trim();
+				if (c2.length > 0 && c2.length < 35 && !keywords.includes(c2)) {
+					keywords.push(c2);
+				}
 			}
+		}
+		if ((article as any).type) {
+			delete (article as any).type;
+		}
+		if (article.favicon && !article.favicon.startsWith('http')) {
+			delete article.favicon;
 		}
 	}
 
-	// Remove 'type' tag from bestArticle
-	if ((bestArticle as any).type) {
-		delete (bestArticle as any).type;
-	}
-
-	// Remove invalid favicon URLs
-	if (bestArticle.favicon && !bestArticle.favicon.startsWith('http')) {
-		delete bestArticle.favicon;
-	}
-
-	return [bestArticle, tags];
+	return [selectedArticles, tags];
 }
 
 let HAS_PUBMED_API_KEY = false;
