@@ -431,7 +431,7 @@ export const badges = (
 			tracker_id: 'article_quizzes_completed_perfect_score'
 		},
 		{
-			id: 'super_bookworm',
+			id: 'master_bookworm',
 			description: 'Read articles for at least 45 hours',
 			icon: 'material-symbols:book-2',
 			rarity: 'amazing',
