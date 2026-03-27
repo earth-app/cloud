@@ -23,22 +23,6 @@ const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const quizModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 const promptModel = '@cf/openai/gpt-oss-120b';
 
-const activityTagsSchema = {
-	type: 'object',
-	properties: {
-		tags: {
-			type: 'array',
-			minItems: 1,
-			maxItems: 5,
-			items: {
-				type: 'string',
-				enum: com.earthapp.activity.ActivityType.values().map((t: any) => t.name.toUpperCase())
-			}
-		}
-	},
-	required: ['tags']
-};
-
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
 		// Generate description with retry logic (3 attempts)
