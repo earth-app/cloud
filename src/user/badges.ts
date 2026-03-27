@@ -423,6 +423,14 @@ export const badges = (
 			tracker_id: 'articles_read'
 		},
 		{
+			id: 'quiz_master',
+			description: 'Complete 50 article quizzes',
+			icon: 'mdi:school',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 50),
+			tracker_id: 'article_quizzes_completed'
+		},
+		{
 			id: 'juris_doctor',
 			description: 'Get 100% on 10 article quizzes',
 			icon: 'mdi:gavel',
@@ -458,6 +466,14 @@ export const badges = (
 			description: 'Maintain a 365-day streak on any journey',
 			icon: 'mdi:trophy-award',
 			rarity: 'green'
+		},
+		{
+			id: 'masters',
+			description: 'Complete 150 article quizzes',
+			icon: 'mdi:account-school-outline',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 150),
+			tracker_id: 'article_quizzes_completed'
 		},
 		{
 			id: 'doctorate',
