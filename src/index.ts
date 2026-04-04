@@ -38,7 +38,7 @@ main.use((c, next) => {
 	return next();
 }); // Custom headers middleware
 main.use(
-	'*',
+	'/v1/*',
 	cache({
 		// Cache middleware
 		cacheName: 'earth-app-cache',
