@@ -446,7 +446,7 @@ describe('postEvent', () => {
 				date: Date.now(),
 				visibility: 'PUBLIC'
 			} as any,
-			createBindings(),
+			createBindings({ MAPS_API_KEY: 'test-maps-key' } as Partial<Bindings>),
 			{ waitUntil: () => {} }
 		);
 
