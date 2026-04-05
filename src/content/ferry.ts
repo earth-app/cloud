@@ -32,7 +32,7 @@ async function embedText(env: Bindings, text: string): Promise<number[]> {
 	return tryCache(`embedding:text:${text.substring(0, 100)}`, env.CACHE, async () => {
 		const response = (await env.AI.run(embedModel, {
 			text
-		})) as Ai_Cf_Baai_Bge_M3_Ouput_Embedding;
+		})) as Ai_Cf_Baai_Bge_M3_Output_Embedding;
 
 		if (!response?.data || response.data.length === 0) {
 			throw new Error('Embedding failed');
