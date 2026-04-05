@@ -1,71 +1,176 @@
 import { Bindings } from './types';
 
+type PlaceSearchResponse = {
+	places?: Array<{ name?: string | null }> | null;
+};
+
+type PlaceSearchResult = {
+	placeName: string | null;
+	responseOk: boolean;
+};
+
+type PlaceDetailsResponse = {
+	photos?: Array<{
+		name?: string | null;
+		authorAttributions?: Array<{
+			displayName?: string | null;
+		}> | null;
+	}> | null;
+};
+
+async function searchPlaceName(
+	textQuery: string,
+	bindings: Bindings,
+	includedType?: string
+): Promise<PlaceSearchResult> {
+	const body: Record<string, unknown> = {
+		textQuery,
+		maxResultCount: 1
+	};
+	if (includedType) {
+		body.includedType = includedType;
+	}
+
+	let search: Response;
+	try {
+		search = await fetch('https://places.googleapis.com/v1/places:searchText', {
+			method: 'POST',
+			body: JSON.stringify(body),
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Goog-Api-Key': bindings.MAPS_API_KEY,
+				'X-Goog-FieldMask': 'places.name'
+			}
+		});
+	} catch (err) {
+		console.error('Failed to send place thumbnail search request', {
+			textQuery,
+			includedType,
+			err
+		});
+		return { placeName: null, responseOk: false };
+	}
+
+	if (!search.ok) {
+		console.error('Failed to search for place thumbnail', {
+			textQuery,
+			includedType,
+			status: search.status,
+			statusText: search.statusText,
+			body: await search.text()
+		});
+		return { placeName: null, responseOk: false };
+	}
+
+	let places: PlaceSearchResponse;
+	try {
+		places = await search.json<PlaceSearchResponse>();
+	} catch (err) {
+		console.error('Failed to parse place thumbnail search response', {
+			textQuery,
+			includedType,
+			err
+		});
+		return { placeName: null, responseOk: false };
+	}
+
+	const placeName = places.places?.[0]?.name;
+	if (!placeName || typeof placeName !== 'string') {
+		return { placeName: null, responseOk: true };
+	}
+
+	const normalizedPlaceName = placeName.trim();
+	return {
+		placeName: normalizedPlaceName.length > 0 ? normalizedPlaceName : null,
+		responseOk: true
+	};
+}
+
 // returns [imageData, authorName]
 export async function findPlaceThumbnail(
 	name: string,
 	bindings: Bindings
 ): Promise<[Uint8Array | null, string | null]> {
 	const cleanedName = name.replace(/\s*\(([^)]+)\)\s*/g, ', $1').trim();
-
-	const search = await fetch('https://places.googleapis.com/v1/places:searchText', {
-		method: 'POST',
-		body: JSON.stringify({
-			textQuery: cleanedName,
-			includedType: 'locality',
-			maxResultCount: 1
-		}),
-		headers: {
-			'Content-Type': 'application/json',
-			'X-Goog-Api-Key': bindings.MAPS_API_KEY,
-			'X-Goog-FieldMask': 'places.name'
-		}
-	});
-
-	if (!search.ok) {
-		console.error('Failed to search for place thumbnail', {
-			name,
-			cleanedName,
-			status: search.status,
-			statusText: search.statusText,
-			body: await search.text()
-		});
-
-		throw new Error('Place search request failed');
+	if (!cleanedName) {
+		console.warn('No place name provided for thumbnail search', { name });
+		return [null, null];
 	}
 
-	const places = await search.json<{ places: { name: string }[] }>();
+	if (!bindings.MAPS_API_KEY || bindings.MAPS_API_KEY.trim().length === 0) {
+		console.error('MAPS_API_KEY is missing; cannot generate event thumbnail', {
+			name,
+			cleanedName
+		});
+		return [null, null];
+	}
 
-	if (!places.places || places.places.length === 0) {
+	// First try locality (best for city birthdays), then fallback to a broader search
+	// for countries/regions where includedType=locality can miss valid places.
+	const localitySearch = await searchPlaceName(cleanedName, bindings, 'locality');
+	let placeName = localitySearch.placeName;
+
+	// Only widen the search if the locality query succeeded but had no results.
+	if (!placeName && localitySearch.responseOk) {
+		const broadSearch = await searchPlaceName(cleanedName, bindings);
+		placeName = broadSearch.placeName;
+	}
+
+	if (!placeName) {
 		console.warn('No places found for thumbnail search', { name, cleanedName });
 		return [null, null];
 	}
 
-	const placeName = places.places[0].name;
+	let detailsRes: Response;
+	try {
+		detailsRes = await fetch(`https://places.googleapis.com/v1/${placeName}`, {
+			method: 'GET',
+			headers: {
+				'Content-Type': 'application/json',
+				'X-Goog-Api-Key': bindings.MAPS_API_KEY,
+				'X-Goog-FieldMask': 'photos'
+			}
+		});
+	} catch (err) {
+		console.error('Failed to fetch place details for thumbnail search', {
+			name,
+			placeName,
+			err
+		});
+		return [null, null];
+	}
 
-	const data = await fetch(`https://places.googleapis.com/v1/${placeName}`, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			'X-Goog-Api-Key': bindings.MAPS_API_KEY,
-			'X-Goog-FieldMask': 'photos'
-		}
-	}).then((res) =>
-		res.json<{
-			photos: {
-				name: string;
-				authorAttributions: {
-					displayName: string;
-				}[];
-			}[];
-		}>()
-	);
+	if (!detailsRes.ok) {
+		console.error('Failed to fetch place details for thumbnail search', {
+			name,
+			placeName,
+			status: detailsRes.status,
+			statusText: detailsRes.statusText,
+			body: await detailsRes.text()
+		});
+		return [null, null];
+	}
 
-	if (!data.photos || data.photos.length === 0) {
+	let data: PlaceDetailsResponse;
+	try {
+		data = await detailsRes.json<PlaceDetailsResponse>();
+	} catch (err) {
+		console.error('Failed to parse place details response for thumbnail search', {
+			name,
+			placeName,
+			err
+		});
+		return [null, null];
+	}
+
+	const firstPhoto = data.photos?.[0];
+	if (!firstPhoto || !firstPhoto.name || typeof firstPhoto.name !== 'string') {
 		console.warn('No photos found for place thumbnail', { name, placeName });
 		return [null, null];
 	}
 
-	const { name: photoName, authorAttributions: author } = data.photos[0];
+	const photoName = firstPhoto.name;
+	const authorName = firstPhoto.authorAttributions?.[0]?.displayName?.trim() || null;
 
 	const photoData = await fetch(
 		`https://places.googleapis.com/v1/${photoName}/media?maxHeightPx=720&maxWidthPx=1280&key=${bindings.MAPS_API_KEY}`
@@ -82,9 +187,24 @@ export async function findPlaceThumbnail(
 		return [null, null];
 	}
 
-	const blob = await photoData.blob();
-	const arrayBuffer = await blob.arrayBuffer();
-	return [new Uint8Array(arrayBuffer), author?.[0]?.displayName || null];
+	const contentType = photoData.headers.get('Content-Type') || '';
+	if (!contentType.startsWith('image/')) {
+		console.error('Place photo media response was not an image', {
+			name,
+			placeName,
+			photoName,
+			contentType
+		});
+		return [null, null];
+	}
+
+	const arrayBuffer = await photoData.arrayBuffer();
+	if (arrayBuffer.byteLength === 0) {
+		console.warn('Place photo media response was empty', { name, placeName, photoName });
+		return [null, null];
+	}
+
+	return [new Uint8Array(arrayBuffer), authorName];
 }
 
 // geocoding & reverse geocoding

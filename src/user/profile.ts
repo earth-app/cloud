@@ -1,6 +1,5 @@
-import { ExecutionContext } from '@cloudflare/workers-types';
 import { UserProfilePromptData, generateProfilePhoto } from '../util/ai';
-import { Bindings } from '../util/types';
+import { Bindings, ExecutionCtxLike } from '../util/types';
 import { streamToUint8Array } from '../util/util';
 
 export type ImageSizes = 32 | 128 | 1024 | null;
@@ -29,7 +28,7 @@ export async function newProfilePhoto(
 	data: UserProfilePromptData,
 	id: bigint,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ) {
 	const profileImage = `users/${id}/profile.png`;
 	const profile = await generateProfilePhoto(data, bindings.AI);
@@ -52,7 +51,7 @@ export async function getProfileVariation(
 	id: bigint,
 	size: ImageSizes,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ) {
 	if (id === 1n) {
 		const resp = await bindings.ASSETS.fetch('https://assets.local/cloud.png');
@@ -89,7 +88,7 @@ export async function createPhotoVariation(
 	profile: Uint8Array,
 	id: bigint,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ): Promise<Uint8Array> {
 	if (!size) return await getProfilePhoto(id, bindings);
 

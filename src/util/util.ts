@@ -1,4 +1,3 @@
-import { KVNamespace } from '@cloudflare/workers-types';
 import Pako from 'pako';
 
 export function capitalizeFully(str: string): string {

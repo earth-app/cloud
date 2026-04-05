@@ -1,8 +1,7 @@
 import { Buffer } from 'node:buffer';
 import { HTTPException } from 'hono/http-exception';
 import { quests, QuestStep } from '.';
-import { Bindings } from '../../util/types';
-import { ActivityType } from '../../util/types';
+import { ActivityType, Bindings, ExecutionCtxLike } from '../../util/types';
 import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util';
 import { addImpactPoints } from '../points';
 import { sendUserNotification } from '../notifications';
@@ -345,7 +344,7 @@ export async function checkStepDelay(
 export async function maybeArchiveCompletedQuest(
 	userId: string,
 	bindings: Bindings,
-	ctx?: ExecutionContext
+	ctx?: ExecutionCtxLike
 ): Promise<void> {
 	const userId0 = normalizeId(userId);
 	const res = await bindings.KV.getWithMetadata<
@@ -503,7 +502,7 @@ export async function updateQuestProgress(
 	stepResponse: QuestStepResponse,
 	device: QuestDeviceMetadata,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ) {
 	const userId0 = normalizeId(userId);
 	const res = await bindings.KV.getWithMetadata<
@@ -674,7 +673,7 @@ export async function handleQuizQuestStep(
 	scorePercent: number,
 	articleTypes: ActivityType[] | undefined,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ): Promise<{ handled: boolean; completed?: boolean; message?: string }> {
 	if (!articleTypes || articleTypes.length === 0) {
 		console.log(`handleQuizQuestStep: no article types provided for user ${userId}, skipping`);

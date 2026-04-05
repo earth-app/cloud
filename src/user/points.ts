@@ -1,4 +1,3 @@
-import type { KVNamespace } from '@cloudflare/workers-types';
 import { normalizeId } from '../util/util';
 
 export type ImpactPointsChange = {

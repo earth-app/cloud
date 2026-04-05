@@ -7,7 +7,6 @@ import {
 	EventData,
 	OceanArticle
 } from './types';
-import { Ai } from '@cloudflare/workers-types';
 import { Entry } from '@earth-app/moho';
 import { ScoringCriterion } from '../content/ferry';
 

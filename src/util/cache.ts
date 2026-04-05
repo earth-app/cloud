@@ -1,5 +1,3 @@
-import { KVNamespace } from '@cloudflare/workers-types';
-
 const CACHE_TTL = 60 * 60 * 12; // 12 hours in seconds
 
 export async function cache(
@@ -64,7 +62,7 @@ export async function tryCache<T>(
 	} else {
 		// Cache miss, call fallback
 		const obj = await fallback();
-		cache(id, obj, kv, ttl).catch((err) => {
+		await cache(id, obj, kv, ttl).catch((err) => {
 			console.error(`Failed to cache data for ${id}:`, err);
 		});
 		return obj;

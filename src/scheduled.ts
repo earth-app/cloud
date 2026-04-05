@@ -11,29 +11,12 @@ import {
 } from './content/boat';
 import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
 import { Bindings } from './util/types';
-import { batchProcess } from './util/util';
 
 export default async function scheduled(
 	controller: ScheduledController,
 	env: Bindings,
 	ctx: ExecutionContext
 ) {
-	if (controller.cron === '0 * * * *') {
-		console.log('Running scheduled task: Cache leaderboards');
-		console.log('Started at', new Date().toISOString());
-
-		const types = ['article', 'prompt', 'event'];
-		await Promise.all(
-			types.map(async (type) => {
-				await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
-				console.log(`Cached leaderboard for journey type: ${type}`);
-			})
-		);
-
-		console.log('Finished at', new Date().toISOString());
-		return;
-	}
-
 	if (controller.cron === '0 * * * *') {
 		console.log('Running scheduled task: Cache leaderboards');
 		console.log('Started at', new Date().toISOString());
@@ -96,22 +79,34 @@ export default async function scheduled(
 		console.log('Running scheduled task: Event creation from calendar');
 		console.log('Started at', new Date().toISOString());
 
-		const entries = retrieveEvents();
-		const promises = entries.map(async (entry) => {
-			const event = await createEvent(entry.entry, entry.date, env);
-			if (!event) return null;
-			return await postEvent(event, env, ctx);
-		});
+		const entries = await retrieveEvents();
+		const events: Array<Record<string, unknown> | null> = [];
+		for (const entry of entries) {
+			try {
+				const event = await createEvent(entry.entry, entry.date, env);
+				if (!event) {
+					events.push(null);
+					continue;
+				}
 
-		const events = await batchProcess(promises);
+				const created = await postEvent(event, env, ctx);
+				events.push(created as Record<string, unknown>);
+			} catch (err) {
+				console.error('Failed to create/post scheduled event; continuing', {
+					entryName: entry.entry?.name,
+					date: entry.date?.toISOString?.(),
+					err
+				});
+				events.push(null);
+			}
+		}
+
 		for (const event of events) {
 			if (!event) continue;
+			const name = typeof event.name === 'string' ? event.name : '<unknown>';
+			const description = typeof event.description === 'string' ? event.description : '';
 
-			console.log(
-				'Created new event:',
-				`"${event.name}" | `,
-				event.description?.slice(0, 100) + '...'
-			);
+			console.log('Created new event:', `"${name}" | `, description.slice(0, 100) + '...');
 		}
 
 		console.log('Finished at', new Date().toISOString());

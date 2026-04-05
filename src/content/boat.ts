@@ -2,18 +2,31 @@
 
 import { com } from '@earth-app/ocean';
 
-import { Activity, Article, Bindings, Event, EventData, OceanArticle, Prompt } from '../util/types';
+import {
+	Activity,
+	Article,
+	Bindings,
+	Event,
+	EventData,
+	ExecutionCtxLike,
+	OceanArticle,
+	Prompt
+} from '../util/types';
 import * as prompts from '../util/ai';
-import { Ai } from '@cloudflare/workers-types';
 import { chunkArray, batchProcess, normalizeId } from '../util/util';
 import { toOrdinal, splitContent, stripMarkdownCodeFence, getSynonyms } from '../util/lang';
 import {
 	Entry,
+	ExactDateEntry,
 	ExactDateWithYearEntry,
 	getAllEntries,
 	getEntriesInNextWeeks
 } from '@earth-app/moho';
-import { extractLocationFromEventName, uploadPlaceThumbnail } from './thumbnails';
+import {
+	extractLocationFromEventName,
+	parseBirthdayEventName,
+	uploadPlaceThumbnail
+} from './thumbnails';
 
 const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -890,10 +903,53 @@ export async function rankActivitiesForEvent(
 	return topRanked;
 }
 
-export function retrieveEvents() {
-	const allEntries = getAllEntries('/bundle/data');
-	const events = getEntriesInNextWeeks(allEntries, 2);
-	return events;
+type UpcomingCalendarEntries = ReturnType<typeof getEntriesInNextWeeks>;
+
+export function retrieveEvents(): UpcomingCalendarEntries {
+	const candidateRoots = ['/bundle/data', 'bundle/data', './bundle/data'];
+
+	for (const root of candidateRoots) {
+		try {
+			const allEntries = getAllEntries(root);
+			return getEntriesInNextWeeks(allEntries, 2);
+		} catch {
+			// Try the next candidate path.
+		}
+	}
+
+	console.warn('Failed to retrieve event calendar data from bundle paths', {
+		candidateRoots
+	});
+	return [];
+}
+
+function isValidEntryMonthDay(month: number, day: number): boolean {
+	if (!Number.isInteger(month) || !Number.isInteger(day)) {
+		return false;
+	}
+	if (month < 1 || month > 12 || day < 1 || day > 31) {
+		return false;
+	}
+
+	// Keep leap-day anniversaries valid; moho resolves these to Mar 1 on non-leap years.
+	if (month === 2 && day === 29) {
+		return true;
+	}
+
+	const maxDay = new Date(2025, month, 0).getDate();
+	return day <= maxDay;
+}
+
+function getInvalidEntryMonthDay(entry: Entry): { month: number; day: number } | null {
+	if (!(entry instanceof ExactDateEntry) && !(entry instanceof ExactDateWithYearEntry)) {
+		return null;
+	}
+
+	if (!isValidEntryMonthDay(entry.month, entry.day)) {
+		return { month: entry.month, day: entry.day };
+	}
+
+	return null;
 }
 
 export async function createEvent(
@@ -904,6 +960,25 @@ export async function createEvent(
 	let name = entry.name;
 	if (!name) {
 		console.warn('Event entry has no name, skipping event creation', { entry });
+		return null;
+	}
+
+	const invalidMonthDay = getInvalidEntryMonthDay(entry);
+	if (invalidMonthDay) {
+		console.warn('Event entry has invalid month/day in source data, skipping event creation', {
+			name,
+			source: entry.source,
+			month: invalidMonthDay.month,
+			day: invalidMonthDay.day
+		});
+		return null;
+	}
+
+	if (isNaN(date.getTime())) {
+		console.warn('Event entry has invalid date, skipping event creation', {
+			name,
+			date
+		});
 		return null;
 	}
 
@@ -935,11 +1010,12 @@ export async function createEvent(
 	}
 
 	// Format birthday titles with ordinal numbers
-	if (entry instanceof ExactDateWithYearEntry && name.includes("'s Birthday")) {
+	if (entry instanceof ExactDateWithYearEntry) {
+		const parsedBirthdayName = parseBirthdayEventName(name);
 		const yearsSince = entry.getYearsSince(date);
-		if (yearsSince > 0) {
-			const placeName = name.replace("'s Birthday", '');
-			name = `${placeName}'s ${toOrdinal(yearsSince)} Birthday`;
+		if (parsedBirthdayName && yearsSince > 0) {
+			const possessive = parsedBirthdayName.possessive || "'s";
+			name = `${parsedBirthdayName.rawLocationName}${possessive} ${toOrdinal(yearsSince)} Birthday`;
 		}
 	}
 
@@ -1200,7 +1276,7 @@ export async function recommendSimilarEvents(event: Event, pool: Event[], limit:
 export async function postEvent(
 	event: Awaited<ReturnType<typeof createEvent>>,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ) {
 	if (!event) {
 		throw new Error('No event data to post');
@@ -1230,24 +1306,60 @@ export async function postEvent(
 		throw new Error(`Failed to post event: ${res.status} ${res.statusText} - ${errorText}`);
 	}
 
-	const data = await res.json<any>();
-	if (!data || !data.id) {
+	let data: { id?: string | number; name?: string } & Record<string, unknown>;
+	try {
+		data = await res.json<{ id?: string | number; name?: string } & Record<string, unknown>>();
+	} catch (err) {
+		throw new Error(`Failed to parse event creation response: ${String(err)}`);
+	}
+
+	if (!data || data.id === undefined || data.id === null) {
 		throw new Error(`Failed to create event, no ID returned: ${JSON.stringify(data)}`);
 	}
+
+	const eventIdRaw = String(data.id).trim();
+	if (!/^\d+$/.test(eventIdRaw)) {
+		console.warn('Skipping thumbnail generation: event ID is not numeric', {
+			eventIdRaw,
+			name: data.name
+		});
+		return data;
+	}
+
+	const eventId = BigInt(eventIdRaw);
 
 	// Only generate thumbnails for birthday events (location-based)
 	// This includes countries, cities, and other places with birthdays
 	// Extract from persisted name first, because downstream callers (like crust)
 	// use the saved event name when generating thumbnails manually.
 	const persistedName = typeof data.name === 'string' ? data.name : '';
-	const sourceName = event.name;
+	const sourceName = event.name || '';
 	const locationName =
 		extractLocationFromEventName(persistedName) || extractLocationFromEventName(sourceName);
+	const hasBirthdayName = /birthday/i.test(persistedName) || /birthday/i.test(sourceName);
 	if (locationName) {
-		console.log(`Generating thumbnail for birthday event: ${locationName}`);
-		await uploadPlaceThumbnail(locationName, BigInt(data.id), bindings, ctx);
+		console.log(`Generating thumbnail for birthday event: ${locationName} (event ${eventIdRaw})`);
+		try {
+			const [image] = await uploadPlaceThumbnail(locationName, eventId, bindings, ctx);
+			if (!image || image.length === 0) {
+				console.warn('No thumbnail was generated for birthday event', {
+					eventId: eventIdRaw,
+					locationName,
+					persistedName,
+					sourceName
+				});
+			}
+		} catch (thumbnailErr) {
+			console.error('Thumbnail generation failed for created event; continuing without thumbnail', {
+				eventId: eventIdRaw,
+				locationName,
+				persistedName,
+				sourceName,
+				err: thumbnailErr
+			});
+		}
 	} else {
-		if (persistedName.includes('Birthday') || sourceName.includes('Birthday')) {
+		if (hasBirthdayName) {
 			console.warn('Skipping thumbnail generation: failed to parse birthday location', {
 				sourceName,
 				persistedName

@@ -1,4 +1,3 @@
-import { Ai, KVNamespace, R2Bucket, Fetcher } from '@cloudflare/workers-types';
 import { com } from '@earth-app/ocean';
 import { ScoreResult } from '../content/ferry';
 
@@ -17,6 +16,10 @@ export type Bindings = {
 	MANTLE_URL: string;
 	MAPS_API_KEY: string;
 	ENCRYPTION_KEY: string;
+};
+
+export type ExecutionCtxLike = {
+	waitUntil(promise: Promise<unknown>): void;
 };
 
 export type ActivityType = typeof com.earthapp.activity.ActivityType.prototype.name;

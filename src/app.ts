@@ -11,8 +11,13 @@ import {
 	recommendSimilarArticles,
 	recommendSimilarEvents
 } from './content/boat';
-import { extractLocationFromEventName } from './content/thumbnails';
-import { uploadPlaceThumbnail } from './content/thumbnails';
+import {
+	deleteEventThumbnail,
+	extractLocationFromEventName,
+	getEventThumbnail,
+	uploadEventThumbnail,
+	uploadPlaceThumbnail
+} from './content/thumbnails';
 import { getSynonyms } from './util/lang';
 import * as prompts from './util/ai';
 
@@ -25,12 +30,6 @@ import {
 	fromDataURL,
 	detectAudioFormat
 } from './util/util';
-import {} from './content/thumbnails';
-import {
-	getEventThumbnail,
-	deleteEventThumbnail,
-	uploadEventThumbnail
-} from './content/thumbnails';
 import {
 	getEventImageSubmissionsWithData,
 	getEventImage,
@@ -1738,64 +1737,98 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 
 // Events
 
-app.get('/events/thumbnail/:id', async (c) => {
-	const idParam = c.req.param('id');
+function parsePositiveEventId(idParam: string | undefined): bigint | null {
 	if (!idParam || !/^\d+$/.test(idParam)) {
-		return c.text('Event ID is required', 400);
+		return null;
 	}
-	const id = BigInt(idParam);
 
-	if (id <= 0n) {
+	try {
+		const id = BigInt(idParam);
+		return id > 0n ? id : null;
+	} catch {
+		return null;
+	}
+}
+
+function sanitizeHeaderValue(value: string | null | undefined): string {
+	if (!value) {
+		return 'Unknown';
+	}
+
+	const sanitized = value.replace(/[\r\n]+/g, ' ').trim();
+	return sanitized.length > 0 ? sanitized : 'Unknown';
+}
+
+function toBodyBytes(image: Uint8Array): Uint8Array<ArrayBuffer> {
+	const copy = new Uint8Array(image.length);
+	copy.set(image);
+	return copy;
+}
+
+function buildEventThumbnailHeaders(
+	id: bigint,
+	imageSize: number,
+	author: string | null | undefined
+): Record<string, string> {
+	return {
+		'X-Event-Thumbnail-Author': sanitizeHeaderValue(author),
+		'Content-Type': 'image/webp',
+		'Content-Length': imageSize.toString(),
+		'Content-Disposition': `inline; filename="event_${id}_thumbnail.webp"`,
+		'Cache-Control': 'public, max-age=31536000, immutable'
+	};
+}
+
+app.get('/events/thumbnail/:id', async (c) => {
+	const id = parsePositiveEventId(c.req.param('id'));
+	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	const [image, author] = await getEventThumbnail(id, c.env);
-	if (!image) {
-		return c.text('Event thumbnail not found', 404);
-	}
+	try {
+		const [image, author] = await getEventThumbnail(id, c.env);
+		if (!image || image.length === 0) {
+			return c.text('Event thumbnail not found', 404);
+		}
 
-	return c.body(new Uint8Array(image), 200, {
-		'X-Event-Thumbnail-Author': author || 'Unknown',
-		'Content-Type': 'image/webp',
-		'Content-Length': image.length.toString(),
-		'Content-Disposition': `inline; filename="event_${id}_thumbnail.webp"`,
-		'Cache-Control': 'public, max-age=31536000, immutable'
-	});
+		return c.body(toBodyBytes(image), 200, buildEventThumbnailHeaders(id, image.length, author));
+	} catch (err) {
+		console.error('Error retrieving event thumbnail', { eventId: id.toString(), err });
+		return c.text('Failed to get event thumbnail', 500);
+	}
 });
 
 app.get('/events/thumbnail/:id/metadata', async (c) => {
-	const idParam = c.req.param('id');
-	if (!idParam || !/^\d+$/.test(idParam)) {
-		return c.text('Event ID is required', 400);
-	}
-	const id = BigInt(idParam);
-
-	if (id <= 0n) {
+	const id = parsePositiveEventId(c.req.param('id'));
+	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	const [image, author] = await getEventThumbnail(id, c.env);
-	if (!image) {
-		return c.text('Event thumbnail not found', 404);
-	}
+	try {
+		const [image, author] = await getEventThumbnail(id, c.env);
+		if (!image || image.length === 0) {
+			return c.text('Event thumbnail not found', 404);
+		}
 
-	return c.json(
-		{
-			author: author || 'Unknown',
-			size: image.length
-		},
-		200
-	);
+		return c.json(
+			{
+				author: sanitizeHeaderValue(author),
+				size: image.length
+			},
+			200
+		);
+	} catch (err) {
+		console.error('Error retrieving event thumbnail metadata', {
+			eventId: id.toString(),
+			err
+		});
+		return c.text('Failed to get event thumbnail metadata', 500);
+	}
 });
 
 app.post('/events/thumbnail/:id', async (c) => {
-	const idParam = c.req.param('id');
-	if (!idParam || !/^\d+$/.test(idParam)) {
-		return c.text('Event ID is required', 400);
-	}
-	const id = BigInt(idParam);
-
-	if (id <= 0n) {
+	const id = parsePositiveEventId(c.req.param('id'));
+	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
 
@@ -1806,25 +1839,37 @@ app.post('/events/thumbnail/:id', async (c) => {
 		return c.text('Content-Type must be an image type', 400);
 	}
 
-	const body = await c.req.arrayBuffer();
+	let body: ArrayBuffer;
+	try {
+		body = await c.req.arrayBuffer();
+	} catch (err) {
+		console.error('Failed to read uploaded event thumbnail body', {
+			eventId: id.toString(),
+			err
+		});
+		return c.text('Failed to read image payload', 400);
+	}
 
 	const imageData = new Uint8Array(body);
 	if (imageData.length === 0) {
 		return c.text('Image data is required', 400);
 	}
 
-	await uploadEventThumbnail(id, imageData, '<user>', c.env, c.executionCtx);
-	return c.body(null, 204);
+	try {
+		await uploadEventThumbnail(id, imageData, '<user>', c.env, c.executionCtx);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error('Failed to upload event thumbnail', {
+			eventId: id.toString(),
+			err
+		});
+		return c.text('Failed to upload event thumbnail', 500);
+	}
 });
 
 app.post('/events/thumbnail/:id/generate', async (c) => {
-	const idParam = c.req.param('id');
-	if (!idParam || !/^\d+$/.test(idParam)) {
-		return c.text('Event ID is required', 400);
-	}
-	const id = BigInt(idParam);
-
-	if (id <= 0n) {
+	const id = parsePositiveEventId(c.req.param('id'));
+	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
 
@@ -1835,36 +1880,40 @@ app.post('/events/thumbnail/:id/generate', async (c) => {
 
 	const location = extractLocationFromEventName(name);
 	if (!location) {
-		return c.text("Only birthday events (ending with 's Birthday) are allowed", 400);
+		return c.text('Only birthday events are allowed for automatic thumbnail generation', 400);
 	}
 
-	const [image, author] = await uploadPlaceThumbnail(location, id, c.env, c.executionCtx);
-	if (!image) {
-		return c.text('No thumbnail found for specified location', 404);
-	}
+	try {
+		const [image, author] = await uploadPlaceThumbnail(location, id, c.env, c.executionCtx);
+		if (!image || image.length === 0) {
+			return c.text('No thumbnail found for specified location', 404);
+		}
 
-	return c.body(new Uint8Array(image), 200, {
-		'X-Event-Thumbnail-Author': author || 'Unknown',
-		'Content-Type': 'image/webp',
-		'Content-Length': image.length.toString(),
-		'Content-Disposition': `inline; filename="event_${id}_thumbnail.webp"`,
-		'Cache-Control': 'public, max-age=31536000, immutable'
-	});
+		return c.body(toBodyBytes(image), 200, buildEventThumbnailHeaders(id, image.length, author));
+	} catch (err) {
+		console.error('Error generating event thumbnail', {
+			eventId: id.toString(),
+			name,
+			location,
+			err
+		});
+		return c.text('Failed to generate event thumbnail', 500);
+	}
 });
 
 app.delete('/events/thumbnail/:id', async (c) => {
-	const idParam = c.req.param('id');
-	if (!idParam || !/^\d+$/.test(idParam)) {
-		return c.text('Event ID is required', 400);
-	}
-	const id = BigInt(idParam);
-
-	if (id <= 0n) {
+	const id = parsePositiveEventId(c.req.param('id'));
+	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
 
-	await deleteEventThumbnail(id, c.env, c.executionCtx);
-	return c.body(null, 204);
+	try {
+		await deleteEventThumbnail(id, c.env, c.executionCtx);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error('Failed to delete event thumbnail', { eventId: id.toString(), err });
+		return c.text('Failed to delete event thumbnail', 500);
+	}
 });
 
 app.post('/users/recommend_events', async (c) => {

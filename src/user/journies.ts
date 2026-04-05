@@ -1,6 +1,6 @@
-import { KVNamespace } from '@cloudflare/workers-types';
 import { tryCache } from '../util/cache';
 import { normalizeId, isLegacyPaddedId, migrateLegacyKey, capitalizeFully } from '../util/util';
+import { ExecutionCtxLike } from '../util/types';
 import { addImpactPoints } from './points';
 
 const journeyTypes = ['article', 'prompt', 'event'];
@@ -34,7 +34,7 @@ export async function incrementJourney(
 	id: string,
 	type: string,
 	kv: KVNamespace,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ): Promise<number> {
 	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
 

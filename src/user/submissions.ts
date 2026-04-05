@@ -1,5 +1,4 @@
-import { ExecutionContext, KVNamespace } from '@cloudflare/workers-types';
-import { Bindings } from '../util/types';
+import { Bindings, ExecutionCtxLike } from '../util/types';
 import {
 	normalizeId,
 	streamToUint8Array,
@@ -69,7 +68,7 @@ export async function submitEventImage(
 	userId: bigint,
 	image: Uint8Array,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ) {
 	if (!eventId || !userId) {
 		throw new Error('Event ID and User ID are required for submitting an image');
@@ -180,7 +179,7 @@ export async function deleteEventImageSubmission(
 	userId: bigint,
 	submissionId: string,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ) {
 	const imagePath = `events/${eventId}/submissions/${userId}_${submissionId}.webp`;
 
@@ -214,7 +213,7 @@ export async function deleteEventImageSubmissions(
 	eventId: bigint | null,
 	userId: bigint | null,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ) {
 	if (!eventId && !userId) {
 		return;

@@ -1,7 +1,6 @@
-import type { KVNamespace } from '@cloudflare/workers-types';
 import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
 import { sendUserNotification } from './notifications';
-import { Bindings, Rarity } from '../util/types';
+import { Bindings, ExecutionCtxLike, Rarity } from '../util/types';
 import { addImpactPoints } from './points';
 
 export type BadgeTracker =
@@ -885,7 +884,7 @@ export async function checkAndGrantBadges(
 	userId: string,
 	trackerId: string,
 	bindings: Bindings,
-	ctx: ExecutionContext
+	ctx: ExecutionCtxLike
 ): Promise<string[]> {
 	const kv = bindings.KV;
 	const normalizedUserId = normalizeId(userId);
