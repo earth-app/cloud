@@ -3,10 +3,11 @@
 > The Automaton behind The Earth App
 
 A sophisticated Cloudflare Workers-based microservice that powers The Earth App's
-AI-driven content generation, recommendation engine, user content tracking.
-Built with Hono.js, this service orchestrates multiple AI models, manages
-distributed caching, and provides a comprehensive REST API for activity
-discovery, article curation, and personalized recommendations.
+AI-driven content generation, recommendations, events, realtime notifications,
+and user progression systems. Built with Hono.js, this service orchestrates
+multiple AI models, manages distributed caching, and exposes a comprehensive
+REST + WebSocket API for activity discovery, article curation, quest tracking,
+image submissions, and personalized recommendations.
 
 ## Table of Contents
 
@@ -23,361 +24,388 @@ discovery, article curation, and personalized recommendations.
 
 ## Architecture Overview
 
-The Cloud service is a serverless application running on Cloudflare Workers that
-implements a multi-layered architecture:
+The Cloud service is a serverless application running on Cloudflare Workers with
+three primary runtime surfaces: REST APIs, WebSocket notification channels, and
+scheduled automation.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Hono.js Router                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │  Middleware  │  │   API v1     │  │   Scheduled  │       │
-│  │  - Security  │  │  - Activities│  │   - Hourly   │       │
-│  │  - CORS      │  │  - Articles  │  │   - 4-hourly │       │
-│  │  - Cache     │  │  - Users     │  │   - Weekly   │       │
-│  │  - Logger    │  │  - Journeys  │  │              │       │
-│  │              │  │  - Badges    │  │              │       │
-│  └──────────────┘  └──────────────┘  └──────────────┘       │
-└─────────────────────────────────────────────────────────────┘
-                       │            │
-        ┌──────────────┼────────────┼──────────────┐
-        ▼              ▼            ▼              ▼
-   ┌─────────┐    ┌─────────┐   ┌─────────┐   ┌─────────┐
-   │   AI    │    │   KV    │   │   R2    │   │ Durable │
-   │ Models  │    │  Cache  │   │ Storage │   │ Objects │
-   └─────────┘    └─────────┘   └─────────┘   └─────────┘
-        │                                            │
-        ▼                                            ▼
-  ┌─────────────────────────────────────────────────────────┐
-  │     External Services & Data Sources                    │
-  │  - NCBI PubMed API (Scientific Articles)                │
-  │  - Iconify API (Activity Icons)                         │
-  │  - Dictionary API (Synonyms)                            │
-  │  - Mantle API (Backend Integration)                     │
-  └─────────────────────────────────────────────────────────┘
+```txt
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Hono.js Edge Router                         │
+│  ┌────────────────┐  ┌────────────────┐  ┌──────────────────────┐   │
+│  │ Middleware     │  │ API /v1        │  │ API /ws              │   │
+│  │ - Security     │  │ - Activities   │  │ - Ticket issuance    │   │
+│  │ - CORS         │  │ - Articles     │  │ - Live notifications │   │
+│  │ - Logger       │  │ - Events       │  │ - Admin push         │   │
+│  │ - HTTP cache   │  │ - Quests       │  │                      │   │
+│  └────────────────┘  │ - Badges/Points│  └──────────────────────┘   │
+│                      │ - Journeys     │                             │
+│                      └────────────────┘                             │
+│                    Scheduled Worker (cron triggers)                 │
+└─────────────────────────────────────────────────────────────────────┘
+               │                 │                 │
+               ▼                 ▼                 ▼
+     ┌────────────────┐  ┌───────────────┐  ┌────────────────────┐
+     │ Cloudflare AI  │  │ KV + Cache KV │  │ R2 + Images Binding│
+     └────────────────┘  └───────────────┘  └────────────────────┘
+                         ┌──────────────────────────────────────────┐
+                         │ Durable Objects                          │
+                         │ - LiveNotifier (WebSocket fan-out)       │
+                         │ - UserTimer (user timer actions)         │
+                         └──────────────────────────────────────────┘
 ```
 
 ### Request Flow
 
-1. **Incoming Request** → Middleware stack (security headers, CORS, logging)
-2. **Authentication** → Bearer token validation against `ADMIN_API_KEY`
-3. **Cache Check** → KV lookup with TTL-based invalidation (12-hour default)
-4. **Business Logic** → AI model invocation, data processing, validation
-5. **Response** → JSON serialization with custom headers (`X-Earth-App-Version`, `X-Earth-App-Name`)
+1. **Incoming request** -> middleware stack (headers, CORS, logging, cache)
+2. **Authentication** ->
+   - `/v1/*`: `Authorization: Bearer {ADMIN_API_KEY}`
+   - `/ws/notify`: admin key
+   - `/ws/users/:id/ticket`: user session token validation with Mantle
+3. **Cache lookup** -> deterministic key checks in `CACHE` namespace
+4. **Business logic** -> AI invocation, ranking, validation, KV/R2 reads+writes
+5. **Response** -> JSON or binary response with custom headers
 
 ## Technology Stack
 
 ### Core Dependencies
 
-| Package                       | Version       | Purpose                                                             |
-| ----------------------------- | ------------- | ------------------------------------------------------------------- |
-| **Hono**                      | ^4.10.3       | Ultra-fast web framework optimized for edge computing               |
-| **@cloudflare/workers-types** | ^4.20251014.0 | TypeScript definitions for Cloudflare Workers APIs                  |
-| **@earth-app/ocean**          | 1.0.0-a752a2e | Kotlin-compiled WASM library for article scraping & recommendations |
-| **pako**                      | ^2.1.0        | zlib compression (enabled via `nodejs_zlib` compatibility flag)     |
+- **hono** (`^4.12.10`): edge-optimized HTTP framework and middleware routing.
+- **@earth-app/ocean** (`^1.0.4`): Kotlin/WASM library for article/event search and activity recommendations.
+- **@earth-app/moho** (`^1.0.1`): calendar/event data source used for scheduled event generation.
+- **pako** (`^2.1.0`): compression support (`nodejs_zlib`).
+- **exifreader** (`^4.37.0`): EXIF parsing for event image metadata workflows.
+- **music-metadata** (`^11.12.3`): audio metadata utilities for media processing.
+- **@cloudflare/workerd-darwin-arm64** (`^1.20260405.1`): local runtime binary support while developing on Apple Silicon.
+
+### Type Strategy
+
+- Runtime/Worker types are generated with Wrangler into `src/worker-configuration.d.ts`.
+- `@cloudflare/workers-types` has been removed from dependencies and `tsconfig.json`.
 
 ### Development Tools
 
-- **Wrangler** (^4.45.2): Cloudflare Workers CLI for local development and deployment
-- **Prettier** (^3.6.2): Code formatting with Husky pre-commit hooks
-- **Bun**: JavaScript runtime for package management and local testing
+- **Wrangler** (^4.80.0): local dev, deploy, and type generation
+- **Vitest** (^4.1.2) + **@cloudflare/vitest-pool-workers** (^0.14.1): worker-native tests
+- **Prettier** (^3.8.1): formatting with Husky + lint-staged
+- **Bun**: package/runtime tooling
 
 ## Infrastructure & Bindings
 
-The service integrates with multiple Cloudflare services via environment bindings:
-
-### Storage Bindings
+The service integrates with Cloudflare services via Worker bindings:
 
 ```typescript
 type Bindings = {
-	R2: R2Bucket; // Object storage for user profile images
-	KV: KVNamespace; // General key-value persistence
-	CACHE: KVNamespace; // Dedicated caching layer (12-hour TTL)
-	ASSETS: Fetcher; // Static asset serving (public/ directory)
+	R2: R2Bucket;
+	AI: Ai;
+	KV: KVNamespace;
+	CACHE: KVNamespace;
+	ASSETS: Fetcher;
+	IMAGES: ImagesBinding;
+	NOTIFIER: DurableObjectNamespace;
+	TIMER: DurableObjectNamespace;
 
-	AI: Ai; // Cloudflare Workers AI gateway
-
-	ADMIN_API_KEY: string; // Bearer token for API authentication
-	NCBI_API_KEY: string; // NCBI E-utilities API key for PubMed access
-	MANTLE_URL: string; // Backend API base URL (default: https://api.earth-app.com)
+	ADMIN_API_KEY: string;
+	NCBI_API_KEY: string;
+	MANTLE_URL: string;
+	MAPS_API_KEY: string;
+	ENCRYPTION_KEY: string;
 };
 ```
 
 ### Cloudflare KV Namespaces
 
-- **CACHE** (`c4a1aaf2a5fc4be98b91df2d0fc0faab`): Ephemeral data with 12-hour TTL
-  - Activity descriptions, tags, icons
-  - Article rankings and recommendations
-  - User profile photos (data URLs)
+- **CACHE** (`c4a1aaf2a5fc4be98b91df2d0fc0faab`): ephemeral cache (12-hour default TTL)
+  - Activity metadata and synonyms
+  - Article/event recommendation results
+  - Scoring results
+  - Leaderboards and profile photo responses
 
-- **KV** (`322faefd5628471cb7cea08cf041804a`): Persistent data
-  - User journey streaks (2-day expiration with auto-renewal)
-  - Activity completion logs (no expiration)
+- **KV** (`322faefd5628471cb7cea08cf041804a`): persistent and semi-persistent app state
+  - Journey streaks and activity completion logs
+  - Badge progress + grant metadata
+  - Impact points history
+  - Quest progress/history metadata
+  - Event submission indices and score metadata
 
 ### R2 Bucket
 
-- **Bucket**: `earth-app` (production) / `earth-app-preview` (development)
-- **Contents**: User-generated profile images (`users/{id}/profile.png`)
-- **Metadata**: HTTP headers (`contentType: image/png`)
+- **Bucket**: `earth-app` (prod)
+- **Primary objects**:
+  - `users/{id}/profile.png` and resized variants
+  - `events/{eventId}/thumbnail.webp`
+  - `events/{eventId}/submissions/{userId}_{submissionId}.webp` (encrypted)
+  - `users/{id}/quests/{questId}/...` binary quest evidence (compressed + encrypted)
 
-### Cloudflare Workers AI
+### Durable Objects
 
-Configured for **remote execution** to bypass CPU limits. Supports:
+- **LiveNotifier** (`NOTIFIER`):
+  - Issues one-time WebSocket tickets
+  - Enforces one-time ticket consumption with transactional storage
+  - Fans out pushed notifications to connected sockets
 
-- Text generation (LLMs)
-- Text-to-image generation (Stable Diffusion)
-- Reranking models (semantic search)
+- **UserTimer** (`TIMER`):
+  - Tracks per-user timer actions (`start`/`stop`)
+  - Applies duration-based progress updates (e.g., reading-time trackers)
+
+### External Services
+
+- NCBI PubMed APIs (article search)
+- Iconify API (activity icon resolution)
+- Dictionary API (activity synonyms)
+- Google Places + Geocoding APIs (event thumbnail lookup/reverse geocode)
+- Mantle backend API (`MANTLE_URL`) for persistence integration
 
 ## Core Features
 
 ### 1. Dynamic Activity Generation
 
-Generates comprehensive activity metadata using multi-stage AI processing:
+`GET /v1/activity/:id` generates and caches activity metadata:
 
-```typescript
-// GET /v1/activity/:id
-{
-  id: "rock_climbing",
-  name: "Rock Climbing",
-  description: "Rock climbing is an exhilarating...", // 200-500 words
-  aliases: ["climbing", "bouldering", "mountaineering"],
-  types: ["SPORT", "HEALTH", "NATURE"],
-  fields: {
-    icon: "mdi:climbing"  // From Iconify API
-  }
-}
-```
+- AI-generated 200+ character descriptions with retry + validation
+- Activity type classification
+- Synonym enrichment
+- Icon lookup from preferred icon sets
 
-**AI Pipeline:**
+### 2. Scientific Article Curation + Quiz Generation
 
-1. **Description Generation** (`@cf/meta/llama-4-scout-17b-16e-instruct`)
-   - Retry logic: 3 attempts with validation
-   - Length: 200-500 words
-   - Validation: Checks for markdown artifacts, proper punctuation
+Automated article pipeline:
 
-2. **Tag Classification** (`@cf/meta/llama-3.1-8b-instruct-fp8`)
-   - Maps to predefined `ActivityType` enum
-   - Max 5 tags, fallback to `["OTHER"]`
+1. Generate a topic
+2. Search source articles via Ocean scrapers
+3. Rank with semantic reranker
+4. Build polished title + summary
+5. Generate 2-5 quiz questions
+6. Publish to Mantle and cache quiz payload
 
-3. **Alias Discovery** (Dictionary API)
-   - Fetches synonyms from dictionaryapi.dev
-   - Filters multi-word phrases, limits to 5
+Scheduled article creation now generates **two pieces per run** (best-ranked and worst-ranked)
+to improve diversity.
 
-4. **Icon Matching** (Iconify API)
-   - Preferred sets: `mdi`, `material-symbols`, `lucide`, `carbon`
-   - Prioritizes "rounded" variants
+### 3. Multi-Domain Recommendations
 
-### 2. Scientific Article Curation
+- **Articles**: `POST /v1/users/recommend_articles`
+- **Similar Articles**: `POST /v1/articles/recommend_similar_articles`
+- **Activities**: `POST /v1/users/recommend_activities`
+- **Events**: `POST /v1/users/recommend_events`
+- **Similar Events**: `POST /v1/events/recommend_similar_events`
 
-Automated article discovery, ranking, and summarization:
+All recommendation paths use AI ranking with deterministic cache keys and fallback behavior.
 
-**Scheduled Task** (every 4 hours):
+### 4. User Journeys + Leaderboards
 
-```typescript
-// Workflow:
-1. Generate topic (1-3 words) using @cf/meta/llama-3.2-3b-instruct
-2. Search PubMed + open-access journals via @earth-app/ocean
-3. Rank articles using @cf/baai/bge-reranker-base (semantic similarity)
-4. Generate title + summary using @cf/mistralai/mistral-small-3.1-24b-instruct
-5. POST to /v2/articles (Mantle backend)
-```
+Tracks streaks for `article`, `prompt`, and `event` journeys with:
 
-**Ranking Algorithm:**
+- 24-hour increment cooldown
+- 2-day rolling TTL renewal
+- Cached top leaderboard snapshots
+- Rank lookup endpoint
+- Separate permanent activity completion logs
 
-- Batched processing: 125 articles per chunk (GPU memory optimization)
-- Query: `"Articles primarily related to {topic} and tags: {tags}"`
-- Output: Cosine similarity scores, sorted descending
+### 5. Badges, Impact Points, and Timers
 
-**Content Validation:**
+User progression includes:
 
-- Title: 5-20 words, no markdown, no alternative titles (e.g., "Title A OR Title B")
-- Summary: 400-900 words, multi-paragraph format with natural transitions
-- Sanitization: Removes AI artifacts ("Here's...", "The answer is...")
+- Rule-based badge tracking and granting
+- Manual admin operations (grant/revoke/reset)
+- Impact point accounting with history
+- Timer-driven tracker updates through Durable Object actions
 
-### 3. Recommendation Engine
+### 6. Quest Engine (Multimodal)
 
-Multi-modal recommendation system using semantic reranking:
+Quest steps support image, audio, article quiz, and structured interactions:
 
-#### Article Recommendations (`POST /v1/users/recommend_articles`)
+- Binary quest artifacts are compressed + encrypted before R2 storage
+- Per-step delay windows and alternate step handling
+- Completed quest archiving + retrieval
+- Quest progress enrichment with generated data URLs for retrieval APIs
 
-```json
-{
-	"pool": [
-		/* max 20 articles */
-	],
-	"activities": ["hiking", "photography"], // max 10
-	"limit": 10 // max 25
-}
-```
+### 7. Event Creation + Thumbnail Automation
 
-**Algorithm:**
+Every 2 days, the worker generates events from Moho calendar data.
 
-- Query construction: `"Recommend articles related to {activities}"`
-- Model: `@cf/baai/bge-reranker-base` (BGE-Reranker-Base)
-- Context window: 512 tokens (title + tags + description excerpt)
+- Birthday-style events are parsed for location extraction
+- Place photos are discovered with Google Places APIs
+- Thumbnails are converted to WebP, stored in R2, and exposed via metadata-rich endpoints
+- Event creation continues even when thumbnail generation fails (best-effort resilience)
 
-#### Similar Articles (`POST /v1/articles/recommend_similar_articles`)
+### 8. Event Image Submissions + Scoring
 
-```json
-{
-	"article": {
-		/* reference article */
-	},
-	"pool": [
-		/* candidates, max 20 */
-	],
-	"limit": 5 // max 10
-}
-```
+Users can submit event images (data URL payloads), then retrieve scored results:
 
-**Similarity Scoring:**
+- Image normalization/transforms via Images binding
+- Encrypted object storage in R2
+- Score + caption generation via AI rubric
+- Query endpoints for submission lookup, pagination, filtering, and deletion
 
-- Query: Reference article's title + tags + content (first 500 chars)
-- Returns: Top-N articles by cosine similarity to reference
+### 9. Realtime WebSocket Notifications
 
-#### Activity Recommendations (`POST /v1/users/recommend_activities`)
+WebSocket flow under `/ws`:
 
-- Uses `@earth-app/ocean` Kotlin library (compiled to WASM)
-- Algorithm: Collaborative filtering based on activity co-occurrence
-- Input: All available activities + user's current activities
-- Output: Deduplicated recommendations (seen IDs filtered)
+1. Client requests a one-time ticket (`/ws/users/:id/ticket`)
+2. Ticket is validated and consumed on connect (`/ws/users/:id/notifications?ticket=...`)
+3. Backend/admin sends payloads through `/ws/notify`
 
-### 4. User Journey Tracking
+Security details include no-store headers, masked ticket logging, and strict one-time semantics.
 
-Persistent streak tracking with automatic expiration:
+### 10. AI-Generated Profile Photos
 
-```typescript
-// Journey types: 'article', 'prompt'
-// Storage: KV with 2-day TTL (auto-renewed on increment)
-
-GET  /v1/users/journey/:type/:id        → { count, lastWrite }
-POST /v1/users/journey/:type/:id/increment → { count }
-DELETE /v1/users/journey/:type/:id/delete  → 204 No Content
-```
-
-**Activity Journey** (special type):
-
-```typescript
-GET  /v1/users/journey/activity/:id/count  → { count }
-POST /v1/users/journey/activity/:id?activity=hiking → { count }
-```
-
-- Storage: JSON array of activity IDs
-- No expiration (permanent completion log)
-
-### 5. AI-Generated Prompts
-
-Daily thought-provoking questions using advanced reasoning:
-
-**Model:** `@cf/openai/gpt-oss-120b` (GPT-4-class model)
-
-```typescript
-{
-  instructions: "Generate exactly ONE original, thought-provoking question...",
-  input: "Create a question with prefix 'Why' about 'psychology'",
-  reasoning: {
-    effort: 'medium',
-    summary: 'concise'
-  }
-}
-```
-
-**Validation Rules:**
-
-- Length: <15 words, <100 characters
-- Format: Ends with `?`
-- Prohibited words: "what if", "imagine", "you", "your", "I", "my"
-- Tone: Timeless, open-ended (not yes/no)
-
-**Examples:**
-
-- "Why do some habits stick while others fade?"
-- "How does curiosity shape learning?"
-
-### 6. Dynamic Profile Photo Generation
-
-Personalized AI-generated profile pictures:
-
-```typescript
-PUT /v1/users/profile_photo/:id
-Body: {
-  username, bio, created_at, country, full_name,
-  activities: [{ name, description, types }]
-}
-```
-
-**Model:** `@cf/bytedance/stable-diffusion-xl-lightning`
-
-- **Style:** Flat, colorful, painting-like (no people/animals)
-- **Layout:** Centered object with abstract background
-- **Negative prompt:** "Avoid toys, scary elements, political statements, words"
-- **Guidance:** 35 (high adherence to prompt)
-
-**Storage:** R2 bucket at `users/{id}/profile.png`
+`PUT /v1/users/profile_photo/:id` generates a profile image and asynchronously creates
+size variants (`32`, `128`, original) with Images binding + R2 persistence.
 
 ## API Reference
 
-All endpoints require Bearer authentication: `Authorization: Bearer {ADMIN_API_KEY}`
+### Auth Model
+
+- All `/v1/*` endpoints require `Authorization: Bearer {ADMIN_API_KEY}`.
+- `/ws/notify` also requires admin bearer auth.
+- WebSocket user channels use session-validated one-time tickets (not admin keys).
+
+### Root
+
+| Method | Endpoint | Description             |
+| ------ | -------- | ----------------------- |
+| GET    | `/`      | Health check (`Woosh!`) |
+
+### Admin
+
+| Method | Endpoint                        | Description                    |
+| ------ | ------------------------------- | ------------------------------ |
+| POST   | `/v1/admin/migrate-legacy-keys` | Migrates legacy KV key formats |
 
 ### Activities
 
-| Method | Endpoint                   | Description                         | Cache TTL |
-| ------ | -------------------------- | ----------------------------------- | --------- |
-| GET    | `/v1/activity/:id`         | Generate/retrieve activity metadata | 12h       |
-| GET    | `/v1/synonyms?word={word}` | Get synonyms for activity naming    | 12h       |
+| Method | Endpoint                   | Description                           |
+| ------ | -------------------------- | ------------------------------------- |
+| GET    | `/v1/activity/:id`         | Generate/retrieve activity metadata   |
+| GET    | `/v1/synonyms?word={word}` | Retrieve synonyms for naming/aliasing |
 
 ### Articles
 
-| Method | Endpoint                                  | Description                | Cache TTL |
-| ------ | ----------------------------------------- | -------------------------- | --------- |
-| GET    | `/v1/articles/search?q={query}`           | Search scientific articles | None      |
-| POST   | `/v1/articles/recommend_similar_articles` | Find similar articles      | 12h       |
+| Method | Endpoint                                             | Description                       |
+| ------ | ---------------------------------------------------- | --------------------------------- |
+| GET    | `/v1/articles/search?q={query}`                      | Search article sources            |
+| POST   | `/v1/articles/recommend_similar_articles`            | Similar article recommendations   |
+| POST   | `/v1/articles/grade`                                 | AI rubric score for article text  |
+| POST   | `/v1/articles/quiz/create`                           | Generate and persist article quiz |
+| GET    | `/v1/articles/quiz?articleId={id}`                   | Fetch article quiz                |
+| POST   | `/v1/articles/quiz/submit`                           | Submit user quiz answers          |
+| GET    | `/v1/articles/quiz/score?userId={id}&articleId={id}` | Fetch saved quiz score            |
 
-### Users
+### Prompts
 
-| Method | Endpoint                         | Description                     | Cache TTL |
-| ------ | -------------------------------- | ------------------------------- | --------- |
-| POST   | `/v1/users/recommend_activities` | Recommend new activities        | None      |
-| POST   | `/v1/users/recommend_articles`   | Recommend articles by interests | 12h       |
-| GET    | `/v1/users/profile_photo/:id`    | Get profile photo (data URL)    | 12h       |
-| PUT    | `/v1/users/profile_photo/:id`    | Generate new profile photo      | None      |
+| Method | Endpoint            | Description                     |
+| ------ | ------------------- | ------------------------------- |
+| POST   | `/v1/prompts/grade` | AI rubric score for prompt text |
 
-### User Journeys
+### User Recommendations + Profiles
 
-| Method | Endpoint                                         | Description                     | Cache TTL |
-| ------ | ------------------------------------------------ | ------------------------------- | --------- |
-| GET    | `/v1/users/journey/:type/:id`                    | Get journey streak              | None      |
-| POST   | `/v1/users/journey/:type/:id/increment`          | Increment streak (24h cooldown) | None      |
-| GET    | `/v1/users/journey/activity/:id/count`           | Get activity completion count   | None      |
-| POST   | `/v1/users/journey/activity/:id?activity={name}` | Add activity to journey         | None      |
-| DELETE | `/v1/users/journey/:type/:id/delete`             | Reset journey                   | None      |
+| Method | Endpoint                                           | Description                           |
+| ------ | -------------------------------------------------- | ------------------------------------- |
+| POST   | `/v1/users/recommend_activities`                   | Activity recommendations              |
+| POST   | `/v1/users/recommend_articles`                     | Article recommendations by activities |
+| POST   | `/v1/users/recommend_events`                       | Event recommendations by activities   |
+| GET    | `/v1/users/profile_photo/:id?size={32\|128\|1024}` | Retrieve profile photo variant        |
+| PUT    | `/v1/users/profile_photo/:id`                      | Generate/replace profile photo        |
+| POST   | `/v1/users/timer`                                  | Timer Durable Object actions          |
+
+### Journeys
+
+| Method | Endpoint                                         | Description                          |
+| ------ | ------------------------------------------------ | ------------------------------------ |
+| GET    | `/v1/users/journey/:type/:id`                    | Get journey streak + rank            |
+| POST   | `/v1/users/journey/:type/:id/increment`          | Increment streak with cooldown logic |
+| DELETE | `/v1/users/journey/:type/:id/delete`             | Reset streak                         |
+| GET    | `/v1/users/journey/:type/leaderboard?limit={n}`  | Get top leaderboard                  |
+| GET    | `/v1/users/journey/:type/:id/rank`               | Get user rank                        |
+| GET    | `/v1/users/journey/activity/:id/count`           | Count completed activities           |
+| POST   | `/v1/users/journey/activity/:id?activity={name}` | Add completed activity               |
+
+### Badges
+
+| Method | Endpoint                                  | Description                        |
+| ------ | ----------------------------------------- | ---------------------------------- |
+| GET    | `/v1/users/badges`                        | List badge catalog                 |
+| GET    | `/v1/users/badges/:id`                    | List user's badge states           |
+| GET    | `/v1/users/badges/:id/:badge_id`          | Get single badge state             |
+| POST   | `/v1/users/badges/:id/track`              | Track badge progress by tracker ID |
+| POST   | `/v1/users/badges/:id/:badge_id/progress` | Add progress for badge tracker     |
+| POST   | `/v1/users/badges/:id/:badge_id/grant`    | Manually grant one-time badge      |
+| DELETE | `/v1/users/badges/:id/:badge_id/revoke`   | Revoke granted badge               |
+| DELETE | `/v1/users/badges/:id/:badge_id/reset`    | Reset badge progress               |
+
+### Impact Points
+
+| Method | Endpoint                             | Description          |
+| ------ | ------------------------------------ | -------------------- |
+| GET    | `/v1/users/impact_points/:id`        | Get points + history |
+| POST   | `/v1/users/impact_points/:id/add`    | Add points           |
+| POST   | `/v1/users/impact_points/:id/remove` | Remove points        |
+| PUT    | `/v1/users/impact_points/:id/set`    | Set absolute points  |
+
+### Quests
+
+| Method | Endpoint                                              | Description                 |
+| ------ | ----------------------------------------------------- | --------------------------- |
+| GET    | `/v1/users/quests`                                    | List quest definitions      |
+| GET    | `/v1/users/quests/:id`                                | Get quest definition        |
+| POST   | `/v1/users/quests/progress/:user_id`                  | Start quest                 |
+| PATCH  | `/v1/users/quests/progress/:user_id`                  | Submit step response        |
+| GET    | `/v1/users/quests/progress/:user_id`                  | Get active progress         |
+| GET    | `/v1/users/quests/progress/:user_id/step/:step_index` | Get specific step progress  |
+| DELETE | `/v1/users/quests/progress/:user_id`                  | Reset active progress       |
+| GET    | `/v1/users/quests/history/:user_id`                   | List completed quests       |
+| GET    | `/v1/users/quests/history/:user_id/:quest_id`         | Get completed quest payload |
+
+### Events + Event Media
+
+| Method | Endpoint                                              | Description                                        |
+| ------ | ----------------------------------------------------- | -------------------------------------------------- |
+| GET    | `/v1/events/thumbnail/:id`                            | Get event thumbnail image                          |
+| GET    | `/v1/events/thumbnail/:id/metadata`                   | Get thumbnail author + size metadata               |
+| POST   | `/v1/events/thumbnail/:id`                            | Upload custom thumbnail                            |
+| POST   | `/v1/events/thumbnail/:id/generate?name={event_name}` | Generate location-based thumbnail                  |
+| DELETE | `/v1/events/thumbnail/:id`                            | Delete event thumbnail                             |
+| POST   | `/v1/events/recommend_similar_events`                 | Similar event recommendations                      |
+| POST   | `/v1/events/submit_image`                             | Submit event image                                 |
+| GET    | `/v1/events/retrieve_image?...`                       | Retrieve image submission(s) with optional filters |
+| DELETE | `/v1/events/delete_image?...`                         | Delete one or many image submissions               |
+
+### WebSocket Routes
+
+| Method | Endpoint                                    | Description                                         |
+| ------ | ------------------------------------------- | --------------------------------------------------- |
+| POST   | `/ws/notify`                                | Admin push payload to a channel                     |
+| GET    | `/ws/users/:id/ticket`                      | Issue one-time WebSocket ticket (session validated) |
+| GET    | `/ws/users/:id/notifications?ticket={uuid}` | Upgrade to user notification WebSocket              |
 
 ## AI Models & Prompting
 
 ### Model Selection Strategy
 
-| Use Case                     | Model                                          | Rationale                              |
-| ---------------------------- | ---------------------------------------------- | -------------------------------------- |
-| **Activity Descriptions**    | `@cf/meta/llama-4-scout-17b-16e-instruct`      | Large context window, creative writing |
-| **Activity Tags**            | `@cf/meta/llama-3.1-8b-instruct-fp8`           | Fast inference, structured output      |
-| **Article Topics**           | `@cf/meta/llama-3.2-3b-instruct`               | Lightweight, single-word generation    |
-| **Article Ranking**          | `@cf/baai/bge-reranker-base`                   | State-of-art semantic similarity       |
-| **Article Titles/Summaries** | `@cf/mistralai/mistral-small-3.1-24b-instruct` | Long context, nuanced language         |
-| **Prompts**                  | `@cf/openai/gpt-oss-120b`                      | Reasoning capabilities, creativity     |
-| **Profile Photos**           | `@cf/bytedance/stable-diffusion-xl-lightning`  | Fast image generation (<5s)            |
+| Use Case                           | Model                                          | Rationale                           |
+| ---------------------------------- | ---------------------------------------------- | ----------------------------------- |
+| Activity descriptions              | `@cf/meta/llama-4-scout-17b-16e-instruct`      | Rich descriptive generation         |
+| Activity tags                      | `@cf/meta/llama-3.1-8b-instruct-fp8`           | Fast structured tagging             |
+| Article topic generation           | `@cf/meta/llama-3.2-3b-instruct`               | Lightweight topic selection         |
+| Semantic ranking (articles/events) | `@cf/baai/bge-reranker-base`                   | Strong reranking quality            |
+| Article title + summary            | `@cf/mistralai/mistral-small-3.1-24b-instruct` | Long-form summarization quality     |
+| Article quiz generation            | `@cf/meta/llama-4-scout-17b-16e-instruct`      | Reliable structured question output |
+| Prompt generation                  | `@cf/openai/gpt-oss-120b`                      | Higher-order prompt reasoning       |
+| Profile photo generation           | `@cf/bytedance/stable-diffusion-xl-lightning`  | Fast image synthesis                |
+| Text embeddings for scoring        | `@cf/baai/bge-m3`                              | Semantic similarity scoring         |
+| Image captioning for scoring       | `@cf/llava-hf/llava-1.5-7b-hf`                 | Visual-to-text interpretation       |
+| Image classification               | `@cf/microsoft/resnet-50`                      | Label confidence checks             |
+| Object detection                   | `@cf/facebook/detr-resnet-50`                  | Object-level validation             |
+| Audio transcription                | `@cf/openai/whisper-large-v3-turbo`            | Quest audio validation              |
 
 ### Output Sanitization
 
-Comprehensive cleaning pipeline (`prompts.ts:sanitizeAIOutput`):
+`src/util/ai.ts` includes a centralized sanitation/validation pipeline:
 
-```typescript
-1. Remove markdown (code blocks, bold, italic, headers)
-2. Remove quotes and fancy characters
-3. Remove AI prefixes ("Here's...", "The answer is...")
-4. Collapse whitespace
-5. Fix punctuation artifacts
-6. Remove HTML tags
-7. Content-type specific rules (title vs description vs topic)
-```
+1. Remove markdown artifacts and wrappers
+2. Remove common AI prefixes and formatting noise
+3. Normalize whitespace and punctuation
+4. Apply content-type-specific cleanup (`description`, `title`, `topic`, `tags`, `question`)
+5. Enforce strict validators per domain object
 
 ## Caching Strategy
 
@@ -385,57 +413,51 @@ Comprehensive cleaning pipeline (`prompts.ts:sanitizeAIOutput`):
 
 ```txt
 ┌──────────────────────────────────────┐
-│   HTTP Cache (Hono Middleware)      │
-│   Cache-Control: public, max-age=60 │
-│   Vary: Accept-Encoding, Authorization
+│ HTTP Cache Middleware               │
+│ Scope: /v1/*                        │
+│ Cache-Control: public, max-age=60   │
 └──────────────────────────────────────┘
               │
               ▼
 ┌──────────────────────────────────────┐
-│   KV Cache (CACHE namespace)        │
-│   TTL: 12 hours (43,200 seconds)    │
-│   Serialization: JSON with custom    │
-│   Uint8Array reviver/replacer        │
+│ KV Cache (CACHE namespace)          │
+│ Default TTL: 12h                    │
+│ Includes Uint8Array custom serializer│
 └──────────────────────────────────────┘
               │
               ▼
 ┌──────────────────────────────────────┐
-│   Source of Truth                    │
-│   - AI model invocation              │
-│   - External API calls               │
-│   - Database queries                 │
+│ Source of Truth                      │
+│ AI + External APIs + KV/R2           │
 └──────────────────────────────────────┘
 ```
 
-### Cache Key Patterns
+### Key Patterns
 
 ```typescript
-// Deterministic keys with hash-based compression
-`cache:activity_data:${id}``cache:synonyms:${word.toLowerCase()}``cache:similar_articles:${articleId}:${poolHash(36)}:${limit}``cache:recommended_articles:${activitiesHash(36)}:${poolHash(36)}:${limit}``user:profile_photo:${id}`
-// Journey keys (persistent KV, not CACHE)
-`journey:${type}:${id}` // type = 'article' | 'prompt'
-`journey:activities:${id}`;
+// Activities and synonyms
+`cache:activity_data:${id}``cache:synonyms:${word.toLowerCase()}`
+// Recommendations
+`cache:recommended_articles:${activitiesHash}:${poolHash}:${limit}``cache:similar_articles:${articleId}:${poolHash}:${limit}``cache:recommended_events:${activitiesHash}:${poolHash}:${limit}``cache:similar_events:${eventId}:${poolHash}:${limit}`
+// Scoring and profile
+`cache:article_score:${id}``cache:prompt_score:${id}``user:profile_photo:${id}:${size}`
+// Journey + leaderboard
+`journey:${type}:${id}``journey:activities:${id}``leaderboard:${type}`;
 ```
 
-### Hash Function (DJB2 Variant)
+### TTL Notes
 
-```typescript
-let hash = 0;
-for (let i = 0; i < str.length; i++) {
-	hash = ((hash << 5) - hash + str.charCodeAt(i)) & 0xffffffff;
-}
-return Math.abs(hash).toString(36); // Base-36 encoding
-```
-
-### Cache Invalidation
-
-- **Explicit**: Not implemented (rely on TTL expiration)
-- **Automatic**: 12-hour TTL for all cached data
-- **Journey Renewal**: 2-day TTL extended on each increment (within 24h cooldown)
+- Default cache TTL: **12 hours**
+- Leaderboard cache TTL: **4 hours**
+- Article score cache: **14 days**
+- Prompt score cache: **2 days**
+- Article quiz cache: **about 14 days**
+- Journey streak keys in KV: **2-day TTL**, renewed by activity
+- `/ws/*` routes explicitly use `no-store` semantics
 
 ### Serialization Edge Cases
 
-Custom JSON reviver/replacer for `Uint8Array`:
+Custom reviver/replacer handles binary payloads:
 
 ```typescript
 JSON.stringify(value, (_, val) =>
@@ -447,85 +469,49 @@ JSON.parse(result, (_, val) => (val?.__type === 'Uint8Array' ? new Uint8Array(va
 
 ## Scheduled Tasks
 
-Configured via `wrangler.jsonc`:
+Configured in `wrangler.jsonc`:
 
 ```jsonc
 "triggers": {
   "crons": [
-    "0 * * * *",     // Every hour (prompt generation)
-    "0 */4 * * *"    // Every 4 hours (article creation)
+    "0 * * * *",      // Hourly: cache journey leaderboards
+    "*/12 * * * *",   // Every 12 minutes: create prompt
+    "*/24 * * * *",   // Every 24 minutes: create best+worst ranked articles
+    "0 0 */2 * *"     // Every 2 days: create events from calendar data
   ]
 }
 ```
 
-### Hourly Task: Prompt Generation
+### Hourly: Leaderboard Cache
 
-1. Generate question using GPT-4 model
-2. Validate (length, format, prohibited words)
-3. POST /v2/prompts (Mantle API)
+- Refreshes top rankings for `article`, `prompt`, and `event` journeys.
 
-**Example Output:**
+### Every 12 Minutes: Prompt Generation
 
-```json
-{
-	"id": "prompt_123",
-	"prompt": "How does curiosity shape learning?",
-	"visibility": "PUBLIC",
-	"created_at": "2025-10-29T12:00:00Z"
-}
-```
+1. Generate one validated question prompt
+2. Publish to Mantle (`/v2/prompts`)
 
-### 4-Hourly Task: Article Creation
+### Every 24 Minutes: Article Pair Generation
 
-1. Generate topic (e.g., "mental health")
-2. Select 3-5 random tags (ActivityType enum)
-3. Search articles (PubMed + scrapers)
-4. Rank candidates (semantic similarity)
-5. Generate title + summary
-6. POST /v2/articles (Mantle API)
+1. Generate topic and tags
+2. Search + rank source articles
+3. Create and post **two** article variants (best-ranked and worst-ranked)
+4. Generate and attach quizzes
 
-**Example Output:**
+### Every 2 Days: Event Generation
 
-```json
-{
-	"id": "article_456",
-	"title": "The Neural Pathways of Resilience",
-	"description": "Recent research explores how...",
-	"tags": ["HEALTH", "SCIENCE", "SELF_IMPROVEMENT"],
-	"content": "Paragraph 1...\n\nParagraph 2...",
-	"ocean": {
-		"title": "Neuroscience of Mental Health",
-		"author": "Dr. Jane Smith",
-		"source": "Journal of Psychology",
-		"url": "https://example.com/article",
-		"keywords": ["resilience", "neuroscience", "mental health"],
-		"date": "2025-10-15"
-	}
-}
-```
-
-### Error Handling
-
-```typescript
-ctx.waitUntil(
-	(async () => {
-		try {
-			// Task logic
-		} catch (error) {
-			console.error('Scheduled task failed:', error);
-			// Does not throw (avoids Worker failure)
-		}
-	})()
-);
-```
+1. Load upcoming events from Moho data
+2. Create event payloads and post to Mantle
+3. Attempt birthday-location thumbnail generation when applicable
+4. Continue processing even when individual event creation fails
 
 ## Development
 
 ### Prerequisites
 
-- **Bun** (>= 1.0.0): `curl -fsSL https://bun.sh/install | bash`
-- **Wrangler** (via Bun): Included in `devDependencies`
-- **Cloudflare Account**: With Workers, KV, R2, AI enabled
+- **Bun** (>= 1.0.0)
+- **Wrangler** (installed via project dependencies)
+- Cloudflare account with Workers, KV, R2, AI, Images, and Durable Objects enabled
 
 ### Local Development
 
@@ -533,7 +519,7 @@ ctx.waitUntil(
 # Install dependencies
 bun install
 
-# Start local development server (port 9898)
+# Start local dev server (port 9898, scheduled testing enabled)
 bun run dev
 
 # Test endpoint
@@ -541,21 +527,33 @@ curl http://localhost:9898/v1/activity/hiking \
   -H "Authorization: Bearer YOUR_DEV_API_KEY"
 ```
 
-### Debugging AI Models
+### Testing
 
-Enable verbose logging:
+```bash
+# Run worker tests
+bunx vitest
+```
+
+### Regenerate Worker Types
+
+```bash
+# Regenerate runtime types used by TypeScript
+bunx wrangler types
+```
+
+### Debugging AI Calls
 
 ```typescript
-console.log('AI Request:', { model, messages, max_tokens });
+console.log('AI Request:', { model, messages });
 const response = await ai.run(model, params);
 console.log('AI Response:', response);
 ```
 
-**Common Issues:**
+Common issues:
 
-- **Empty Response**: Check model availability in region
-- **Validation Failure**: Inspect raw output before sanitization
-- **Timeout**: Reduce context length or switch to smaller model
+- Empty response: model availability or payload mismatch
+- Validation failure: inspect raw output before sanitation
+- Timeout: reduce context size or choose a lighter model
 
 ## Deployment
 
@@ -564,13 +562,14 @@ console.log('AI Response:', response);
 ```bash
 # Deploy to Cloudflare Workers
 bun run deploy
-
-# Deployment steps:
-# 1. Minifies TypeScript with esbuild
-# 2. Uploads to Cloudflare Workers
-# 3. Applies wrangler.jsonc configuration
-# 4. Activates on cloud.earth-app.com
 ```
+
+Deployment flow:
+
+1. Build/minify worker bundle
+2. Upload worker + bindings config
+3. Apply route + cron configuration from `wrangler.jsonc`
+4. Activate on `cloud.earth-app.com`
 
 ---
 
@@ -579,7 +578,7 @@ bun run deploy
 All Earth App components are available open-source.
 This repository is licensed under the Apache 2.0 License.
 
-The Earth App © 2025
+The Earth App (c) 2025
 
 ## Contributors
 
