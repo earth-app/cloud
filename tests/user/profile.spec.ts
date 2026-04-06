@@ -19,6 +19,50 @@ describe('getProfilePhoto', () => {
 	});
 });
 
+describe('getProfileVariation', () => {
+	it('returns sized variant when it exists', async () => {
+		const bindings = createMockBindings();
+		await bindings.R2.put('users/42/profile_32.png', new Uint8Array([4, 4]));
+
+		const image = await getProfileVariation(42n, 32, bindings, { waitUntil: () => {} } as any);
+		expect(Array.from(image)).toEqual([4, 4]);
+	});
+
+	it('returns original image when requested size is 1024', async () => {
+		const bindings = createMockBindings();
+		await bindings.R2.put('users/42/profile.png', new Uint8Array([5, 5]));
+
+		const image = await getProfileVariation(42n, 1024, bindings, { waitUntil: () => {} } as any);
+		expect(Array.from(image)).toEqual([5, 5]);
+	});
+
+	it('returns cloud fallback for special user id 1 even for variations', async () => {
+		const bindings = createMockBindings();
+		await bindings.R2.put('users/1/profile_32.png', new Uint8Array([4, 4]));
+
+		const image = await getProfileVariation(1n, 32, bindings, { waitUntil: () => {} } as any);
+		expect(new TextDecoder().decode(image)).toBe('cloud');
+	});
+
+	it('falls back to original image for invalid sizes', async () => {
+		const bindings = createMockBindings();
+		await bindings.R2.put('users/5/profile.png', new Uint8Array([9, 9]));
+
+		const image = await getProfileVariation(5n, 999 as any, bindings, {
+			waitUntil: () => {}
+		} as any);
+		expect(Array.from(image)).toEqual([9, 9]);
+	});
+
+	it('creates a new profile variation when it does not exist', async () => {
+		const bindings = createMockBindings();
+		await bindings.R2.put('users/5/profile.png', new Uint8Array([9, 9]));
+
+		const image = await getProfileVariation(5n, 32, bindings, { waitUntil: () => {} } as any);
+		expect(Array.from(image)).toEqual([9, 9]);
+	});
+});
+
 describe('createPhotoVariation', () => {
 	it('transforms and stores a sized profile variant', async () => {
 		const waits: Promise<unknown>[] = [];
@@ -32,6 +76,16 @@ describe('createPhotoVariation', () => {
 		await Promise.all(waits);
 		const saved = await bindings.R2.get('users/2/profile_32.png');
 		expect(saved).not.toBeNull();
+	});
+
+	it('returns original image for invalid sizes', async () => {
+		const waits: Promise<unknown>[] = [];
+		const bindings = createMockBindings();
+		const ctx = { waitUntil: (promise: Promise<unknown>) => waits.push(promise) };
+		const source = new Uint8Array([1, 2, 3]);
+
+		const transformed = await createPhotoVariation(999 as any, source, 2n, bindings, ctx as any);
+		expect(Array.from(transformed)).toEqual([1, 2, 3]);
 	});
 });
 

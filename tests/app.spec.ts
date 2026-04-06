@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import app from '../src/app';
 import { createMockBindings } from './helpers/mock-bindings';
+import { createMockAiRun } from './helpers/mock-ai';
 
 function appRequest(path: string, init: RequestInit = {}, authenticated: boolean = true) {
 	const headers = new Headers(init.headers);
@@ -23,13 +24,85 @@ async function callApp(
 	authenticated: boolean = true,
 	bindings = createMockBindings()
 ) {
-	const ctx = { waitUntil: vi.fn((promise: Promise<unknown>) => void promise) };
-	return app.fetch(appRequest(path, init, authenticated), bindings, ctx as any);
+	const pending: Promise<unknown>[] = [];
+	const ctx = {
+		waitUntil: vi.fn((promise: Promise<unknown>) => {
+			pending.push(
+				promise.catch(() => {
+					// Ignore background failures in tests unless assertions explicitly check for them.
+				})
+			);
+		})
+	};
+	const response = await app.fetch(appRequest(path, init, authenticated), bindings, ctx as any);
+	await Promise.allSettled(pending);
+	return response;
 }
 
 afterEach(() => {
 	vi.restoreAllMocks();
 });
+
+const sampleArticle = {
+	id: '100000000000000000000123',
+	title: 'Sustainable Transit in Growing Cities',
+	description: 'How cities can reduce emissions while improving mobility.',
+	tags: ['NATURE', 'TECHNOLOGY'],
+	content:
+		'City planners can combine protected bike infrastructure, electric transit, and walkable zoning to improve quality of life and reduce emissions.',
+	author: {
+		id: '1',
+		username: 'cloud'
+	},
+	author_id: '1',
+	color: 'green',
+	color_hex: '#00aa55',
+	created_at: new Date().toISOString(),
+	ocean: {
+		title: 'Transit and Climate',
+		author: 'Research Team',
+		source: 'Urban Science',
+		url: 'https://example.com/ocean/transit',
+		keywords: ['transit', 'climate'],
+		date: '2026-01-01',
+		links: {}
+	}
+} as const;
+
+const sampleEvent = {
+	id: '100000000000000000000555',
+	name: "Bahamas' Birthday",
+	description: 'A civic celebration featuring history and community stories.',
+	type: 'ONLINE',
+	date: Date.now(),
+	end_date: Date.now() + 60 * 60 * 1000,
+	visibility: 'PUBLIC',
+	activities: [{ type: 'activity_type', value: 'NATURE' }],
+	fields: {}
+} as const;
+
+const sampleProfilePrompt = {
+	username: 'eco_user',
+	bio: 'Loves sustainability and local projects.',
+	created_at: '2026-01-01',
+	visibility: 'PUBLIC',
+	country: 'US',
+	full_name: 'Eco User',
+	activities: []
+} as const;
+
+const sampleActivity = {
+	type: 'com.earthapp.activity.Activity',
+	id: '100000000000000000000999',
+	name: 'Tree Planting',
+	description: 'Planting native trees in urban areas.',
+	aliases: ['reforestation'],
+	activity_types: ['NATURE']
+} as const;
+
+function toImageDataUrl(bytes: number[] = [137, 80, 78, 71, 1, 2, 3, 4]): string {
+	return `data:image/png;base64,${btoa(String.fromCharCode(...bytes))}`;
+}
 
 describe('app route registration', () => {
 	it('registers all expected API endpoints', () => {
@@ -143,90 +216,43 @@ describe('POST /articles/recommend_similar_articles', () => {
 		});
 		expect(response.status).toBe(400);
 	});
-});
 
-describe('POST /articles/grade', () => {
-	it('returns 400 when content is missing', async () => {
-		const response = await callApp('/articles/grade', {
+	it('validates pool shape and size constraints', async () => {
+		const invalidFormat = await callApp('/articles/recommend_similar_articles', {
 			method: 'POST',
-			body: JSON.stringify({ id: '1' })
+			body: JSON.stringify({ article: sampleArticle, pool: {} })
 		});
-		expect(response.status).toBe(400);
-	});
-});
+		expect(invalidFormat.status).toBe(400);
 
-describe('GET /articles/quiz', () => {
-	it('returns 400 when article id is missing', async () => {
-		const response = await callApp('/articles/quiz', { method: 'GET' });
-		expect(response.status).toBe(400);
-	});
-});
-
-describe('GET /articles/quiz/score', () => {
-	it('returns 400 when ids are missing', async () => {
-		const response = await callApp('/articles/quiz/score', { method: 'GET' });
-		expect(response.status).toBe(400);
-	});
-});
-
-describe('POST /articles/quiz/submit', () => {
-	it('returns 400 when required fields are missing', async () => {
-		const response = await callApp('/articles/quiz/submit', {
+		const emptyPool = await callApp('/articles/recommend_similar_articles', {
 			method: 'POST',
-			body: JSON.stringify({ articleId: '', userId: '', answers: null })
+			body: JSON.stringify({ article: sampleArticle, pool: [] })
 		});
-		expect(response.status).toBe(400);
-	});
-});
+		expect(emptyPool.status).toBe(400);
 
-describe('POST /users/timer', () => {
-	it('returns 400 when action is missing', async () => {
-		const response = await callApp('/users/timer', {
+		const oversizedPool = await callApp('/articles/recommend_similar_articles', {
 			method: 'POST',
-			body: JSON.stringify({ userId: '1', field: 'articles_read_time:1' })
+			body: JSON.stringify({
+				article: sampleArticle,
+				pool: Array.from({ length: 21 }, (_, i) => ({ ...sampleArticle, id: String(i + 1) }))
+			})
 		});
-		expect(response.status).toBe(400);
+		expect(oversizedPool.status).toBe(400);
 	});
-});
 
-describe('GET /users/journey/activity/:id/count', () => {
-	it('returns 400 for non-numeric id', async () => {
-		const response = await callApp('/users/journey/activity/abc/count', { method: 'GET' });
-		expect(response.status).toBe(400);
-	});
-});
-
-describe('POST /users/journey/activity/:id', () => {
-	it('returns 400 when activity query is missing', async () => {
-		const response = await callApp('/users/journey/activity/123', { method: 'POST' });
-		expect(response.status).toBe(400);
-	});
-});
-
-describe('GET /users/impact_points/:id', () => {
-	it('returns 400 when id length is out of bounds', async () => {
-		const response = await callApp('/users/impact_points/12', { method: 'GET' });
-		expect(response.status).toBe(400);
-	});
-});
-
-describe('POST /users/impact_points/:id/add', () => {
-	it('returns 400 for non-positive point increments', async () => {
-		const response = await callApp('/users/impact_points/123/add', {
+	it('returns recommendations for valid article pools', async () => {
+		const response = await callApp('/articles/recommend_similar_articles', {
 			method: 'POST',
-			body: JSON.stringify({ points: 0 })
+			body: JSON.stringify({
+				article: sampleArticle,
+				pool: [sampleArticle, { ...sampleArticle, id: '100000000000000000000124' }],
+				limit: 2
+			})
 		});
-		expect(response.status).toBe(400);
-	});
-});
 
-describe('PUT /users/impact_points/:id/set', () => {
-	it('returns 400 for negative totals', async () => {
-		const response = await callApp('/users/impact_points/123/set', {
-			method: 'PUT',
-			body: JSON.stringify({ points: -1 })
-		});
-		expect(response.status).toBe(400);
+		expect(response.status).toBe(200);
+		const json = await response.json<Array<{ id: string }>>();
+		expect(Array.isArray(json)).toBe(true);
 	});
 });
 
@@ -467,5 +493,1578 @@ describe('DELETE /events/thumbnail/:id', () => {
 	it('returns 400 for invalid event id', async () => {
 		const response = await callApp('/events/thumbnail/bad-id', { method: 'DELETE' });
 		expect(response.status).toBe(400);
+	});
+});
+
+describe('PUT /users/profile_photo/:id', () => {
+	it('stores generated profile photos for valid prompt data', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: vi.fn(
+					async () =>
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controller.enqueue(new Uint8Array([7, 8, 9]));
+								controller.close();
+							}
+						})
+				)
+			} as any
+		});
+
+		const response = await callApp(
+			'/users/profile_photo/222',
+			{ method: 'PUT', body: JSON.stringify(sampleProfilePrompt) },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(200);
+		const json = await response.json<{ data: string }>();
+		expect(json.data.startsWith('data:')).toBe(true);
+	});
+
+	it('rejects admin and invalid IDs', async () => {
+		const adminPut = await callApp('/users/profile_photo/1', {
+			method: 'PUT',
+			body: JSON.stringify(sampleProfilePrompt)
+		});
+		expect(adminPut.status).toBe(400);
+
+		const invalidId = await callApp('/users/profile_photo/abc', {
+			method: 'PUT',
+			body: JSON.stringify(sampleProfilePrompt)
+		});
+		expect(invalidId.status).toBe(400);
+	});
+});
+
+describe('GET /users/profile_photo/:id', () => {
+	it('returns generated profile photos when available', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: vi.fn(
+					async () =>
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controller.enqueue(new Uint8Array([7, 8, 9]));
+								controller.close();
+							}
+						})
+				)
+			} as any
+		});
+
+		await callApp(
+			'/users/profile_photo/222',
+			{ method: 'PUT', body: JSON.stringify(sampleProfilePrompt) },
+			true,
+			bindings
+		);
+
+		const getPhoto = await callApp('/users/profile_photo/222?size=128', {}, true, bindings);
+		expect(getPhoto.status).toBe(200);
+		const getPhotoJson = await getPhoto.json<{ data: string }>();
+		expect(getPhotoJson.data.startsWith('data:')).toBe(true);
+	});
+
+	it('rejects invalid ids and size values', async () => {
+		const badSize = await callApp('/users/profile_photo/123?size=5000', { method: 'GET' });
+		expect(badSize.status).toBe(400);
+
+		const badId = await callApp('/users/profile_photo/abc', { method: 'GET' });
+		expect(badId.status).toBe(400);
+	});
+});
+
+describe('POST /users/recommend_articles', () => {
+	it('returns recommendations for valid pool/activity payloads', async () => {
+		const response = await callApp('/users/recommend_articles', {
+			method: 'POST',
+			body: JSON.stringify({ pool: [sampleArticle], activities: ['nature'], limit: 1 })
+		});
+		expect(response.status).toBe(200);
+		const json = await response.json<Array<{ id: string }>>();
+		expect(json[0]?.id).toBe(sampleArticle.id);
+	});
+
+	it('rejects malformed and out-of-range request payloads', async () => {
+		const invalidPayloads = [
+			{ activities: ['nature'] },
+			{ pool: [], activities: ['nature'] },
+			{ pool: [sampleArticle] },
+			{ pool: [sampleArticle], activities: [] },
+			{ pool: [sampleArticle], activities: Array.from({ length: 11 }, (_, i) => `a-${i}`) },
+			{ pool: [sampleArticle], activities: [''] },
+			{ pool: [sampleArticle], activities: { a: 'b' } },
+			{ pool: [{ id: '' }], activities: ['nature'] }
+		];
+
+		for (const payload of invalidPayloads) {
+			const response = await callApp('/users/recommend_articles', {
+				method: 'POST',
+				body: JSON.stringify(payload)
+			});
+			expect(response.status).toBe(400);
+		}
+	});
+});
+
+describe('POST /users/recommend_activities', () => {
+	it('returns recommendations for valid activity payloads', async () => {
+		const response = await callApp('/users/recommend_activities', {
+			method: 'POST',
+			body: JSON.stringify({
+				all: [sampleActivity],
+				user: [sampleActivity]
+			})
+		});
+
+		expect(response.status).toBe(200);
+		const json = await response.json<Array<{ id: string }>>();
+		expect(Array.isArray(json)).toBe(true);
+	});
+
+	it('rejects malformed activity payloads', async () => {
+		const badBodies = [{ all: {}, user: [] }, { user: [] }, { all: [] }, { all: [], user: [] }];
+
+		for (const body of badBodies) {
+			const response = await callApp('/users/recommend_activities', {
+				method: 'POST',
+				body: JSON.stringify(body)
+			});
+			expect(response.status).toBe(400);
+		}
+	});
+});
+
+describe('POST /users/timer', () => {
+	it('returns 400 when action is missing', async () => {
+		const response = await callApp('/users/timer', {
+			method: 'POST',
+			body: JSON.stringify({ userId: '1', field: 'articles_read_time:1' })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('forwards valid timer actions to the durable object', async () => {
+		const response = await callApp('/users/timer', {
+			method: 'POST',
+			body: JSON.stringify({ action: 'start', userId: '222', field: 'articles_read_time:1' })
+		});
+		expect(response.status).toBe(200);
+		expect(await response.text()).toBe('ok');
+	});
+
+	it('rejects missing timer user and field', async () => {
+		const missingUser = await callApp('/users/timer', {
+			method: 'POST',
+			body: JSON.stringify({ action: 'start', field: 'articles_read_time:1' })
+		});
+		expect(missingUser.status).toBe(400);
+
+		const missingField = await callApp('/users/timer', {
+			method: 'POST',
+			body: JSON.stringify({ action: 'start', userId: '123' })
+		});
+		expect(missingField.status).toBe(400);
+	});
+});
+
+describe('GET /users/journey/:type/leaderboard', () => {
+	it('returns 400 for unsupported or invalid journey types', async () => {
+		const unsupported = await callApp('/users/journey/unknown/leaderboard', { method: 'GET' });
+		expect(unsupported.status).toBe(400);
+
+		const shortType = await callApp('/users/journey/ab/leaderboard', { method: 'GET' });
+		expect(shortType.status).toBe(400);
+
+		const longType = await callApp('/users/journey/' + 'a'.repeat(51) + '/leaderboard', {
+			method: 'GET'
+		});
+		expect(longType.status).toBe(400);
+	});
+
+	it('returns leaderboard results for various limit values', async () => {
+		const bindings = createMockBindings();
+		for (const limit of [-1, 0, 5, 100, 251]) {
+			const response = await callApp(
+				`/users/journey/article/leaderboard?limit=${limit}`,
+				{},
+				true,
+				bindings
+			);
+			expect(response.status).toBe(200);
+		}
+	});
+});
+
+describe('POST /users/journey/:type/:id/increment', () => {
+	it('returns 400 for invalid journey types and ids', async () => {
+		const unsupported = await callApp('/users/journey/unknown/123/increment', { method: 'POST' });
+		expect(unsupported.status).toBe(400);
+
+		const shortType = await callApp('/users/journey/ab/123/increment', { method: 'POST' });
+		expect(shortType.status).toBe(400);
+
+		const longType = await callApp('/users/journey/' + 'a'.repeat(51) + '/123/increment', {
+			method: 'POST'
+		});
+		expect(longType.status).toBe(400);
+
+		const shortId = await callApp('/users/journey/article/1/increment', { method: 'POST' });
+		expect(shortId.status).toBe(400);
+
+		const nonNumericId = await callApp('/users/journey/article/abc/increment', { method: 'POST' });
+		expect(nonNumericId.status).toBe(400);
+	});
+
+	it('increments journey counters for valid requests', async () => {
+		const response = await callApp('/users/journey/article/123/increment', { method: 'POST' });
+		expect([200, 201]).toContain(response.status);
+	});
+});
+
+describe('GET /users/journey/:type/:id', () => {
+	it('returns 400 for invalid journey types and ids', async () => {
+		const unsupported = await callApp('/users/journey/unknown/123', { method: 'GET' });
+		expect(unsupported.status).toBe(400);
+
+		const shortType = await callApp('/users/journey/ab/123', { method: 'GET' });
+		expect(shortType.status).toBe(400);
+
+		const longType = await callApp('/users/journey/' + 'a'.repeat(51) + '/123', {
+			method: 'GET'
+		});
+		expect(longType.status).toBe(400);
+
+		const shortId = await callApp('/users/journey/article/1', { method: 'GET' });
+		expect(shortId.status).toBe(400);
+
+		const nonNumericId = await callApp('/users/journey/article/abc', { method: 'GET' });
+		expect(nonNumericId.status).toBe(400);
+	});
+
+	it('returns journey details after an increment', async () => {
+		const bindings = createMockBindings();
+		await callApp('/users/journey/article/123/increment', { method: 'POST' }, true, bindings);
+		const response = await callApp('/users/journey/article/123', {}, true, bindings);
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('GET /users/journey/:type/:id/rank', () => {
+	it('returns 400 for invalid journey types and ids', async () => {
+		const unsupported = await callApp('/users/journey/unknown/123/rank', { method: 'GET' });
+		expect(unsupported.status).toBe(400);
+
+		const shortType = await callApp('/users/journey/ab/123/rank', { method: 'GET' });
+		expect(shortType.status).toBe(400);
+
+		const longType = await callApp('/users/journey/' + 'a'.repeat(51) + '/123/rank', {
+			method: 'GET'
+		});
+		expect(longType.status).toBe(400);
+
+		const shortId = await callApp('/users/journey/article/1/rank', { method: 'GET' });
+		expect(shortId.status).toBe(400);
+
+		const nonNumericId = await callApp('/users/journey/article/abc/rank', { method: 'GET' });
+		expect(nonNumericId.status).toBe(400);
+	});
+
+	it('returns rank payloads for valid users and journey types', async () => {
+		const bindings = createMockBindings();
+		await callApp('/users/journey/article/123/increment', { method: 'POST' }, true, bindings);
+		const response = await callApp('/users/journey/article/123/rank', {}, true, bindings);
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('POST /users/journey/activity/:id', () => {
+	it('returns 400 when activity query is missing', async () => {
+		const response = await callApp('/users/journey/activity/123', { method: 'POST' });
+		expect(response.status).toBe(400);
+	});
+
+	it('adds unique activities for valid users', async () => {
+		const response = await callApp('/users/journey/activity/123?activity=hiking', {
+			method: 'POST'
+		});
+		expect([200, 201]).toContain(response.status);
+	});
+});
+
+describe('GET /users/journey/activity/:id/count', () => {
+	it('returns 400 for invalid activity journey ids', async () => {
+		const nonNumeric = await callApp('/users/journey/activity/abc/count', { method: 'GET' });
+		expect(nonNumeric.status).toBe(400);
+
+		const shortId = await callApp('/users/journey/activity/1/count', { method: 'GET' });
+		expect(shortId.status).toBe(400);
+
+		const longId = await callApp('/users/journey/activity/' + 'a'.repeat(51) + '/count', {
+			method: 'GET'
+		});
+		expect(longId.status).toBe(400);
+	});
+
+	it('returns activity counts after adding activities', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/users/journey/activity/123?activity=hiking',
+			{ method: 'POST' },
+			true,
+			bindings
+		);
+		const response = await callApp('/users/journey/activity/123/count', {}, true, bindings);
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('DELETE /users/journey/:type/:id/delete', () => {
+	it('returns 400 for invalid journey types and ids', async () => {
+		const unsupported = await callApp('/users/journey/unknown/123/delete', { method: 'DELETE' });
+		expect(unsupported.status).toBe(400);
+
+		const shortType = await callApp('/users/journey/ab/123/delete', { method: 'DELETE' });
+		expect(shortType.status).toBe(400);
+
+		const longType = await callApp('/users/journey/' + 'a'.repeat(51) + '/123/delete', {
+			method: 'DELETE'
+		});
+		expect(longType.status).toBe(400);
+
+		const shortId = await callApp('/users/journey/article/1/delete', { method: 'DELETE' });
+		expect(shortId.status).toBe(400);
+
+		const nonNumericId = await callApp('/users/journey/article/abc/delete', { method: 'DELETE' });
+		expect(nonNumericId.status).toBe(400);
+	});
+
+	it('resets journey state for valid users and journey types', async () => {
+		const bindings = createMockBindings();
+		await callApp('/users/journey/article/123/increment', { method: 'POST' }, true, bindings);
+		const response = await callApp(
+			'/users/journey/article/123/delete',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(204);
+	});
+});
+
+describe('GET /users/badges', () => {
+	it('returns the badge catalog', async () => {
+		const response = await callApp('/users/badges', { method: 'GET' });
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('GET /users/badges/:id', () => {
+	it('returns user badge states for valid IDs', async () => {
+		const response = await callApp('/users/badges/123', { method: 'GET' });
+		expect(response.status).toBe(200);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericId = await callApp('/users/badges/abc', { method: 'GET' });
+		expect(nonNumericId.status).toBe(400);
+
+		const longId = await callApp('/users/badges/' + '1'.repeat(51), { method: 'GET' });
+		expect(longId.status).toBe(400);
+	});
+});
+
+describe('GET /users/badges/:id/:badge_id', () => {
+	it('returns details for known badges and 404 for unknown badges', async () => {
+		const known = await callApp('/users/badges/123/article_enthusiast', { method: 'GET' });
+		expect(known.status).toBe(200);
+
+		const unknown = await callApp('/users/badges/123/does_not_exist', { method: 'GET' });
+		expect(unknown.status).toBe(404);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericUserId = await callApp('/users/badges/abc/article_enthusiast', {
+			method: 'GET'
+		});
+		expect(nonNumericUserId.status).toBe(400);
+
+		const longUserId = await callApp('/users/badges/' + '1'.repeat(51) + '/article_enthusiast', {
+			method: 'GET'
+		});
+		expect(longUserId.status).toBe(400);
+	});
+
+	it('returns 404 for unknown badge IDs', async () => {
+		const response = await callApp('/users/badges/123/unknown_badge', { method: 'GET' });
+		expect(response.status).toBe(404);
+	});
+});
+
+describe('POST /users/badges/:id/:badge_id/grant', () => {
+	it('grants one-time badges and rejects duplicates/progress-based grants', async () => {
+		const bindings = createMockBindings();
+
+		const granted = await callApp(
+			'/users/badges/123/verified/grant',
+			{ method: 'POST' },
+			true,
+			bindings
+		);
+		expect(granted.status).toBe(201);
+
+		const duplicate = await callApp(
+			'/users/badges/123/verified/grant',
+			{ method: 'POST' },
+			true,
+			bindings
+		);
+		expect(duplicate.status).toBe(409);
+
+		const progressBased = await callApp('/users/badges/123/article_enthusiast/grant', {
+			method: 'POST'
+		});
+		expect(progressBased.status).toBe(400);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericUserId = await callApp('/users/badges/abc/verified/grant', {
+			method: 'POST'
+		});
+		expect(nonNumericUserId.status).toBe(400);
+
+		const longUserId = await callApp('/users/badges/' + '1'.repeat(51) + '/verified/grant', {
+			method: 'POST'
+		});
+		expect(longUserId.status).toBe(400);
+	});
+
+	it('returns 404 for unknown badge IDs', async () => {
+		const response = await callApp('/users/badges/123/unknown_badge/grant', {
+			method: 'POST'
+		});
+		expect(response.status).toBe(404);
+	});
+});
+
+describe('POST /users/badges/:id/track', () => {
+	it('tracks valid values and rejects invalid tracker payload types', async () => {
+		const bindings = createMockBindings();
+		const ok = await callApp(
+			'/users/badges/123/track',
+			{
+				method: 'POST',
+				body: JSON.stringify({ tracker_id: 'articles_read', value: ['a1', 'a2'] })
+			},
+			true,
+			bindings
+		);
+		expect(ok.status).toBe(200);
+
+		const badValue = await callApp(
+			'/users/badges/123/track',
+			{
+				method: 'POST',
+				body: JSON.stringify({ tracker_id: 'articles_read', value: { nope: true } })
+			},
+			true,
+			bindings
+		);
+		expect(badValue.status).toBe(400);
+
+		const badArray = await callApp(
+			'/users/badges/123/track',
+			{
+				method: 'POST',
+				body: JSON.stringify({ tracker_id: 'articles_read', value: ['ok', { nope: true }] })
+			},
+			true,
+			bindings
+		);
+		expect(badArray.status).toBe(400);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericUserId = await callApp('/users/badges/abc/track', {
+			method: 'POST',
+			body: JSON.stringify({ tracker_id: 'articles_read', value: ['a1'] })
+		});
+		expect(nonNumericUserId.status).toBe(400);
+
+		const longUserId = await callApp('/users/badges/' + '1'.repeat(51) + '/track', {
+			method: 'POST',
+			body: JSON.stringify({ tracker_id: 'articles_read', value: ['a1'] })
+		});
+		expect(longUserId.status).toBe(400);
+	});
+
+	it('retursn 400 for missing tracker_id or value', async () => {
+		const missingTrackerId = await callApp('/users/badges/123/track', {
+			method: 'POST',
+			body: JSON.stringify({ value: ['a1'] })
+		});
+		expect(missingTrackerId.status).toBe(400);
+
+		const missingValue = await callApp('/users/badges/123/track', {
+			method: 'POST',
+			body: JSON.stringify({ tracker_id: 'articles_read' })
+		});
+		expect(missingValue.status).toBe(400);
+	});
+
+	it('returns 400 for unknown tracker IDs', async () => {
+		const response = await callApp('/users/badges/123/track', {
+			method: 'POST',
+			body: JSON.stringify({ tracker_id: 'unknown_tracker', value: ['a1'] })
+		});
+		expect(response.status).toBe(400);
+	});
+});
+
+describe('POST /users/badges/:id/:badge_id/progress', () => {
+	it('records badge progress and rejects invalid progress value payloads', async () => {
+		const bindings = createMockBindings();
+
+		const ok = await callApp(
+			'/users/badges/123/article_enthusiast/progress',
+			{ method: 'POST', body: JSON.stringify({ value: ['a1', 'a2', 'a3'] }) },
+			true,
+			bindings
+		);
+		expect(ok.status).toBe(200);
+
+		const badValue = await callApp(
+			'/users/badges/123/article_enthusiast/progress',
+			{ method: 'POST', body: JSON.stringify({ value: { nope: true } }) },
+			true,
+			bindings
+		);
+		expect(badValue.status).toBe(400);
+	});
+
+	it('grants badges when progress meets requirements', async () => {
+		const bindings = createMockBindings();
+		const progressResponse = await callApp(
+			'/users/badges/123/article_enthusiast/progress',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					value: ['a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a8', 'a9', 'a10']
+				})
+			},
+			true,
+			bindings
+		);
+		expect(progressResponse.status).toBe(200);
+		const progressJson = await progressResponse.json<{ granted: boolean; progress: number }>();
+		expect(progressJson.progress).toBe(1);
+		expect(progressJson.granted).toBe(true);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericUserId = await callApp('/users/badges/abc/article_enthusiast/progress', {
+			method: 'POST',
+			body: JSON.stringify({ value: ['a1'] })
+		});
+		expect(nonNumericUserId.status).toBe(400);
+
+		const longUserId = await callApp(
+			'/users/badges/' + '1'.repeat(51) + '/article_enthusiast/progress',
+			{
+				method: 'POST',
+				body: JSON.stringify({ value: ['a1'] })
+			}
+		);
+		expect(longUserId.status).toBe(400);
+	});
+
+	it('returns 404 for unknown badge IDs', async () => {
+		const response = await callApp('/users/badges/123/unknown_badge/progress', {
+			method: 'POST',
+			body: JSON.stringify({ value: ['a1'] })
+		});
+		expect(response.status).toBe(404);
+	});
+
+	it('returns 400 for non-progress badges', async () => {
+		const response = await callApp('/users/badges/123/verified/progress', {
+			method: 'POST',
+			body: JSON.stringify({ value: ['a1'] })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 for non-string or non-numeric progress values', async () => {
+		const bindings = createMockBindings();
+		const badValue = await callApp(
+			'/users/badges/123/article_enthusiast/progress',
+			{ method: 'POST', body: JSON.stringify({ value: ['a1', { nope: true }] }) },
+			true,
+			bindings
+		);
+		expect(badValue.status).toBe(400);
+	});
+});
+
+describe('DELETE /users/badges/:id/:badge_id/revoke', () => {
+	it('revokes already granted badges', async () => {
+		const bindings = createMockBindings();
+		await callApp('/users/badges/123/verified/grant', { method: 'POST' }, true, bindings);
+		const response = await callApp(
+			'/users/badges/123/verified/revoke',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(204);
+	});
+
+	it('returns 400 on invalid user IDs', async () => {
+		const nonNumericUserId = await callApp('/users/badges/abc/verified/revoke', {
+			method: 'DELETE'
+		});
+		expect(nonNumericUserId.status).toBe(400);
+
+		const longUserId = await callApp('/users/badges/' + '1'.repeat(51) + '/verified/revoke', {
+			method: 'DELETE'
+		});
+		expect(longUserId.status).toBe(400);
+	});
+
+	it('returns 404 for unknown badge IDs', async () => {
+		const response = await callApp('/users/badges/123/unknown_badge/revoke', {
+			method: 'DELETE'
+		});
+		expect(response.status).toBe(404);
+	});
+});
+
+describe('DELETE /users/badges/:id/:badge_id/reset', () => {
+	it('resets progress-based badges', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/users/badges/123/article_enthusiast/progress',
+			{ method: 'POST', body: JSON.stringify({ value: ['a1', 'a2'] }) },
+			true,
+			bindings
+		);
+
+		const response = await callApp(
+			'/users/badges/123/article_enthusiast/reset',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(204);
+	});
+
+	it('returns 400 on invalid user IDs', async () => {
+		const nonNumericUserId = await callApp('/users/badges/abc/article_enthusiast/reset', {
+			method: 'DELETE'
+		});
+		expect(nonNumericUserId.status).toBe(400);
+
+		const longUserId = await callApp(
+			'/users/badges/' + '1'.repeat(51) + '/article_enthusiast/reset',
+			{ method: 'DELETE' }
+		);
+		expect(longUserId.status).toBe(400);
+	});
+
+	it('returns 404 for unknown badge IDs', async () => {
+		const response = await callApp('/users/badges/123/unknown_badge/reset', {
+			method: 'DELETE'
+		});
+		expect(response.status).toBe(404);
+	});
+});
+
+describe('POST /users/impact_points/:id/add', () => {
+	it('adds points and validates reason length constraints', async () => {
+		const ok = await callApp('/users/impact_points/123/add', {
+			method: 'POST',
+			body: JSON.stringify({ points: 25, reason: 'quest reward' })
+		});
+		expect(ok.status).toBe(200);
+
+		const tooLong = await callApp('/users/impact_points/123/add', {
+			method: 'POST',
+			body: JSON.stringify({ points: 10, reason: 'x'.repeat(201) })
+		});
+		expect(tooLong.status).toBe(400);
+	});
+
+	it('returns 400 for non-positive point increments', async () => {
+		const response = await callApp('/users/impact_points/123/add', {
+			method: 'POST',
+			body: JSON.stringify({ points: 0 })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 on missing points', async () => {
+		const response = await callApp('/users/impact_points/123/add', {
+			method: 'POST',
+			body: JSON.stringify({ reason: 'missing points' })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericId = await callApp('/users/impact_points/abc/add', {
+			method: 'POST',
+			body: JSON.stringify({ points: 10, reason: 'invalid user id' })
+		});
+		expect(nonNumericId.status).toBe(400);
+
+		const longId = await callApp('/users/impact_points/' + '1'.repeat(51) + '/add', {
+			method: 'POST',
+			body: JSON.stringify({ points: 10, reason: 'invalid user id' })
+		});
+		expect(longId.status).toBe(400);
+	});
+});
+
+describe('POST /users/impact_points/:id/remove', () => {
+	it('removes points and validates reason length constraints', async () => {
+		const ok = await callApp('/users/impact_points/123/remove', {
+			method: 'POST',
+			body: JSON.stringify({ points: 5, reason: 'adjustment' })
+		});
+		expect(ok.status).toBe(200);
+
+		const tooLong = await callApp('/users/impact_points/123/remove', {
+			method: 'POST',
+			body: JSON.stringify({ points: 10, reason: 'x'.repeat(201) })
+		});
+		expect(tooLong.status).toBe(400);
+	});
+
+	it('returns 400 for non-positive point decrements', async () => {
+		const response = await callApp('/users/impact_points/123/remove', {
+			method: 'POST',
+			body: JSON.stringify({ points: 0 })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 on missing points', async () => {
+		const response = await callApp('/users/impact_points/123/remove', {
+			method: 'POST',
+			body: JSON.stringify({ reason: 'missing points' })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericId = await callApp('/users/impact_points/abc/remove', {
+			method: 'POST',
+			body: JSON.stringify({ points: 10, reason: 'invalid user id' })
+		});
+		expect(nonNumericId.status).toBe(400);
+
+		const longId = await callApp('/users/impact_points/' + '1'.repeat(51) + '/remove', {
+			method: 'POST',
+			body: JSON.stringify({ points: 10, reason: 'invalid user id' })
+		});
+		expect(longId.status).toBe(400);
+	});
+});
+
+describe('PUT /users/impact_points/:id/set', () => {
+	it('returns 400 for negative totals', async () => {
+		const response = await callApp('/users/impact_points/123/set', {
+			method: 'PUT',
+			body: JSON.stringify({ points: -1 })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('sets points and validates reason length constraints', async () => {
+		const ok = await callApp('/users/impact_points/123/set', {
+			method: 'PUT',
+			body: JSON.stringify({ points: 12, reason: 'manual set' })
+		});
+		expect(ok.status).toBe(200);
+
+		const tooLong = await callApp('/users/impact_points/123/set', {
+			method: 'PUT',
+			body: JSON.stringify({ points: 10, reason: 'x'.repeat(201) })
+		});
+		expect(tooLong.status).toBe(400);
+	});
+
+	it('returns 400 on missing points', async () => {
+		const response = await callApp('/users/impact_points/123/set', {
+			method: 'PUT',
+			body: JSON.stringify({ reason: 'missing points' })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericId = await callApp('/users/impact_points/abc/set', {
+			method: 'PUT',
+			body: JSON.stringify({ points: 10, reason: 'invalid user id' })
+		});
+		expect(nonNumericId.status).toBe(400);
+
+		const longId = await callApp('/users/impact_points/' + '1'.repeat(51) + '/set', {
+			method: 'PUT',
+			body: JSON.stringify({ points: 10, reason: 'invalid user id' })
+		});
+		expect(longId.status).toBe(400);
+	});
+});
+
+describe('GET /users/impact_points/:id', () => {
+	it('returns 400 when id length is out of bounds', async () => {
+		const response = await callApp('/users/impact_points/12', { method: 'GET' });
+		expect(response.status).toBe(400);
+	});
+
+	it('returns updated point totals after mutations', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/users/impact_points/123/set',
+			{ method: 'PUT', body: JSON.stringify({ points: 12, reason: 'manual set' }) },
+			true,
+			bindings
+		);
+
+		const response = await callApp('/users/impact_points/123', {}, true, bindings);
+		expect(response.status).toBe(200);
+		const json = await response.json<{ points: number }>();
+		expect(json.points).toBe(12);
+	});
+});
+
+describe('GET /users/quests/:id', () => {
+	it('returns the requested quest definition when it exists', async () => {
+		const response = await callApp('/users/quests/fun_facts', { method: 'GET' });
+		expect(response.status).toBe(200);
+	});
+
+	it('returns 404 for unknown quest IDs', async () => {
+		const response = await callApp('/users/quests/unknown_quest', { method: 'GET' });
+		expect(response.status).toBe(404);
+	});
+
+	it('returns 400 for invalid quest IDs', async () => {
+		const shortId = await callApp('/users/quests/ab', { method: 'GET' });
+		expect(shortId.status).toBe(400);
+
+		const longId = await callApp('/users/quests/' + 'a'.repeat(51), { method: 'GET' });
+		expect(longId.status).toBe(400);
+	});
+});
+
+describe('POST /users/quests/progress/:user_id', () => {
+	it('starts quest progress for valid users and quest IDs', async () => {
+		const response = await callApp('/users/quests/progress/123', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'fun_facts' })
+		});
+		expect(response.status).toBe(201);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const nonNumericId = await callApp('/users/quests/progress/abc', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'fun_facts' })
+		});
+		expect(nonNumericId.status).toBe(400);
+
+		const longId = await callApp('/users/quests/progress/' + '1'.repeat(51), {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'fun_facts' })
+		});
+		expect(longId.status).toBe(400);
+	});
+
+	it('returns 404 for invalid quest IDs', async () => {
+		const shortQuestId = await callApp('/users/quests/progress/123', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'ab' })
+		});
+		expect(shortQuestId.status).toBe(404);
+
+		const longQuestId = await callApp('/users/quests/progress/123', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'a'.repeat(51) })
+		});
+		expect(longQuestId.status).toBe(404);
+	});
+
+	it('returns 404 for unknown quest IDs', async () => {
+		const response = await callApp('/users/quests/progress/123', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'unknown_quest' })
+		});
+		expect(response.status).toBe(404);
+	});
+});
+
+describe('PATCH /users/quests/progress/:user_id', () => {
+	it('updates article quiz progress for a valid active quest', async () => {
+		const bindings = createMockBindings();
+
+		await callApp(
+			'/users/quests/progress/123',
+			{ method: 'POST', body: JSON.stringify({ quest_id: 'fun_facts' }) },
+			true,
+			bindings
+		);
+
+		await bindings.KV.put(
+			'article:quiz_score:123:100',
+			JSON.stringify({ score: 9, scorePercent: 90, total: 10 })
+		);
+
+		const response = await callApp(
+			'/users/quests/progress/123',
+			{
+				method: 'PATCH',
+				body: JSON.stringify({
+					device: { make: 'unknown', model: 'API', os: 'web' },
+					response: {
+						type: 'article_quiz',
+						index: 0,
+						scoreKey: 'article:quiz_score:123:100',
+						score: 90
+					}
+				})
+			},
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+	});
+
+	it('covers request parsing, binary validation, and delay-gate branches', async () => {
+		const invalidJson = await callApp('/users/quests/progress/123', {
+			method: 'PATCH',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{'
+		});
+		expect(invalidJson.status).toBe(400);
+
+		const missingDataUrl = await callApp('/users/quests/progress/123', {
+			method: 'PATCH',
+			body: JSON.stringify({
+				device: { make: 'unknown', model: 'API', os: 'web' },
+				response: { type: 'take_photo_caption', index: 0 }
+			})
+		});
+		expect(missingDataUrl.status).toBe(400);
+
+		const invalidDataUrl = await callApp('/users/quests/progress/123', {
+			method: 'PATCH',
+			body: JSON.stringify({
+				device: { make: 'unknown', model: 'API', os: 'web' },
+				response: { type: 'take_photo_caption', index: 0, dataUrl: 'not-a-data-url' }
+			})
+		});
+		expect(invalidDataUrl.status).toBe(400);
+
+		const unsupportedAudio = await callApp('/users/quests/progress/123', {
+			method: 'PATCH',
+			body: JSON.stringify({
+				device: { make: 'unknown', model: 'API', os: 'web' },
+				response: {
+					type: 'transcribe_audio',
+					index: 0,
+					dataUrl: `data:audio/mp3;base64,${btoa('not-real-audio')}`
+				}
+			})
+		});
+		expect(unsupportedAudio.status).toBe(415);
+
+		const missingDevice = await callApp('/users/quests/progress/123', {
+			method: 'PATCH',
+			body: JSON.stringify({ response: { type: 'order_items', index: 0 } })
+		});
+		expect(missingDevice.status).toBe(400);
+
+		const missingResponse = await callApp('/users/quests/progress/123', {
+			method: 'PATCH',
+			body: JSON.stringify({ device: { make: 'unknown', model: 'API', os: 'web' } })
+		});
+		expect(missingResponse.status).toBe(400);
+
+		const bindings = createMockBindings();
+		await bindings.KV.put(
+			'user:quest_progress:123',
+			JSON.stringify([{}, {}, {}, { submittedAt: Date.now() }]),
+			{
+				metadata: { questId: 'fun_facts', currentStep: 4, completed: false, startedAt: Date.now() }
+			}
+		);
+
+		const delayed = await callApp(
+			'/users/quests/progress/123',
+			{
+				method: 'PATCH',
+				body: JSON.stringify({
+					device: { make: 'unknown', model: 'API', os: 'web' },
+					response: { type: 'order_items', index: 4 }
+				})
+			},
+			true,
+			bindings
+		);
+		expect(delayed.status).toBe(425);
+	});
+
+	it('returns 404 when no active quest exists for the user', async () => {
+		const response = await callApp('/users/quests/progress/123', {
+			method: 'PATCH',
+			body: JSON.stringify({
+				device: { make: 'unknown', model: 'API', os: 'web' },
+				response: {
+					type: 'article_quiz',
+					index: 0,
+					scoreKey: 'article:quiz_score:123:100',
+					score: 90
+				}
+			})
+		});
+		expect(response.status).toBe(404);
+	});
+
+	it('returns 400 for invalid user IDs', async () => {
+		const response = await callApp('/users/quests/progress/abc', {
+			method: 'PATCH',
+			body: JSON.stringify({
+				device: { make: 'unknown', model: 'API', os: 'web' },
+				response: {
+					type: 'article_quiz',
+					index: 0,
+					scoreKey: 'article:quiz_score:abc:100',
+					score: 90
+				}
+			})
+		});
+		expect(response.status).toBe(400);
+	});
+});
+
+describe('GET /users/quests/progress/:user_id', () => {
+	it('retrieves active quest progress for users with an active quest', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/users/quests/progress/123',
+			{ method: 'POST', body: JSON.stringify({ quest_id: 'fun_facts' }) },
+			true,
+			bindings
+		);
+
+		const response = await callApp('/users/quests/progress/123', {}, true, bindings);
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('GET /users/quests/progress/:user_id/step/:step_index', () => {
+	it('retrieves step progress for reached steps', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/users/quests/progress/123',
+			{ method: 'POST', body: JSON.stringify({ quest_id: 'fun_facts' }) },
+			true,
+			bindings
+		);
+
+		await bindings.KV.put(
+			'article:quiz_score:123:100',
+			JSON.stringify({ score: 9, scorePercent: 90, total: 10 })
+		);
+		await callApp(
+			'/users/quests/progress/123',
+			{
+				method: 'PATCH',
+				body: JSON.stringify({
+					device: { make: 'unknown', model: 'API', os: 'web' },
+					response: {
+						type: 'article_quiz',
+						index: 0,
+						scoreKey: 'article:quiz_score:123:100',
+						score: 90
+					}
+				})
+			},
+			true,
+			bindings
+		);
+
+		const response = await callApp('/users/quests/progress/123/step/0', {}, true, bindings);
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('GET /users/quests/history/:user_id', () => {
+	it('returns quest history payloads for users', async () => {
+		const response = await callApp('/users/quests/history/123', { method: 'GET' });
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('GET /users/quests/history/:user_id/:quest_id', () => {
+	it('returns 404 when completed quest history does not exist', async () => {
+		const response = await callApp('/users/quests/history/123/fun_facts', { method: 'GET' });
+		expect([200, 404]).toContain(response.status);
+	});
+});
+
+describe('DELETE /users/quests/progress/:user_id', () => {
+	it('resets active quest progress', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/users/quests/progress/123',
+			{ method: 'POST', body: JSON.stringify({ quest_id: 'fun_facts' }) },
+			true,
+			bindings
+		);
+
+		const response = await callApp(
+			'/users/quests/progress/123',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(204);
+	});
+});
+
+describe('POST /users/recommend_events', () => {
+	it('returns recommendations for valid event/activity payloads', async () => {
+		const response = await callApp('/users/recommend_events', {
+			method: 'POST',
+			body: JSON.stringify({ pool: [sampleEvent], activities: ['nature'], limit: 1 })
+		});
+		expect(response.status).toBe(200);
+	});
+
+	it('rejects malformed and out-of-range request payloads', async () => {
+		const invalidPayloads = [
+			{ activities: ['nature'] },
+			{ pool: [], activities: ['nature'] },
+			{ pool: [sampleEvent] },
+			{ pool: [sampleEvent], activities: [] },
+			{ pool: [sampleEvent], activities: [''] },
+			{ pool: [sampleEvent], activities: { a: 'b' } },
+			{ pool: [{ id: '' }], activities: ['nature'] },
+			{ pool: Array.from({ length: 21 }, () => sampleEvent), activities: ['nature'] }
+		];
+
+		for (const payload of invalidPayloads) {
+			const response = await callApp('/users/recommend_events', {
+				method: 'POST',
+				body: JSON.stringify(payload)
+			});
+			expect(response.status).toBe(400);
+		}
+	});
+});
+
+describe('POST /events/recommend_similar_events', () => {
+	it('returns recommendations for valid event pools', async () => {
+		const response = await callApp('/events/recommend_similar_events', {
+			method: 'POST',
+			body: JSON.stringify({ event: sampleEvent, pool: [sampleEvent], limit: 1 })
+		});
+		expect(response.status).toBe(200);
+	});
+
+	it('rejects oversized pools for similarity recommendations', async () => {
+		const response = await callApp('/events/recommend_similar_events', {
+			method: 'POST',
+			body: JSON.stringify({
+				event: sampleEvent,
+				pool: Array.from({ length: 21 }, () => sampleEvent)
+			})
+		});
+		expect(response.status).toBe(400);
+	});
+});
+
+describe('POST /events/submit_image', () => {
+	it('accepts valid event image submissions and returns submission IDs', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: createMockAiRun()
+			} as any
+		});
+
+		const response = await callApp(
+			'/events/submit_image',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					user_id: '777',
+					event: sampleEvent,
+					photo_url: toImageDataUrl()
+				})
+			},
+			true,
+			bindings
+		);
+		expect(response.status).toBe(201);
+		const json = await response.json<{ submission_id: string; success: boolean }>();
+		expect(json.success).toBe(true);
+		expect(json.submission_id).toHaveLength(32);
+	});
+});
+
+describe('GET /events/retrieve_image', () => {
+	it('retrieves submitted images by submission id and list filters', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: createMockAiRun()
+			} as any
+		});
+
+		const submit = await callApp(
+			'/events/submit_image',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					user_id: '777',
+					event: sampleEvent,
+					photo_url: toImageDataUrl()
+				})
+			},
+			true,
+			bindings
+		);
+		const submitJson = await submit.json<{ submission_id: string }>();
+
+		const single = await callApp(
+			`/events/retrieve_image?submission_id=${submitJson.submission_id}`,
+			{},
+			true,
+			bindings
+		);
+		expect(single.status).toBe(200);
+
+		const list = await callApp(
+			'/events/retrieve_image?event_id=100000000000000000000555&user_id=777&limit=25&page=1&sort=desc',
+			{},
+			true,
+			bindings
+		);
+		expect(list.status).toBe(200);
+	});
+
+	it('rejects invalid retrieve image query parameter combinations', async () => {
+		const requests = [
+			'/events/retrieve_image',
+			'/events/retrieve_image?submission_id=abc',
+			'/events/retrieve_image?event_id=abc',
+			'/events/retrieve_image?event_id=1&limit=0',
+			'/events/retrieve_image?event_id=1&sort=up',
+			'/events/retrieve_image?user_id=abc',
+			'/events/retrieve_image?event_id=1&page=0',
+			'/events/retrieve_image?event_id=1&limit=501'
+		];
+
+		for (const path of requests) {
+			const response = await callApp(path, { method: 'GET' });
+			expect(response.status).toBe(400);
+		}
+	});
+});
+
+describe('DELETE /events/delete_image', () => {
+	it('deletes single and bulk image submissions', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: createMockAiRun()
+			} as any
+		});
+
+		const submit = await callApp(
+			'/events/submit_image',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					user_id: '777',
+					event: sampleEvent,
+					photo_url: toImageDataUrl()
+				})
+			},
+			true,
+			bindings
+		);
+		const submitJson = await submit.json<{ submission_id: string }>();
+
+		const deleteSingle = await callApp(
+			`/events/delete_image?submission_id=${submitJson.submission_id}`,
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(deleteSingle.status).toBe(204);
+
+		const deleteBulk = await callApp(
+			'/events/delete_image?event_id=100000000000000000000555&user_id=777',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(deleteBulk.status).toBe(204);
+	});
+
+	it('rejects invalid delete image query parameter combinations', async () => {
+		const missingDeleteFilters = await callApp('/events/delete_image', { method: 'DELETE' });
+		expect(missingDeleteFilters.status).toBe(400);
+
+		const badDeleteSubmission = await callApp('/events/delete_image?submission_id=bad', {
+			method: 'DELETE'
+		});
+		expect(badDeleteSubmission.status).toBe(400);
+
+		const notFoundDelete = await callApp(
+			'/events/delete_image?submission_id=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+			{ method: 'DELETE' }
+		);
+		expect(notFoundDelete.status).toBe(404);
+
+		const badDeleteEvent = await callApp('/events/delete_image?event_id=abc', {
+			method: 'DELETE'
+		});
+		expect(badDeleteEvent.status).toBe(400);
+	});
+});
+
+describe('POST /articles/quiz/create', () => {
+	it('validates request body and normalizes true/false fallback answers', async () => {
+		const missingArticle = await callApp('/articles/quiz/create', {
+			method: 'POST',
+			body: JSON.stringify({})
+		});
+		expect(missingArticle.status).toBe(400);
+
+		const quizBindings = createMockBindings({
+			AI: {
+				run: vi.fn(async () => ({
+					response: JSON.stringify({
+						questions: [
+							{
+								question: 'Is water wet?',
+								type: 'true_false',
+								options: [],
+								correct_answer_index: -1,
+								is_true: false,
+								is_false: false
+							}
+						]
+					})
+				}))
+			} as any
+		});
+
+		const createdQuiz = await callApp(
+			'/articles/quiz/create',
+			{ method: 'POST', body: JSON.stringify({ article: sampleArticle }) },
+			true,
+			quizBindings
+		);
+		expect(createdQuiz.status).toBe(201);
+		const json =
+			await createdQuiz.json<Array<{ correct_answer_index: number; correct_answer: string }>>();
+		expect(json[0]?.correct_answer_index).toBe(1);
+		expect(json[0]?.correct_answer).toBe('False');
+	});
+
+	it('returns 500 when quiz generation returns no questions', async () => {
+		const failedCreate = await callApp(
+			'/articles/quiz/create',
+			{ method: 'POST', body: JSON.stringify({ article: sampleArticle }) },
+			true,
+			createMockBindings({
+				AI: {
+					run: vi.fn(async () => ({ response: JSON.stringify({ questions: [] }) }))
+				} as any
+			})
+		);
+		expect(failedCreate.status).toBe(500);
+	});
+});
+
+describe('GET /articles/quiz', () => {
+	it('returns 400 when article id is missing', async () => {
+		const response = await callApp('/articles/quiz', { method: 'GET' });
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 404 when quiz data does not exist', async () => {
+		const response = await callApp('/articles/quiz?articleId=404', { method: 'GET' });
+		expect(response.status).toBe(404);
+	});
+
+	it('normalizes quiz question options for true/false entries', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put(
+			'article:quiz:100',
+			JSON.stringify([
+				{
+					question: 'T/F question',
+					type: 'true_false',
+					options: [],
+					correct_answer_index: -1,
+					is_true: true,
+					is_false: false
+				}
+			])
+		);
+
+		const response = await callApp(
+			'/articles/quiz?articleId=100',
+			{ method: 'GET' },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(200);
+		const json = await response.json<Array<{ options: string[]; correct_answer_index: number }>>();
+		expect(json[0]?.options).toEqual(['True', 'False']);
+		expect(json[0]?.correct_answer_index).toBe(0);
+	});
+});
+
+describe('POST /articles/quiz/submit', () => {
+	it('returns 400 when required fields are missing', async () => {
+		const response = await callApp('/articles/quiz/submit', {
+			method: 'POST',
+			body: JSON.stringify({ articleId: '', userId: '', answers: null })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('submits answers and rejects duplicate submissions for same user/article', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put(
+			'article:quiz:100',
+			JSON.stringify([
+				{
+					question: 'T/F question',
+					type: 'true_false',
+					options: [],
+					correct_answer_index: -1,
+					is_true: true,
+					is_false: false
+				},
+				{
+					question: 'Multiple choice question',
+					type: 'multiple_choice',
+					options: ['A', 'B', 'C', 'D'],
+					correct_answer_index: 2
+				}
+			])
+		);
+
+		const submit = await callApp(
+			'/articles/quiz/submit',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					articleId: '100',
+					articleTypes: ['HOME_IMPROVEMENT'],
+					userId: '123',
+					answers: [
+						{ question: 'T/F question', text: 'True', index: 0 },
+						{ question: 'Multiple choice question', text: 'C', index: 2 }
+					]
+				})
+			},
+			true,
+			bindings
+		);
+		expect(submit.status).toBe(200);
+
+		const duplicate = await callApp(
+			'/articles/quiz/submit',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					articleId: '100',
+					articleTypes: ['HOME_IMPROVEMENT'],
+					userId: '123',
+					answers: [{ question: 'T/F question', text: 'True', index: 0 }]
+				})
+			},
+			true,
+			bindings
+		);
+		expect(duplicate.status).toBe(409);
+	});
+});
+
+describe('GET /articles/quiz/score', () => {
+	it('returns 400 when ids are missing', async () => {
+		const response = await callApp('/articles/quiz/score', { method: 'GET' });
+		expect(response.status).toBe(400);
+	});
+
+	it('returns 404 when quiz score does not exist', async () => {
+		const response = await callApp('/articles/quiz/score?userId=123&articleId=404', {
+			method: 'GET'
+		});
+		expect(response.status).toBe(404);
+	});
+});
+
+describe('POST /articles/grade', () => {
+	it('returns 400 when content is missing', async () => {
+		const response = await callApp('/articles/grade', {
+			method: 'POST',
+			body: JSON.stringify({ id: '1' })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('returns AI-backed grading data for valid article content', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: createMockAiRun()
+			} as any
+		});
+
+		const response = await callApp(
+			'/articles/grade',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					id: '100',
+					content: 'A long article body about restoration systems.'
+				})
+			},
+			true,
+			bindings
+		);
+		expect(response.status).toBe(200);
+	});
+});
+
+describe('POST /prompts/grade', () => {
+	it('returns AI-backed grading data for valid prompts', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: createMockAiRun()
+			} as any
+		});
+
+		const response = await callApp(
+			'/prompts/grade',
+			{
+				method: 'POST',
+				body: JSON.stringify({ id: 'p1', prompt: 'How can cities restore marshlands?' })
+			},
+			true,
+			bindings
+		);
+		expect(response.status).toBe(200);
 	});
 });

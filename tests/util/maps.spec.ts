@@ -60,6 +60,118 @@ describe('findPlaceThumbnail', () => {
 		const result = await findPlaceThumbnail('Vallejo', bindings);
 		expect(result).toEqual([null, null]);
 	});
+
+	it('returns null tuple if response json parsing fails', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response('invalid json', { status: 200 })
+		);
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
+	it('returns null tuple if search request fails', async () => {
+		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network error'));
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
+	it('returns null tuple when no places found', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ places: [] }), { status: 200 })
+		);
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
+	it('returns null tuple when no photos found', async () => {
+		const searchBody = { places: [{ name: 'places/abc' }] };
+		const detailsBody = { photos: [] };
+
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(searchBody), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(detailsBody), { status: 200 }));
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
+	it('returns null tuple when photo fetch fails', async () => {
+		const searchBody = { places: [{ name: 'places/abc' }] };
+		const detailsBody = {
+			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
+		};
+
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(searchBody), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(detailsBody), { status: 200 }))
+			.mockResolvedValueOnce(new Response(null, { status: 404 }));
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
+	it('returns null tuple when photo fetch returns non-image content type', async () => {
+		const searchBody = { places: [{ name: 'places/abc' }] };
+		const detailsBody = {
+			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
+		};
+
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(searchBody), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(detailsBody), { status: 200 }))
+			.mockResolvedValueOnce(
+				new Response(null, {
+					status: 200,
+					headers: { 'Content-Type': 'text/html' }
+				})
+			);
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
+	it('returns null tuple when photo fetch returns empty body', async () => {
+		const searchBody = { places: [{ name: 'places/abc' }] };
+		const detailsBody = {
+			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
+		};
+
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(searchBody), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(detailsBody), { status: 200 }))
+			.mockResolvedValueOnce(
+				new Response(new Uint8Array([]), {
+					status: 200,
+					headers: { 'Content-Type': 'image/webp' }
+				})
+			);
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
+	it('returns null tuple when photo has no bytes', async () => {
+		const searchBody = { places: [{ name: 'places/abc' }] };
+		const detailsBody = {
+			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
+		};
+
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(searchBody), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(detailsBody), { status: 200 }))
+			.mockResolvedValueOnce(
+				new Response(null, {
+					status: 200,
+					headers: { 'Content-Type': 'image/webp' }
+				})
+			);
+
+		const result = await findPlaceThumbnail('Vallejo', createBindings());
+		expect(result).toEqual([null, null]);
+	});
 });
 
 describe('reverseGeocode', () => {
@@ -82,6 +194,22 @@ describe('reverseGeocode', () => {
 		const result = await reverseGeocode(1, 2, createBindings());
 		expect(result).toHaveLength(1);
 	});
+
+	it('returns empty array on fetch failure', async () => {
+		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network error'));
+
+		const result = await reverseGeocode(1, 2, createBindings());
+		expect(result).toEqual([]);
+	});
+
+	it('returns empty array on json parsing failure', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response('invalid json', { status: 200 })
+		);
+
+		const result = await reverseGeocode(1, 2, createBindings());
+		expect(result).toEqual([]);
+	});
 });
 
 describe('extractCountry', () => {
@@ -97,6 +225,22 @@ describe('extractCountry', () => {
 		] as ReverseGeocodeResult[];
 
 		expect(extractCountry(results)).toBe('United States');
+	});
+
+	it('returns empty string if no country component found', () => {
+		const results = [
+			{
+				address_components: [
+					{ long_name: 'California', short_name: 'CA', types: ['administrative_area_level_1'] }
+				],
+				formatted_address: '',
+				geometry: { location: { lat: 0, lng: 0 } },
+				place_id: '1',
+				types: []
+			}
+		] as ReverseGeocodeResult[];
+
+		expect(extractCountry(results)).toBe('');
 	});
 });
 
@@ -115,6 +259,20 @@ describe('extractState', () => {
 		] as ReverseGeocodeResult[];
 
 		expect(extractState(results)).toBe('California');
+	});
+
+	it('returns empty string if no admin level 1 component found', () => {
+		const results = [
+			{
+				address_components: [{ long_name: 'United States', short_name: 'US', types: ['country'] }],
+				formatted_address: '',
+				geometry: { location: { lat: 0, lng: 0 } },
+				place_id: '1',
+				types: []
+			}
+		] as ReverseGeocodeResult[];
+
+		expect(extractState(results)).toBe('');
 	});
 });
 
@@ -138,5 +296,19 @@ describe('extractLocality', () => {
 		] as ReverseGeocodeResult[];
 
 		expect(extractLocality(results)).toEqual(['Vallejo', 'Solano County']);
+	});
+
+	it('returns empty array if no locality-related components found', () => {
+		const results = [
+			{
+				address_components: [{ long_name: 'United States', short_name: 'US', types: ['country'] }],
+				formatted_address: '',
+				geometry: { location: { lat: 0, lng: 0 } },
+				place_id: '1',
+				types: []
+			}
+		] as ReverseGeocodeResult[];
+
+		expect(extractLocality(results)).toEqual([]);
 	});
 });
