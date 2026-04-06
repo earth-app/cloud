@@ -44,6 +44,7 @@ import {
 	getActivityJourney,
 	getJourney,
 	incrementJourney,
+	JOURNEY_TYPES,
 	resetJourney,
 	retrieveLeaderboard,
 	retrieveLeaderboardRank,
@@ -658,8 +659,16 @@ app.post('/users/recommend_articles', async (c) => {
 		return c.text('Article pool cannot exceed 20 articles', 400);
 	}
 
+	if (body.pool.some((a) => !a.id || !a.title || !a.content)) {
+		return c.text('Each article must have an id, title, and content', 400);
+	}
+
 	if (body.activities.length > 10) {
 		return c.text('Activities cannot exceed 10 items', 400);
+	}
+
+	if (body.activities.some((a) => typeof a !== 'string' || a.trim().length === 0)) {
+		return c.text('Each activity must be a non-empty string', 400);
 	}
 
 	// default limit is 10, max 25
@@ -757,6 +766,14 @@ app.get('/users/journey/:type/leaderboard', async (c) => {
 		return c.text('Journey type is required', 400);
 	}
 
+	if (type.length < 3 || type.length > 50) {
+		return c.text('Journey type must be between 3 and 50 characters', 400);
+	}
+
+	if (!JOURNEY_TYPES.includes(type)) {
+		return c.text(`Invalid journey type. Valid types are: ${JOURNEY_TYPES.join(', ')}`, 400);
+	}
+
 	const limit = c.req.query('limit');
 	let limit0 = limit ? parseInt(limit, 10) : TOP_LEADERBOARD_COUNT;
 	if (isNaN(limit0) || limit0 <= 0) {
@@ -789,6 +806,14 @@ app.get('/users/journey/:type/:id/rank', async (c) => {
 		return c.text('Journey ID must be between 3 and 50 characters', 400);
 	}
 
+	if (type.length < 3 || type.length > 50) {
+		return c.text('Journey type must be between 3 and 50 characters', 400);
+	}
+
+	if (!JOURNEY_TYPES.includes(type)) {
+		return c.text(`Invalid journey type. Valid types are: ${JOURNEY_TYPES.join(', ')}`, 400);
+	}
+
 	try {
 		const rank = await retrieveLeaderboardRank(id, type, c.env.KV, c.env.CACHE);
 		return c.json({ rank }, 200);
@@ -811,6 +836,14 @@ app.get('/users/journey/:type/:id', async (c) => {
 
 	if (id.length < 3 || id.length > 50) {
 		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	}
+
+	if (type.length < 3 || type.length > 50) {
+		return c.text('Journey type must be between 3 and 50 characters', 400);
+	}
+
+	if (!JOURNEY_TYPES.includes(type)) {
+		return c.text(`Invalid journey type. Valid types are: ${JOURNEY_TYPES.join(', ')}`, 400);
 	}
 
 	try {
@@ -870,6 +903,14 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 		return c.text('Journey ID must be between 3 and 50 characters', 400);
 	}
 
+	if (type.length < 3 || type.length > 50) {
+		return c.text('Journey type must be between 3 and 50 characters', 400);
+	}
+
+	if (!JOURNEY_TYPES.includes(type)) {
+		return c.text(`Invalid journey type. Valid types are: ${JOURNEY_TYPES.join(', ')}`, 400);
+	}
+
 	const [value, lastWrite] = await getJourney(id, type, c.env.KV);
 	if (Date.now() - lastWrite < 60 * 60 * 24 * 1000) {
 		// Bump expirationTtl
@@ -909,6 +950,14 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 		return c.text('Journey ID must be between 3 and 50 characters', 400);
 	}
 
+	if (type.length < 3 || type.length > 50) {
+		return c.text('Journey type must be between 3 and 50 characters', 400);
+	}
+
+	if (!JOURNEY_TYPES.includes(type)) {
+		return c.text(`Invalid journey type. Valid types are: ${JOURNEY_TYPES.join(', ')}`, 400);
+	}
+
 	try {
 		await resetJourney(id, type, c.env.KV);
 		return c.body(null, 204);
@@ -935,6 +984,10 @@ app.get('/users/badges/:id', async (c) => {
 
 	if (id.length < 3 || id.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	try {
@@ -981,6 +1034,10 @@ app.get('/users/badges/:id/:badge_id', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
 	const badgeData = badges.find((b) => b.id === badgeId);
 	if (!badgeData) {
 		return c.text('Badge not found', 404);
@@ -1022,6 +1079,10 @@ app.post('/users/badges/:id/:badge_id/grant', async (c) => {
 
 	if (id.length < 3 || id.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -1069,6 +1130,10 @@ app.post('/users/badges/:id/track', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
 	const body = await c.req.json<{ tracker_id: string; value: string | string[] | number }>();
 	if (!body.tracker_id || body.value === undefined || body.value === null) {
 		return c.text('tracker_id and value are required', 400);
@@ -1087,6 +1152,14 @@ app.post('/users/badges/:id/track', async (c) => {
 		!body.value.every((v) => typeof v === 'string' || typeof v === 'number')
 	) {
 		return c.text('value array must contain only strings or numbers', 400);
+	}
+
+	if (body.tracker_id.length < 3 || body.tracker_id.length > 50) {
+		return c.text('tracker_id must be between 3 and 50 characters', 400);
+	}
+
+	if (!badges.some((b) => b.tracker_id === body.tracker_id)) {
+		return c.text('tracker_id not associated with any badge', 400);
 	}
 
 	try {
@@ -1119,6 +1192,10 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 
 	if (id.length < 3 || id.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -1189,6 +1266,10 @@ app.delete('/users/badges/:id/:badge_id/revoke', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
 	const badge = badges.find((b) => b.id === badgeId);
 	if (!badge) {
 		return c.text('Badge not found', 404);
@@ -1212,6 +1293,10 @@ app.delete('/users/badges/:id/:badge_id/reset', async (c) => {
 
 	if (id.length < 3 || id.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -1257,6 +1342,10 @@ app.post('/users/impact_points/:id/add', async (c) => {
 
 	if (id.length < 3 || id.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	const body = await c.req.json<{ points: number; reason?: string }>();
@@ -1308,6 +1397,10 @@ app.post('/users/impact_points/:id/remove', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
 	const body = await c.req.json<{ points: number; reason?: string }>();
 	if (!body.points || body.points <= 0) {
 		return c.text('Points must be a positive number', 400);
@@ -1339,6 +1432,10 @@ app.put('/users/impact_points/:id/set', async (c) => {
 
 	if (id.length < 3 || id.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	const body = await c.req.json<{ points: number; reason?: string }>();
@@ -1381,6 +1478,10 @@ app.get('/users/quests/:id', async (c) => {
 		return c.text('Quest ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^[a-z0-9_-]+$/.test(id)) {
+		return c.text('Quest ID must be alphanumeric with optional dashes or underscores', 400);
+	}
+
 	try {
 		const quest = quests.find((q) => q.id === id);
 		if (!quest) {
@@ -1403,6 +1504,10 @@ app.post('/users/quests/progress/:user_id', async (c) => {
 
 	if (userId.length < 3 || userId.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	let body: { quest_id: string };
@@ -1440,6 +1545,10 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 
 	if (userId.length < 3 || userId.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	let body: {
@@ -1580,6 +1689,10 @@ app.delete('/users/quests/progress/:user_id', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
 	try {
 		await resetQuestProgress(userId, c.env);
 		return c.body(null, 204);
@@ -1597,6 +1710,10 @@ app.get('/users/quests/progress/:user_id', async (c) => {
 
 	if (userId.length < 3 || userId.length > 50) {
 		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	try {
@@ -1624,6 +1741,14 @@ app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
 	const stepIndexParam = c.req.param('step_index');
 	if (!userId || !stepIndexParam) {
 		return c.text('User ID and step index are required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
 	}
 
 	const stepIndex = parseInt(stepIndexParam, 10);
@@ -1684,6 +1809,10 @@ app.get('/users/quests/history/:user_id', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
 	try {
 		const questIds = await getQuestHistory(userId, c.env);
 		const history = await Promise.all(
@@ -1718,8 +1847,16 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 		return c.text('User ID must be between 3 and 50 characters', 400);
 	}
 
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
 	if (questId.length < 3 || questId.length > 50) {
 		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	}
+
+	if (quests.findIndex((q) => q.id === questId) === -1) {
+		return c.text('Quest not found', 404);
 	}
 
 	try {
@@ -1939,8 +2076,16 @@ app.post('/users/recommend_events', async (c) => {
 		return c.text('Event pool cannot exceed 20 events', 400);
 	}
 
+	if (body.pool.some((e) => !e.id || !e.name)) {
+		return c.text('Each event in the pool must have an id and name', 400);
+	}
+
 	if (body.activities.length > 10) {
 		return c.text('Activities cannot exceed 10 items', 400);
+	}
+
+	if (body.activities.some((a) => typeof a !== 'string' || a.trim().length === 0)) {
+		return c.text('Activities must be non-empty strings', 400);
 	}
 
 	// default limit is 10, max 25

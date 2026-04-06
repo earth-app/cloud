@@ -3,14 +3,14 @@ import { normalizeId, isLegacyPaddedId, migrateLegacyKey, capitalizeFully } from
 import { ExecutionCtxLike } from '../util/types';
 import { addImpactPoints } from './points';
 
-const journeyTypes = ['article', 'prompt', 'event'];
+export const JOURNEY_TYPES = ['article', 'prompt', 'event'];
 
 export async function getJourney(
 	id: string,
 	type: string,
 	kv: KVNamespace
 ): Promise<[number, number]> {
-	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
+	if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
 
 	const normalizedId = normalizeId(id);
 	const key = `journey:${type}:${normalizedId}`;
@@ -36,7 +36,7 @@ export async function incrementJourney(
 	kv: KVNamespace,
 	ctx: ExecutionCtxLike
 ): Promise<number> {
-	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
+	if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
 
 	const normalizedId = normalizeId(id);
 	const key = `journey:${type}:${normalizedId}`;
@@ -99,7 +99,7 @@ export async function retrieveLeaderboard(
 		`leaderboard:${type}`,
 		cacheKv,
 		async () => {
-			if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
+			if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
 
 			const leaderboard: Array<{ id: string; streak: number }> = [];
 			const prefix = `journey:${type}:`;
@@ -204,7 +204,7 @@ export async function getActivityJourney(id: string, kv: KVNamespace): Promise<s
 }
 
 export async function resetJourney(id: string, type: string, kv: KVNamespace): Promise<void> {
-	if (!journeyTypes.includes(type)) throw new Error('Invalid journey type');
+	if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
 
 	const normalizedId = normalizeId(id);
 	const key = `journey:${type}:${normalizedId}`;

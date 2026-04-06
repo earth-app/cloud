@@ -231,23 +231,32 @@ export async function reverseGeocode(
 	longitude: number,
 	bindings: Bindings
 ): Promise<ReverseGeocodeResult[]> {
-	const res = await fetch(
-		`https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${bindings.MAPS_API_KEY}`
-	);
+	try {
+		const res = await fetch(
+			`https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${bindings.MAPS_API_KEY}`
+		);
 
-	if (!res.ok) {
-		console.error('Failed to reverse geocode coordinates', {
+		if (!res.ok) {
+			console.error('Failed to reverse geocode coordinates', {
+				latitude,
+				longitude,
+				status: res.status,
+				statusText: res.statusText,
+				body: await res.text()
+			});
+			return [];
+		}
+
+		const data = await res.json<{ results: ReverseGeocodeResult[] }>();
+		return data.results;
+	} catch (err) {
+		console.error('Failed to fetch or parse reverse geocode response', {
 			latitude,
 			longitude,
-			status: res.status,
-			statusText: res.statusText,
-			body: await res.text()
+			err
 		});
-		throw new Error('Reverse geocoding request failed');
+		return [];
 	}
-
-	const data = await res.json<{ results: ReverseGeocodeResult[] }>();
-	return data.results;
 }
 
 export function extractCountry(results: ReverseGeocodeResult[]): string {

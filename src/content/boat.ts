@@ -28,13 +28,13 @@ import {
 	uploadPlaceThumbnail
 } from './thumbnails';
 
-const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
-const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
-const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
-const rankerModel = '@cf/baai/bge-reranker-base';
-const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
-const quizModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
-const promptModel = '@cf/openai/gpt-oss-120b';
+export const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
+export const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
+export const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
+export const rankerModel = '@cf/baai/bge-reranker-base';
+export const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
+export const quizModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
+export const promptModel = '@cf/openai/gpt-oss-120b';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {

@@ -90,7 +90,7 @@ export async function createPhotoVariation(
 	bindings: Bindings,
 	ctx: ExecutionCtxLike
 ): Promise<Uint8Array> {
-	if (!size) return await getProfilePhoto(id, bindings);
+	if (!size || size === 1024) return await getProfilePhoto(id, bindings);
 
 	// create stream from profile data
 	const stream = new ReadableStream<Uint8Array>({
