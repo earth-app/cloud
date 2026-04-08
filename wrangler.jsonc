@@ -25,9 +25,9 @@
 	"send_metrics": false,
 	"triggers": {
 		"crons": [
-			"0 * * * *", // Every hour (leaderboard caching)
 			"*/12 * * * *", // Every 12 minutes (prompts)
-			"*/24 * * * *", // Every 24 minutes (articles x2)
+			"0 * * * *", // Every hour (articles x5; top 3 + bottom 2)
+			"0 */4 * * *", // Every 4 hours (leaderboard caching)
 			"0 0 */2 * *" // Every 2 days (events)
 		]
 	},

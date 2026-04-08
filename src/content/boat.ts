@@ -300,17 +300,11 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 		);
 	}
 
-	// Find highest-ranked and lowest-ranked articles
+	// select top 3 + bottom 2 for maximum diversity
 	const sortedByScore = allRanked.sort((a, b) => b.score - a.score);
-	const best = sortedByScore[0];
-	const worst = sortedByScore[sortedByScore.length - 1];
-
-	if (!best || !worst) {
-		throw new Error('Failed to find best/worst articles: length ' + allRanked.length);
-	}
-
-	// Select indices: best (0) and worst (last) for bookend diversity
-	const selectedIndices = [best.id, worst.id];
+	const top3 = sortedByScore.slice(0, 3);
+	const bottom2 = sortedByScore.slice(-2);
+	const selectedIndices = [...top3.map((r) => r.id), ...bottom2.map((r) => r.id)];
 	const selectedArticles: OceanArticle[] = [];
 
 	for (const idx of selectedIndices) {

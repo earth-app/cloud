@@ -17,22 +17,6 @@ export default async function scheduled(
 	env: Bindings,
 	ctx: ExecutionContext
 ) {
-	if (controller.cron === '0 * * * *') {
-		console.log('Running scheduled task: Cache leaderboards');
-		console.log('Started at', new Date().toISOString());
-
-		const types = ['article', 'prompt', 'event'];
-		await Promise.all(
-			types.map(async (type) => {
-				await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
-				console.log(`Cached leaderboard for journey type: ${type}`);
-			})
-		);
-
-		console.log('Finished at', new Date().toISOString());
-		return;
-	}
-
 	if (controller.cron === '*/12 * * * *') {
 		console.log('Running scheduled task: Create new prompt');
 		console.log('Started at', new Date().toISOString());
@@ -45,17 +29,17 @@ export default async function scheduled(
 		return;
 	}
 
-	if (controller.cron === '*/24 * * * *') {
-		console.log('Running scheduled task: Create new articles (best + worst ranked)');
+	if (controller.cron === '0 * * * *') {
+		console.log('Running scheduled task: Create new articles (top 3 + bottom 2 ranked)');
 		console.log('Started at', new Date().toISOString());
 
 		const [oceans, tags] = await findArticle(env);
-		console.log(`Found ${oceans.length} articles (best & worst ranked) with tags:`, tags);
+		console.log(`Found ${oceans.length} articles (top 3 + bottom 2 ranked) with tags:`, tags);
 
 		for (let i = 0; i < oceans.length; i++) {
 			const ocean = oceans[i];
-			const rankLabel = i === 0 ? 'best-ranked' : 'worst-ranked';
-			console.log(`Processing '${rankLabel}' article: ${ocean.title}`);
+			const rankLabel = i < 3 ? `top-${i + 1}-ranked` : `bottom-${i - 2}-ranked`;
+			console.log(`Processing ${rankLabel} article: ${ocean.title}`);
 
 			const article = await createArticle(ocean, env.AI, tags);
 			console.log('Created article content:', article.content?.slice(0, 100) + '...');
@@ -66,10 +50,26 @@ export default async function scheduled(
 			await postArticle(article, quiz.length > 0 ? quiz : null, env);
 
 			console.log(
-				`Created new '${rankLabel}' article and quiz: "${article.title}" | `,
+				`Created new ${rankLabel} article and quiz: "${article.title}" | `,
 				article.content?.slice(0, 100) + '...'
 			);
 		}
+
+		console.log('Finished at', new Date().toISOString());
+		return;
+	}
+
+	if (controller.cron === '0 */4 * * *') {
+		console.log('Running scheduled task: Cache leaderboards');
+		console.log('Started at', new Date().toISOString());
+
+		const types = ['article', 'prompt', 'event'];
+		await Promise.all(
+			types.map(async (type) => {
+				await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
+				console.log(`Cached leaderboard for journey type: ${type}`);
+			})
+		);
 
 		console.log('Finished at', new Date().toISOString());
 		return;
