@@ -9,6 +9,7 @@ export type Quest = {
 	icon: string;
 	rarity: Rarity;
 	steps: (QuestStep | QuestStep[])[]; // some steps have optional alternatives
+	premium?: boolean;
 	reward: number; // impact points reward for completing the quest
 	permissions?: ('location' | 'camera' | 'record')[]; // permissions required to complete the quest
 };
@@ -126,6 +127,175 @@ export const quests = [
 		mobile_only: true,
 		permissions: ['camera']
 	},
+	{
+		id: 'out_and_about',
+		title: 'Out and About',
+		description: 'Get outside and explore your surroundings by taking photos of things in nature!',
+		icon: 'mdi:pine-tree',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_objects',
+				description: 'Take a photo of a bicycle.',
+				parameters: [['bicycle', 0.8]]
+			},
+			[
+				{
+					type: 'take_photo_classification',
+					description: 'Take a photo of an umbrella.',
+					parameters: ['umbrella', 0.8]
+				},
+				{
+					type: 'take_photo_classification',
+					description: 'Take a photo of a backpack.',
+					parameters: ['backpack', 0.8]
+				},
+				{
+					type: 'take_photo_classification',
+					description: 'Take a photo of a balloon.',
+					parameters: ['balloon', 0.8]
+				}
+			],
+			{
+				type: 'attend_event',
+				description: 'Attend an outdoor sports event with at least 3 attendees.',
+				parameters: [{ type: 'activity_type', value: 'SPORT' }, 3],
+				delay: 300
+			},
+			[
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about hobbies and complete the quiz with at least 80% accuracy.',
+					parameters: ['HOBBY', 0.8]
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about sports and complete the quiz with at least 80% accuracy.',
+					parameters: ['SPORT', 0.8]
+				}
+			],
+			{
+				type: 'draw_picture',
+				description: 'Draw a tree.',
+				parameters: ['tree', 0.7],
+				delay: 600
+			}
+		],
+		reward: 200,
+		permissions: ['camera']
+	},
+	{
+		id: 'sound_sensation',
+		title: 'Sound Sensation',
+		description: 'Use your voice to complete these fun and creative challenges!',
+		icon: 'mdi:microphone',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'transcribe_audio',
+				description: 'Describe something that makes you happy for 30 seconds.',
+				parameters: ['Describe something that makes you happy.', 0.7]
+			},
+			{
+				type: 'transcribe_audio',
+				description: 'Describe your favorite food for 30 seconds.',
+				parameters: ['Describe your favorite food.', 0.7]
+			},
+			{
+				type: 'transcribe_audio',
+				description: 'Describe your favorite place for 30 seconds.',
+				parameters: ['Describe your favorite place.', 0.7],
+				delay: 1200
+			},
+			[
+				{
+					type: 'transcribe_audio',
+					description: 'Describe your favorite hobby for 30 seconds.',
+					parameters: ['Describe your favorite hobby.', 0.7],
+					reward: 50
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe your favorite animal for 30 seconds.',
+					parameters: ['Describe your favorite animal.', 0.7],
+					reward: 50
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about entertainment and complete the quiz with at least 80% accuracy.',
+				parameters: ['ENTERTAINMENT', 0.8],
+				delay: 1800
+			}
+		],
+		reward: 250,
+		permissions: ['record']
+	},
+	{
+		id: 'chicagoland',
+		title: 'Chicagoland Explorer',
+		description:
+			'Explore the city of Chicago by taking photos of its iconic landmarks and attractions!',
+		icon: 'mdi:city',
+		premium: true,
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_location',
+				description: 'Take a photo of the Cloud Gate sculpture (aka "The Bean").',
+				parameters: [41.8827, -87.6233, 50]
+			},
+			{
+				type: 'take_photo_location',
+				description: 'Take a photo of the Willis Tower (aka "Sears Tower").',
+				parameters: [41.8789, -87.6359, 100],
+				delay: 300
+			},
+			{
+				type: 'take_photo_location',
+				description: 'Take a photo of the Navy Pier.',
+				parameters: [41.8917, -87.6091, 100],
+				delay: 600
+			},
+			[
+				{
+					type: 'draw_picture',
+					description: 'Draw the outline of the state of Illinois.',
+					parameters: ['outline of Illinois', 0.7],
+					reward: 25
+				},
+				{
+					type: 'draw_picture',
+					description: 'Draw the outline of Cook County.',
+					parameters: ['outline of Cook County', 0.7],
+					reward: 50
+				}
+			],
+			{
+				type: 'order_items',
+				description: 'Order these Chicago landmarks from north to south.',
+				parameters: [['Wrigley Field', 'Lincoln Park', 'Navy Pier', 'Willis Tower']]
+			},
+			[
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about work and complete the quiz with 100% score on the quiz.',
+					parameters: ['WORK', 1.0]
+				},
+				{
+					type: 'article_quiz',
+					description: 'Read an article about travel and complete the quiz with 100% accuracy.',
+					parameters: ['TRAVEL', 1.0]
+				}
+			]
+		],
+		reward: 300,
+		permissions: ['camera']
+	},
 	// rare quests
 	{
 		id: 'my_aesthetic',
@@ -172,10 +342,10 @@ export const quests = [
 				},
 				{
 					type: 'take_photo_objects',
-					description: 'Take a photo with a baseball hat and gloves in it.',
+					description: 'Take a photo with a baseball bat and glove in it.',
 					parameters: [
-						['baseball hat', 0.7],
-						['baseball glove', 0.7]
+						['baseball_bat', 0.7],
+						['baseball_glove', 0.7]
 					],
 					reward: 75
 				}
@@ -185,8 +355,8 @@ export const quests = [
 					type: 'take_photo_objects',
 					description: 'Take a photo with a stop sign, traffic light, and bus in it.',
 					parameters: [
-						['stop sign', 0.7],
-						['traffic light', 0.7],
+						['stop_sign', 0.7],
+						['traffic_light', 0.7],
 						['bus', 0.7]
 					],
 					reward: 100
@@ -323,6 +493,268 @@ export const quests = [
 		reward: 400,
 		permissions: ['camera']
 	},
+	{
+		id: 'event_attendee',
+		title: 'Event Attendee',
+		description:
+			'Attend events in your community and learn about the activities happening around you!',
+		icon: 'mdi:account-group',
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'attend_event',
+				description: 'Attend an entertainment event with at least 20 attendees.',
+				parameters: [{ type: 'activity_type', value: 'ENTERTAINMENT' }, 20]
+			},
+			{
+				type: 'attend_event',
+				description: 'Attend a sports event with at least 20 attendees.',
+				parameters: [{ type: 'activity_type', value: 'SPORT' }, 20],
+				delay: 600
+			},
+			{
+				type: 'attend_event',
+				description: 'Attend a holiday event with at least 50 attendees.',
+				parameters: [{ type: 'activity_type', value: 'HOLIDAY' }, 50],
+				delay: 1200
+			},
+			{
+				type: 'attend_event',
+				description: 'Attend a community service event with at least 20 attendees.',
+				parameters: [{ type: 'activity_type', value: 'COMMUNITY_SERVICE' }, 20],
+				delay: 1800
+			},
+			[
+				{
+					type: 'attend_event',
+					description: 'Attend a social event with at least 20 attendees.',
+					parameters: [{ type: 'activity_type', value: 'SOCIAL' }, 20],
+					reward: 50
+				},
+				{
+					type: 'attend_event',
+					description: 'Attend an art event with at least 20 attendees.',
+					parameters: [{ type: 'activity_type', value: 'ART' }, 20],
+					reward: 50
+				},
+				{
+					type: 'attend_event',
+					description: 'Attend a technology event with at least 20 attendees.',
+					parameters: [{ type: 'activity_type', value: 'TECHNOLOGY' }, 20],
+					reward: 50
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about community involvement and complete the quiz with at least 80% accuracy.',
+				parameters: ['COMMUNITY_SERVICE', 0.8],
+				delay: 2400
+			}
+		],
+		reward: 350,
+		permissions: ['location']
+	},
+	{
+		id: 'researcher',
+		title: 'Researcher',
+		description:
+			'Conduct research by gathering data and analyzing it to draw conclusions about the world around you!',
+		icon: 'mdi:magnify',
+		rarity: 'rare',
+		steps: [
+			[
+				{
+					type: 'take_photo_classification',
+					description: 'Take a photo of a petri dish.',
+					parameters: ['petri_dish', 0.7],
+					reward: 50
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about technology and complete the quiz with at least 80% accuracy.',
+					parameters: ['TECHNOLOGY', 0.8],
+					delay: 1200
+				}
+			],
+			{
+				type: 'order_items',
+				description: 'Order these planets from closest to farthest from the sun.',
+				parameters: [
+					['Mercury', 'Venus', 'Earth', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune']
+				]
+			},
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about a project and complete the quiz with at least 60% accuracy.',
+				parameters: ['PROJECT', 0.6],
+				delay: 1200
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw a galaxy.',
+				parameters: ['galaxy', 0.7],
+				reward: 50
+			},
+			[
+				{
+					type: 'match_terms',
+					description: 'Match the scientist to their discovery.',
+					parameters: [
+						'Match the scientist to their discovery.',
+						[
+							['Isaac Newton', 'Gravity'],
+							['Marie Curie', 'Radioactivity'],
+							['Albert Einstein', 'Relativity'],
+							['Charles Darwin', 'Evolution'],
+							['Nikola Tesla', 'Alternating Current'],
+							['Galileo Galilei', 'Heliocentrism'],
+							['Rosalind Franklin', 'DNA Structure'],
+							['Kip Thorne', 'Gravitational Waves'],
+							['James Clerk Maxwell', 'Electromagnetism']
+						]
+					]
+				},
+				{
+					type: 'match_terms',
+					description: 'Match each discovery or invention to the person most associated with it.',
+					parameters: [
+						'Match each discovery or invention to the person most associated with it.',
+						[
+							['Telephone', 'Alexander Graham Bell'],
+							['Practical Incandescent Light Bulb', 'Thomas Edison'],
+							['Airplane', 'Wright Brothers'],
+							['Printing Press', 'Johannes Gutenberg'],
+							['Improved Steam Engine', 'James Watt'],
+							['Penicillin', 'Alexander Fleming'],
+							['World Wide Web', 'Tim Berners-Lee'],
+							['Radio', 'Guglielmo Marconi'],
+							['Theory of Evolution', 'Charles Darwin'],
+							['Alternating Current System', 'Nikola Tesla']
+						]
+					]
+				}
+			],
+			{
+				type: 'draw_picture',
+				description: 'Draw a microscope.',
+				parameters: ['microscope', 0.7],
+				delay: 1800
+			},
+			{
+				type: 'transcribe_audio',
+				description: 'Explain a scientific concept that you find interesting for 30 seconds.',
+				parameters: ['Explain a scientific concept that you find interesting.', 0.7],
+				delay: 2400
+			},
+			{
+				type: 'article_quiz',
+				description: 'Read an article about learning and complete the quiz with a perfect score.',
+				parameters: ['LEARNING', 1.0],
+				delay: 3600
+			}
+		],
+		reward: 350,
+		permissions: ['location']
+	},
+	{
+		id: 'computer_whiz',
+		title: 'Computer Whiz',
+		description:
+			'Show off your computer skills by completing these fun and creative challenges using technology!',
+		icon: 'mdi:laptop',
+		premium: true,
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about technology and complete the quiz with at least 80% accuracy.',
+				parameters: ['TECHNOLOGY', 0.8]
+			},
+			[
+				{
+					type: 'draw_picture',
+					description: 'Draw a computer.',
+					parameters: ['computer', 0.7]
+				},
+				{
+					type: 'draw_picture',
+					description: 'Draw a smartphone.',
+					parameters: ['smartphone', 0.7]
+				},
+				{
+					type: 'draw_picture',
+					description: 'Draw a tablet.',
+					parameters: ['tablet', 0.7]
+				}
+			],
+			{
+				type: 'take_photo_objects',
+				description: 'Take a photo of a laptop and cell phone together.',
+				parameters: [
+					['laptop', 0.7],
+					['cell_phone', 0.7]
+				],
+				delay: 1200
+			},
+			{
+				type: 'order_items',
+				description: 'Order these programming languages from oldest to newest.',
+				parameters: [['Assembly', 'Fortran', 'C', 'C++', 'Python', 'Java', 'JavaScript']],
+				delay: 1500
+			},
+			{
+				type: 'match_terms',
+				description: 'Match the technology term to its definition.',
+				parameters: [
+					'Match the technology term to its definition.',
+					[
+						['Algorithm', 'A set of instructions for solving a problem or performing a task.'],
+						['Cloud Computing', 'The delivery of computing services over the internet.'],
+						['Artificial Intelligence', 'The simulation of human intelligence in machines.'],
+						['Machine Learning', 'A subset of AI that allows machines to learn from data.'],
+						[
+							'Blockchain',
+							'A decentralized digital ledger that records transactions across many computers.'
+						],
+						['Internet of Things', 'The interconnection of everyday objects via the internet.'],
+						[
+							'Virtual Reality',
+							'A simulated experience that can be similar to or completely different from the real world.'
+						],
+						[
+							'Augmented Reality',
+							'An interactive experience where digital content is overlaid on the real world.'
+						],
+						[
+							'Quantum Computing',
+							'A type of computing that uses quantum bits to perform operations on data.'
+						]
+					]
+				],
+				reward: 25
+			},
+			[
+				{
+					type: 'draw_picture',
+					description: 'Draw a robot.',
+					parameters: ['robot', 0.8]
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about technology and complete the quiz with a perfect score.',
+					parameters: ['TECHNOLOGY', 1.0],
+					reward: 50
+				}
+			]
+		],
+		reward: 450,
+		permissions: ['camera']
+	},
 	// amazing quests
 	{
 		id: 'insect_investigator',
@@ -381,6 +813,119 @@ export const quests = [
 			}
 		],
 		reward: 600,
+		permissions: ['camera']
+	},
+	{
+		id: 'city_explorer',
+		title: 'City Explorer',
+		description:
+			'Discover interesting landmarks and attractions in your city by taking photos of them!',
+		icon: 'mdi:city-variant',
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'take_photo_caption',
+				description: 'Take a photo that represents the concept of "community".',
+				parameters: [
+					[
+						{
+							id: 'togetherness',
+							ideal:
+								'The caption demonstrates a strong sense of togetherness and connection among people.',
+							weight: 0.4
+						},
+						{
+							id: 'diversity',
+							ideal:
+								'The caption reflects the diversity and inclusivity of the community, showcasing different cultures, backgrounds, or perspectives.',
+							weight: 0.3
+						},
+						{
+							id: 'support',
+							ideal:
+								'The caption conveys a sense of support and care within the community, highlighting acts of kindness, collaboration, or mutual aid.',
+							weight: 0.3
+						}
+					],
+					'Take a photo that represents the concept of "community".',
+					0.6
+				]
+			},
+			{
+				type: 'order_items',
+				description: 'Order these modes of transportation from slowest to fastest.',
+				parameters: [['Bicycle', 'Car', 'Bus', 'Train', 'Airplane']],
+				delay: 3600
+			},
+			{
+				type: 'take_photo_classification',
+				description: 'Take a photo of a car wheel.',
+				parameters: ['car_wheel', 0.7],
+				delay: 1200
+			},
+			[
+				{
+					type: 'order_items',
+					description: 'Order these major US cities from west to east.',
+					parameters: [
+						[
+							'San Francisco',
+							'Seattle',
+							'Los Angeles',
+							'Las Vegas',
+							'Salt Lake City',
+							'Denver',
+							'Houston',
+							'Chicago',
+							'Miami',
+							'New York City',
+							'Boston'
+						]
+					],
+					reward: 75
+				},
+				{
+					type: 'match_terms',
+					description: 'Match the US city to its state.',
+					parameters: [
+						'Match the US city to its state.',
+						[
+							['Seattle', 'Washington'],
+							['San Francisco', 'California'],
+							['Las Vegas', 'Nevada'],
+							['Denver', 'Colorado'],
+							['Houston', 'Texas'],
+							['Chicago', 'Illinois'],
+							['New York City', 'New York'],
+							['Boston', 'Massachusetts'],
+							['Salt Lake City', 'Utah'],
+							['Miami', 'Florida']
+						]
+					],
+					reward: 75
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about travel and complete the quiz with at least 80% accuracy.',
+				parameters: ['TRAVEL', 0.8],
+				delay: 1800
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw a city bus.',
+				parameters: ['city bus', 0.7],
+				delay: 2400
+			},
+			{
+				type: 'article_quiz',
+				description: 'Read an article about finance and complete the quiz with 100% accuracy.',
+				parameters: ['FINANCE', 1.0],
+				delay: 3000
+			}
+		],
+		reward: 550,
 		permissions: ['camera']
 	},
 	// green quests
@@ -475,5 +1020,113 @@ export const quests = [
 		],
 		reward: 3000,
 		permissions: ['camera', 'location']
+	},
+	{
+		id: 'nature_lover',
+		title: 'Nature Lover',
+		description: 'Learn about the nature around you and how to take care of it!',
+		icon: 'mdi:flower',
+		premium: true,
+		rarity: 'green',
+		steps: [
+			{
+				type: 'article_quiz',
+				description: 'Read an article about spirituality and complete the quiz with 100% accuracy.',
+				parameters: ['SPIRITUALITY', 1.0]
+			},
+			[
+				{
+					type: 'take_photo_location',
+					description: 'Take a photo at Yellowstone National Park.',
+					parameters: [44.428, -110.5885, 5000],
+					delay: 1200,
+					reward: 250
+				},
+				{
+					type: 'take_photo_location',
+					description: 'Take a photo at Yosemite National Park.',
+					parameters: [37.8651, -119.5383, 5000],
+					delay: 2400,
+					reward: 250
+				}
+			],
+			{
+				type: 'draw_picture',
+				description: 'Draw a pine tree.',
+				parameters: ['pine tree', 0.7],
+				delay: 3600,
+				reward: 100
+			},
+			{
+				type: 'attend_event',
+				description: 'Attend a nature-related event with at least 20 attendees.',
+				parameters: [{ type: 'activity_type', value: 'NATURE' }, 20],
+				delay: 4800
+			},
+			{
+				type: 'article_quiz',
+				description: 'Read an article about pets and complete the quiz with 100% accuracy.',
+				parameters: ['PETS', 1.0],
+				reward: 150
+			},
+			[
+				{
+					type: 'order_items',
+					description: 'Order these plants from earliest to most recent origin on Earth.',
+					parameters: [
+						[
+							'liverworts',
+							'mosses',
+							'lycophytes',
+							'horsetails',
+							'ferns',
+							'conifers',
+							'cycads',
+							'ginkgo',
+							'angiosperms',
+							'grasses'
+						]
+					],
+					reward: 100
+				},
+				{
+					type: 'match_terms',
+					description: 'Match the plant to its description.',
+					parameters: [
+						'Match the plant to its description.',
+						[
+							[
+								'liverworts',
+								'Early non-vascular land plants with flattened, leaf-like body structures.'
+							],
+							[
+								'mosses',
+								'Small non-vascular plants that typically grow in dense green mats in moist habitats.'
+							],
+							[
+								'lycophytes',
+								'Early vascular plants including clubmosses that reproduce via spores.'
+							],
+							[
+								'horsetails',
+								'Vascular plants that have hollow, jointed stems and reproduce via spores.'
+							],
+							['ferns', 'Vascular plants that have feathery fronds and reproduce via spores.'],
+							['conifers', 'Cone-bearing seed plants such as pines, firs, and spruces.'],
+							['cycads', 'Ancient gymnosperms with stout trunks and crown-like leaves.'],
+							['ginkgo', 'A gymnosperm lineage represented today by Ginkgo biloba.'],
+							['angiosperms', 'Flowering plants that produce seeds enclosed in fruits.'],
+							[
+								'grasses',
+								'A flowering plant family that includes major cereal crops and many turf species.'
+							]
+						]
+					],
+					reward: 100
+				}
+			]
+		],
+		reward: 2500,
+		permissions: ['camera']
 	}
 ] as Quest[];

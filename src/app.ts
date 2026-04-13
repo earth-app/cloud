@@ -1495,6 +1495,15 @@ app.get('/users/quests/:id', async (c) => {
 	}
 });
 
+function normalizeQuestRank(rank?: string): string | null {
+	if (typeof rank !== 'string') {
+		return null;
+	}
+
+	const normalized = rank.trim().toLowerCase();
+	return normalized.length > 0 ? normalized : null;
+}
+
 // start new quest (will override existing progress)
 app.post('/users/quests/progress/:user_id', async (c) => {
 	const userId = c.req.param('user_id')?.toLowerCase();
@@ -1510,9 +1519,9 @@ app.post('/users/quests/progress/:user_id', async (c) => {
 		return c.text('User ID must be numeric', 400);
 	}
 
-	let body: { quest_id: string };
+	let body: { quest_id: string; rank?: string };
 	try {
-		body = await c.req.json<{ quest_id: string }>();
+		body = await c.req.json<{ quest_id: string; rank?: string }>();
 	} catch (err) {
 		return c.text('Request body must be valid JSON', 400);
 	}
@@ -1525,6 +1534,17 @@ app.post('/users/quests/progress/:user_id', async (c) => {
 	const quest = quests.find((q) => q.id === questId);
 	if (!quest) {
 		return c.text('Quest not found', 404);
+	}
+
+	const rank = normalizeQuestRank(body.rank);
+	if (quest.premium) {
+		if (!rank) {
+			return c.text('Rank is required for premium quests', 400);
+		}
+
+		if (rank === 'free') {
+			return c.text('Premium quests require a non-free rank', 403);
+		}
 	}
 
 	try {
@@ -1553,6 +1573,7 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 
 	let body: {
 		device: QuestDeviceMetadata;
+		rank?: string;
 		response: {
 			type: string;
 			index: number;
@@ -1568,6 +1589,7 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 	try {
 		body = await c.req.json<{
 			device: QuestDeviceMetadata;
+			rank?: string;
 			response: {
 				type: string;
 				index: number;
@@ -1589,24 +1611,6 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 
 	if (!body.response) {
 		return c.text('Step response is required', 400);
-	}
-
-	const delayCheck = await checkStepDelay(
-		userId,
-		body.response.index,
-		body.response.altIndex,
-		c.env
-	);
-	if (!delayCheck.available) {
-		const s = delayCheck.secondsRemaining!;
-		return c.json(
-			{
-				message: `Step not yet available. Try again in ${s} second${s === 1 ? '' : 's'}.`,
-				code: 425,
-				availableAt: delayCheck.availableAt
-			},
-			425
-		);
 	}
 
 	const binaryTypes = [
@@ -1664,6 +1668,45 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			...(body.response.scoreKey !== undefined && { scoreKey: body.response.scoreKey }),
 			...(body.response.score !== undefined && { score: body.response.score })
 		} as QuestStepResponse;
+	}
+
+	const activeQuestProgress = await getCurrentQuestProgress(userId, c.env);
+	const activeQuest = activeQuestProgress.quest;
+	if (!activeQuest) {
+		return c.text('No active quest found', 404);
+	}
+
+	const rank = normalizeQuestRank(body.rank);
+	if (activeQuest.premium) {
+		if (!rank) {
+			return c.text('Rank is required for premium quests', 400);
+		}
+
+		if (rank === 'free') {
+			await resetQuestProgress(userId, c.env);
+			return c.text(
+				'Premium quests cannot be updated with free rank; progress has been reset',
+				403
+			);
+		}
+	}
+
+	const delayCheck = await checkStepDelay(
+		userId,
+		body.response.index,
+		body.response.altIndex,
+		c.env
+	);
+	if (!delayCheck.available) {
+		const s = delayCheck.secondsRemaining!;
+		return c.json(
+			{
+				message: `Step not yet available. Try again in ${s} second${s === 1 ? '' : 's'}.`,
+				code: 425,
+				availableAt: delayCheck.availableAt
+			},
+			425
+		);
 	}
 
 	try {

@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { quests } from '../../../src/user/quests';
+import ocean from '@earth-app/ocean';
+
+function normalizeVisionLabel(label: string): string {
+	return label.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+const validActivityTypes = new Set(
+	ocean.com.earthapp.activity.ActivityType.values().map((value) => value.name)
+);
 
 describe('quests', () => {
 	it('exports a non-empty list of quests', () => {
@@ -36,6 +45,67 @@ describe('quests', () => {
 				} else {
 					expect(typeof stepGroup.type).toBe('string');
 					expect(typeof stepGroup.description).toBe('string');
+				}
+			}
+		}
+	});
+
+	it('uses normalized labels for vision-based quest parameters', () => {
+		for (const quest of quests) {
+			for (const stepGroup of quest.steps) {
+				const steps = Array.isArray(stepGroup) ? stepGroup : [stepGroup];
+				for (const step of steps) {
+					if (step.type === 'take_photo_classification') {
+						const [label] = step.parameters;
+						expect(label).toBe(normalizeVisionLabel(label));
+					}
+
+					if (step.type === 'take_photo_objects') {
+						for (const [label] of step.parameters) {
+							expect(label).toBe(normalizeVisionLabel(label));
+						}
+					}
+
+					if (step.type === 'take_photo_location') {
+						const [, , , label] = step.parameters;
+						if (label !== undefined) {
+							expect(label).toBe(normalizeVisionLabel(label));
+						}
+					}
+				}
+			}
+		}
+	});
+
+	it('requires every article_quiz step to use the parameters field', () => {
+		for (const quest of quests) {
+			for (const stepGroup of quest.steps) {
+				const steps = Array.isArray(stepGroup) ? stepGroup : [stepGroup];
+				for (const step of steps) {
+					if (step.type === 'article_quiz') {
+						expect('parameters' in step).toBe(true);
+					}
+				}
+			}
+		}
+	});
+
+	it('uses valid activity enums in article_quiz and attend_event steps', () => {
+		for (const quest of quests) {
+			for (const stepGroup of quest.steps) {
+				const steps = Array.isArray(stepGroup) ? stepGroup : [stepGroup];
+				for (const step of steps) {
+					if (step.type === 'article_quiz') {
+						const [activityType] = step.parameters;
+						expect(validActivityTypes.has(activityType)).toBe(true);
+					}
+
+					if (step.type === 'attend_event') {
+						const [eventActivity] = step.parameters;
+						if (eventActivity.type === 'activity_type') {
+							expect(validActivityTypes.has(eventActivity.value)).toBe(true);
+						}
+					}
 				}
 			}
 		}

@@ -1432,6 +1432,26 @@ describe('POST /users/quests/progress/:user_id', () => {
 		});
 		expect(response.status).toBe(404);
 	});
+
+	it('enforces rank requirements for premium quests', async () => {
+		const missingRank = await callApp('/users/quests/progress/123', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'chicagoland' })
+		});
+		expect(missingRank.status).toBe(400);
+
+		const freeRank = await callApp('/users/quests/progress/123', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'chicagoland', rank: 'free' })
+		});
+		expect(freeRank.status).toBe(403);
+
+		const validRank = await callApp('/users/quests/progress/123', {
+			method: 'POST',
+			body: JSON.stringify({ quest_id: 'chicagoland', rank: 'gold' })
+		});
+		expect(validRank.status).toBe(201);
+	});
 });
 
 describe('PATCH /users/quests/progress/:user_id', () => {
@@ -1576,6 +1596,64 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 			})
 		});
 		expect(response.status).toBe(400);
+	});
+
+	it('requires non-free rank for premium quest updates and resets progress on free rank', async () => {
+		const bindings = createMockBindings();
+
+		const started = await callApp(
+			'/users/quests/progress/123',
+			{ method: 'POST', body: JSON.stringify({ quest_id: 'chicagoland', rank: 'gold' }) },
+			true,
+			bindings
+		);
+		expect(started.status).toBe(201);
+
+		const missingRank = await callApp(
+			'/users/quests/progress/123',
+			{
+				method: 'PATCH',
+				body: JSON.stringify({
+					device: { make: 'unknown', model: 'API', os: 'web' },
+					response: {
+						type: 'take_photo_location',
+						index: 0,
+						dataUrl: toImageDataUrl([255, 216, 255, 224])
+					}
+				})
+			},
+			true,
+			bindings
+		);
+		expect(missingRank.status).toBe(400);
+
+		const freeRank = await callApp(
+			'/users/quests/progress/123',
+			{
+				method: 'PATCH',
+				body: JSON.stringify({
+					rank: 'free',
+					device: { make: 'unknown', model: 'API', os: 'web' },
+					response: {
+						type: 'take_photo_location',
+						index: 0,
+						dataUrl: toImageDataUrl([255, 216, 255, 224])
+					}
+				})
+			},
+			true,
+			bindings
+		);
+		expect(freeRank.status).toBe(403);
+
+		const afterReset = await callApp('/users/quests/progress/123', {}, true, bindings);
+		expect(afterReset.status).toBe(200);
+		const afterResetJson = await afterReset.json<{
+			questId: string | null;
+			progress: unknown[];
+		}>();
+		expect(afterResetJson.questId).toBeNull();
+		expect(afterResetJson.progress).toEqual([]);
 	});
 });
 

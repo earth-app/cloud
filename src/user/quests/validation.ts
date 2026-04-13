@@ -73,6 +73,36 @@ function detectNonCameraSoftware(softwareRaw: string | undefined): string | null
 	return null;
 }
 
+function normalizeVisionLabel(label: string): string {
+	return label.trim().toLowerCase().replace(/\s+/g, '_');
+}
+
+function normalizeThreshold(
+	raw: unknown,
+	context: string
+): { ok: true; value: number } | { ok: false; message: string } {
+	if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+		return { ok: false, message: `${context} threshold must be a finite number.` };
+	}
+
+	if (raw < 0) {
+		return { ok: false, message: `${context} threshold must not be negative.` };
+	}
+
+	if (raw <= 1) {
+		return { ok: true, value: raw };
+	}
+
+	if (raw <= 100) {
+		return { ok: true, value: raw / 100 };
+	}
+
+	return {
+		ok: false,
+		message: `${context} threshold must be in the 0-1 range or 0-100 percentage range.`
+	};
+}
+
 // main validation function
 
 export async function validateStep(
@@ -144,7 +174,15 @@ async function validateArticleQuiz(
 	}
 
 	const [, threshold] = step.parameters;
-	const requiredPercent = threshold * 100;
+	const normalizedThreshold = normalizeThreshold(threshold, 'Article quiz');
+	if (!normalizedThreshold.ok) {
+		return {
+			success: false,
+			message: normalizedThreshold.message
+		};
+	}
+
+	const requiredPercent = normalizedThreshold.value * 100;
 
 	if (quizData.scorePercent < requiredPercent) {
 		return {
@@ -270,6 +308,14 @@ async function validateStepAudio(
 	}
 
 	const [prompt, threshold] = step.parameters;
+	const normalizedThreshold = normalizeThreshold(threshold, 'Audio score');
+	if (!normalizedThreshold.ok) {
+		return {
+			success: false,
+			message: normalizedThreshold.message
+		};
+	}
+
 	const [_, score] = await scoreAudio(bindings, audio, prompt, [
 		{
 			id: 'relevance',
@@ -283,10 +329,10 @@ async function validateStepAudio(
 		}
 	]);
 
-	if (score.score < threshold) {
+	if (score.score < normalizedThreshold.value) {
 		return {
 			success: false,
-			message: `Audio does not meet the required score threshold of ${threshold}. Got ${score.score}.`
+			message: `Audio does not meet the required score threshold of ${normalizedThreshold.value}. Got ${score.score}.`
 		};
 	}
 
@@ -600,6 +646,23 @@ async function validateStepPhoto(
 		if (step.type === 'take_photo_location') {
 			// validate both device GPS data and photo EXIF GPS data
 			const [lat, lng, radius, label0, score0] = step.parameters;
+			if ((label0 && score0 === undefined) || (!label0 && score0 !== undefined)) {
+				return {
+					success: false,
+					message: 'Location-based classification requires both a label and a confidence threshold.'
+				};
+			}
+
+			if (score0 !== undefined) {
+				const normalizedThreshold = normalizeThreshold(score0, 'Location classification');
+				if (!normalizedThreshold.ok) {
+					return {
+						success: false,
+						message: normalizedThreshold.message
+					};
+				}
+				score = normalizedThreshold.value;
+			}
 
 			if (data.latitude == null || data.longitude == null) {
 				return {
@@ -635,23 +698,33 @@ async function validateStepPhoto(
 			}
 
 			label = label0;
-			score = score0;
 		}
 
 		if (step.type === 'take_photo_classification') {
 			const [label0, score0] = step.parameters;
+			const normalizedThreshold = normalizeThreshold(score0, 'Image classification');
+			if (!normalizedThreshold.ok) {
+				return {
+					success: false,
+					message: normalizedThreshold.message
+				};
+			}
+
 			label = label0;
-			score = score0;
+			score = normalizedThreshold.value;
 		}
 
-		if (label && score) {
+		if (label && score !== undefined) {
+			const normalizedLabel = normalizeVisionLabel(label);
 			const classifications = await classifyImage(bindings, image);
-			const classification = classifications.find((c) => c.label === label);
+			const classification = classifications.find(
+				(c) => normalizeVisionLabel(c.label) === normalizedLabel
+			);
 
 			if (!classification || classification.confidence < score) {
 				return {
 					success: false,
-					message: `Photo does not meet the required classification label "${label}" with confidence ${score}.`
+					message: `Photo does not meet the required classification label "${normalizedLabel}" with confidence ${score}.`
 				};
 			}
 
@@ -663,15 +736,21 @@ async function validateStepPhoto(
 		const labelsAndScores = step.parameters;
 		const detections = await detectObjects(bindings, image);
 
-		for (const [label, score] of labelsAndScores) {
-			const detection = detections.find(
-				(d) =>
-					d.label.toLowerCase().replace(/\s+/g, '_') === label.toLowerCase().replace(/\s+/g, '_')
-			);
-			if (!detection || detection.confidence < score) {
+		for (const [labelRaw, scoreRaw] of labelsAndScores) {
+			const label = normalizeVisionLabel(labelRaw);
+			const normalizedThreshold = normalizeThreshold(scoreRaw, `Object "${label}"`);
+			if (!normalizedThreshold.ok) {
 				return {
 					success: false,
-					message: `Photo does not contain the required object "${label}" with confidence ${score}.`
+					message: normalizedThreshold.message
+				};
+			}
+
+			const detection = detections.find((d) => normalizeVisionLabel(d.label) === label);
+			if (!detection || detection.confidence < normalizedThreshold.value) {
+				return {
+					success: false,
+					message: `Photo does not contain the required object "${label}" with confidence ${normalizedThreshold.value}.`
 				};
 			}
 		}
@@ -681,14 +760,22 @@ async function validateStepPhoto(
 
 	if (step.type === 'take_photo_caption') {
 		const [criteria, prompt, threshold] = step.parameters;
+		const normalizedThreshold = normalizeThreshold(threshold, 'Caption score');
+		if (!normalizedThreshold.ok) {
+			return {
+				success: false,
+				message: normalizedThreshold.message
+			};
+		}
+
 		// Use a descriptive captioning instruction for LLaVA rather than the raw task prompt,
 		// which is not a valid VQA question and causes unreliable/inflated model outputs.
 		const captionPrompt = `Describe this photo in detail: what is the main subject, what is the setting, and what context is visible? The photo is expected to show: ${prompt}.`;
 		const [generatedCaption, score] = await scoreImage(bindings, image, captionPrompt, criteria);
-		if (score.score < threshold) {
+		if (score.score < normalizedThreshold.value) {
 			return {
 				success: false,
-				message: `Photo caption does not meet the required score threshold of ${threshold}. Got ${score.score}.`
+				message: `Photo caption does not meet the required score threshold of ${normalizedThreshold.value}. Got ${score.score}.`
 			};
 		}
 		return { success: true, score: score.score, prompt: generatedCaption };
@@ -732,6 +819,13 @@ async function validateDrawing(
 	}
 
 	const [prompt, threshold] = step.parameters;
+	const normalizedThreshold = normalizeThreshold(threshold, 'Drawing score');
+	if (!normalizedThreshold.ok) {
+		return {
+			success: false,
+			message: normalizedThreshold.message
+		};
+	}
 
 	// ask the model to describe what is drawn so we can score accuracy against the prompt
 	const captionPrompt = 'Describe the main object or subject that is drawn in this image.';
@@ -747,10 +841,10 @@ async function validateDrawing(
 			ideal: 'The drawing shows recognizable detail and clear intent in depicting the subject'
 		}
 	]);
-	if (score.score < threshold) {
+	if (score.score < normalizedThreshold.value) {
 		return {
 			success: false,
-			message: `Drawing does not meet the required score threshold of ${threshold}. Got ${score.score.toFixed(2)}.`
+			message: `Drawing does not meet the required score threshold of ${normalizedThreshold.value}. Got ${score.score.toFixed(2)}.`
 		};
 	}
 

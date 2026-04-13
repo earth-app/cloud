@@ -121,6 +121,31 @@ describe('validateStep', () => {
 		expect(result.message).toContain('Quiz score not found');
 	});
 
+	it('supports article quiz thresholds declared as percentages', async () => {
+		const kv = new MockKVNamespace();
+		await kv.put('score:percent', JSON.stringify({ score: 8, scorePercent: 85, total: 10 }));
+		const bindings = createMockBindings({ KV: kv as any });
+		const step = {
+			type: 'article_quiz',
+			description: 'Read and pass',
+			parameters: ['ART', 80]
+		} as any;
+		const response = {
+			type: 'article_quiz',
+			index: 0,
+			scoreKey: 'score:percent',
+			score: 85
+		} as any;
+
+		const result = await validateStep(step, response, bindings, {
+			make: 'unknown',
+			model: 'unknown',
+			os: 'unknown'
+		});
+
+		expect(result.success).toBe(true);
+	});
+
 	it('accepts article quiz when persisted score exceeds threshold', async () => {
 		const kv = new MockKVNamespace();
 		await kv.put('score:ok', JSON.stringify({ score: 8, scorePercent: 90, total: 10 }));
@@ -365,6 +390,23 @@ describe('validateStep', () => {
 		expect(result.score).toBe(0.9);
 	});
 
+	it('rejects take_photo_location when only one of label/score is provided', async () => {
+		const step = {
+			type: 'take_photo_location',
+			description: 'Take photo in area',
+			parameters: [37.7749, -122.4194, 500, 'tree']
+		} as any;
+		const response = {
+			type: 'take_photo_location',
+			index: 0,
+			data: new Uint8Array([255, 216, 255])
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(false);
+		expect(result.message).toContain('requires both a label and a confidence threshold');
+	});
+
 	it('rejects take_photo_objects when required object confidence is not met', async () => {
 		mockDetectObjects.mockResolvedValueOnce([{ label: 'dog', confidence: 0.4 }] as any);
 
@@ -405,6 +447,50 @@ describe('validateStep', () => {
 		const result = await validateStep(step, response, createMockBindings(), validDevice);
 		expect(result.success).toBe(true);
 		expect(result.score).toBeCloseTo(0.825);
+	});
+
+	it('matches classification labels case-insensitively with underscore normalization', async () => {
+		mockClassifyImage.mockResolvedValueOnce([{ label: 'Petri_Dish', confidence: 0.81 }] as any);
+
+		const step = {
+			type: 'take_photo_classification',
+			description: 'Take a photo of a petri dish',
+			parameters: ['petri dish', 0.8]
+		} as any;
+		const response = {
+			type: 'take_photo_classification',
+			index: 0,
+			data: new Uint8Array([255, 216, 255])
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(true);
+		expect(result.score).toBe(0.81);
+	});
+
+	it('matches object labels case-insensitively with underscore normalization', async () => {
+		mockDetectObjects.mockResolvedValueOnce([
+			{ label: 'Cell Phone', confidence: 0.9 },
+			{ label: 'laptop', confidence: 0.8 }
+		] as any);
+
+		const step = {
+			type: 'take_photo_objects',
+			description: 'Take laptop and phone photo',
+			parameters: [
+				['cell_phone', 0.7],
+				['LAPTOP', 0.7]
+			]
+		} as any;
+		const response = {
+			type: 'take_photo_objects',
+			index: 0,
+			data: new Uint8Array([255, 216, 255])
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(true);
+		expect(result.score).toBeCloseTo(0.85);
 	});
 
 	it('accepts take_photo_caption and returns generated prompt text', async () => {
