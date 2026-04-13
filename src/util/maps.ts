@@ -1,13 +1,36 @@
 import { Bindings } from './types';
 
 type PlaceSearchResponse = {
-	places?: Array<{ name?: string | null }> | null;
+	places?: Array<{
+		name?: string | null;
+		types?: string[] | null;
+	}> | null;
 };
 
 type PlaceSearchResult = {
 	placeName: string | null;
 	responseOk: boolean;
 };
+
+const VALID_PLACE_TYPES = new Set([
+	'locality',
+	'postal_town',
+	'sublocality',
+	'sublocality_level_1',
+	'administrative_area_level_1',
+	'administrative_area_level_2',
+	'administrative_area_level_3',
+	'country',
+	'political'
+]);
+
+function hasValidPlaceType(types: string[] | null | undefined): boolean {
+	if (!types || !Array.isArray(types)) {
+		return false;
+	}
+
+	return types.some((t) => VALID_PLACE_TYPES.has(t));
+}
 
 type PlaceDetailsResponse = {
 	photos?: Array<{
@@ -39,7 +62,7 @@ async function searchPlaceName(
 			headers: {
 				'Content-Type': 'application/json',
 				'X-Goog-Api-Key': bindings.MAPS_API_KEY,
-				'X-Goog-FieldMask': 'places.name'
+				'X-Goog-FieldMask': 'places.name,places.types'
 			}
 		});
 	} catch (err) {
@@ -74,8 +97,19 @@ async function searchPlaceName(
 		return { placeName: null, responseOk: false };
 	}
 
-	const placeName = places.places?.[0]?.name;
+	const firstPlace = places.places?.[0];
+	const placeName = firstPlace?.name;
 	if (!placeName || typeof placeName !== 'string') {
+		return { placeName: null, responseOk: true };
+	}
+
+	if (!hasValidPlaceType(firstPlace?.types)) {
+		console.warn('Place search result did not resolve to a geographic/political place', {
+			textQuery,
+			includedType,
+			placeName,
+			types: firstPlace?.types || []
+		});
 		return { placeName: null, responseOk: true };
 	}
 

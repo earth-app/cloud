@@ -5,24 +5,24 @@
     "": {
       "name": "@earth-app/cloud",
       "dependencies": {
-        "@cloudflare/workerd-darwin-arm64": "^1.20260405.1",
-        "@earth-app/moho": "^1.0.1",
+        "@cloudflare/workerd-darwin-arm64": "^1.20260412.1",
+        "@earth-app/moho": "^1.0.2",
         "@earth-app/ocean": "^1.0.4",
-        "@types/bun": "^1.3.11",
+        "@types/bun": "^1.3.12",
         "@types/pako": "^2.0.4",
-        "exifreader": "^4.37.0",
-        "hono": "^4.12.10",
+        "exifreader": "^4.38.1",
+        "hono": "^4.12.12",
         "music-metadata": "^11.12.3",
         "pako": "^2.1.0",
       },
       "devDependencies": {
-        "@cloudflare/vitest-pool-workers": "^0.14.1",
+        "@cloudflare/vitest-pool-workers": "^0.14.3",
         "@vitest/coverage-istanbul": "4.1.2",
         "husky": "^9.1.7",
         "lint-staged": "^16.4.0",
-        "prettier": "^3.8.1",
-        "vitest": "^4.1.2",
-        "wrangler": "^4.80.0",
+        "prettier": "^3.8.2",
+        "vitest": "^4.1.4",
+        "wrangler": "^4.81.1",
       },
     },
   },
@@ -69,7 +69,7 @@
 
     "@cloudflare/workerd-darwin-64": ["@cloudflare/workerd-darwin-64@1.20260409.1", "", { "os": "darwin", "cpu": "x64" }, "sha512-h/bkaC0HJL63aqAGnV0oagqpBiTSstabODThkeMSbG8kctl0Jb4jlq1pNHJPmYGazFNtfyagrUZFb6HN22GX7w=="],
 
-    "@cloudflare/workerd-darwin-arm64": ["@cloudflare/workerd-darwin-arm64@1.20260412.1", "", { "os": "darwin", "cpu": "arm64" }, "sha512-b+HZfxeXUDo9SguGWIZLkMDZwnzKDd/0BMBxDglFRrIF6F+XOLcW3X3iX6efz5kuk5xt5g+iq5fPd2vziJVqPw=="],
+    "@cloudflare/workerd-darwin-arm64": ["@cloudflare/workerd-darwin-arm64@1.20260412.2", "", { "os": "darwin", "cpu": "arm64" }, "sha512-1AhTgmsHUW6XyazVDDDl+7cljbCok79xbPa7O4LMKJ1wctvdKbrdVWe927+ar120zxPP+wfYdSppm44oZPYGhg=="],
 
     "@cloudflare/workerd-linux-64": ["@cloudflare/workerd-linux-64@1.20260409.1", "", { "os": "linux", "cpu": "x64" }, "sha512-QIoNq5cgmn1ko8qlngmgZLXQr2KglrjvIwVFOyJI3rbIpt8631n/YMzHPiOWgt38Cb6tcni8fXOzkcvIX2lBDg=="],
 
@@ -79,7 +79,7 @@
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
-    "@earth-app/moho": ["@earth-app/moho@1.0.1", "https://npm.pkg.github.com/download/@earth-app/moho/1.0.1/e8c99accdeb0c372a1f90dec3c57bb7b570873e7", { "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-3WKvSt9lY95ypVmY52++imW9kKX85fdkh34WOGOF7lKlHjCDvgdDjNuXq2QkZE178ipNnH4flHLWNtMcdt4v4A=="],
+    "@earth-app/moho": ["@earth-app/moho@1.0.2", "https://npm.pkg.github.com/download/@earth-app/moho/1.0.2/47ade32d70d6f4e2274e2e2f6c3d2328e9e8998a", { "peerDependencies": { "typescript": "^5.9.3" } }, "sha512-rmpeAe3tHNV9IKnHZ0AHfLMnNNMDgiHFj/x29iMmlK4h42/uYlml7GvGv8jbJ+6AiCcm/T8ReQwH7oKopMVzmA=="],
 
     "@earth-app/ocean": ["@earth-app/ocean@1.0.4", "https://npm.pkg.github.com/download/@earth-app/ocean/1.0.4/e0fcd377c692246efb1ebfccb204949db6f35a3d", { "dependencies": { "rss-parser": "^3.13.0", "ws": "8.18.3" } }, "sha512-jVm93CZMzt2I5SEJP/tBa7OSYvxKyjuITEz8i6DfnDkyN2WlpfpyD3XLdiDJjBTDqBLYcuNhIm4asIY/mgNDIg=="],
 

@@ -10,6 +10,7 @@ import {
 	articleTitlePrompt,
 	articleTopicPrompt,
 	articleTopicSystemMessage,
+	classifyEventEntry,
 	eventActivitySelectionQuery,
 	eventDescriptionPrompt,
 	eventDescriptionSystemMessage,
@@ -18,6 +19,7 @@ import {
 	eventRecommendationQuery,
 	eventSimilarityQuery,
 	generateProfilePhoto,
+	isPlaceBirthdaySource,
 	logAIFailure,
 	promptCriteria,
 	promptsQuestionPrompt,
@@ -106,6 +108,38 @@ describe('validateEventDescription', () => {
 	it('returns fallback when invalid and throwOnFailure=false', () => {
 		const result = validateEventDescription('tiny', 'Earth Day', false);
 		expect(result).toContain('Earth Day');
+	});
+
+	it('accepts shorter descriptions for historical anniversary entries', () => {
+		const description =
+			'In 1946, ENIAC marked a turning point in computing by proving large-scale electronic calculation was practical, and its legacy shaped later software, hardware, and modern digital infrastructure.';
+		expect(() =>
+			validateEventDescription(description, 'ENIAC Unveiled', true, {
+				name: 'ENIAC Unveiled',
+				source: 'anniversaries/computers.csv'
+			} as any)
+		).not.toThrow();
+	});
+});
+
+describe('event entry classification', () => {
+	it('detects place birthday sources', () => {
+		expect(isPlaceBirthdaySource('birthdays/us/counties.csv')).toBe(true);
+		expect(
+			classifyEventEntry({ name: "Bahamas' Birthday", source: 'birthdays/countries.csv' })
+		).toBe('place_birthday');
+	});
+
+	it('detects organization birthdays and anniversaries', () => {
+		expect(
+			classifyEventEntry({ name: "Apple Inc's Birthday", source: 'birthdays/companies.csv' })
+		).toBe('organization_birthday');
+		expect(
+			classifyEventEntry({
+				name: 'Google Founded',
+				source: 'anniversaries/computers.csv'
+			})
+		).toBe('historical_anniversary');
 	});
 });
 
@@ -225,6 +259,24 @@ describe('eventDescriptionPrompt', () => {
 	it('builds event prompt including title and date', () => {
 		const entry = { name: "Vallejo's Birthday" } as any;
 		expect(eventDescriptionPrompt(entry, new Date('2026-01-01'))).toContain("Vallejo's Birthday");
+	});
+
+	it('uses place-specific guidance for geographic birthday sources', () => {
+		const entry = {
+			name: "Vallejo's Birthday",
+			source: 'birthdays/us/cities.csv'
+		} as any;
+		const prompt = eventDescriptionPrompt(entry, new Date('2026-01-01'));
+		expect(prompt).toContain('birthday of a place');
+	});
+
+	it('uses organization-specific guidance for company birthdays', () => {
+		const entry = {
+			name: "Apple Inc's Birthday",
+			source: 'birthdays/companies.csv'
+		} as any;
+		const prompt = eventDescriptionPrompt(entry, new Date('2026-01-01'));
+		expect(prompt).toContain('organization, institution, company, or alliance');
 	});
 });
 

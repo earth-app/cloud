@@ -7,7 +7,7 @@ import {
 	EventData,
 	OceanArticle
 } from './types';
-import { Entry } from '@earth-app/moho';
+import { Entry, RelativeDateEntry } from '@earth-app/moho';
 import { ScoringCriterion } from '../content/ferry';
 
 // Validation and sanitation functions for AI outputs
@@ -21,6 +21,81 @@ export function logAIFailure(context: string, input: any, output: any, error: st
 		error,
 		stack: new Error().stack
 	});
+}
+
+export type EventEntryKind =
+	| 'place_birthday'
+	| 'organization_birthday'
+	| 'historical_anniversary'
+	| 'relative_observance'
+	| 'birthday'
+	| 'general';
+
+const PLACE_BIRTHDAY_SOURCE_PATTERNS = [
+	/^birthdays\/countries\.csv$/,
+	/^birthdays\/[^/]+\/(?:cities|counties|provinces|territories|states|regions)\.csv$/
+];
+
+const ORGANIZATION_BIRTHDAY_SOURCE_PATTERNS = [
+	/^birthdays\/companies\.csv$/,
+	/^birthdays\/international_orgs\.csv$/,
+	/^birthdays\/[^/]+\/colleges\.csv$/
+];
+
+function normalizeMohoSource(source?: string): string {
+	if (!source) {
+		return '';
+	}
+
+	return source.trim().replace(/\\/g, '/').replace(/^\.\//, '').toLowerCase();
+}
+
+export function isPlaceBirthdaySource(source?: string): boolean {
+	const normalizedSource = normalizeMohoSource(source);
+	if (!normalizedSource) {
+		return false;
+	}
+
+	return PLACE_BIRTHDAY_SOURCE_PATTERNS.some((pattern) => pattern.test(normalizedSource));
+}
+
+function isOrganizationBirthdaySource(source?: string): boolean {
+	const normalizedSource = normalizeMohoSource(source);
+	if (!normalizedSource) {
+		return false;
+	}
+
+	return ORGANIZATION_BIRTHDAY_SOURCE_PATTERNS.some((pattern) => pattern.test(normalizedSource));
+}
+
+export function classifyEventEntry(entry: Pick<Entry, 'name' | 'source'>): EventEntryKind {
+	const normalizedSource = normalizeMohoSource(entry.source);
+
+	if (normalizedSource.startsWith('anniversaries/')) {
+		return 'historical_anniversary';
+	}
+
+	if (isPlaceBirthdaySource(normalizedSource)) {
+		return 'place_birthday';
+	}
+
+	if (isOrganizationBirthdaySource(normalizedSource)) {
+		return 'organization_birthday';
+	}
+
+	if (
+		entry instanceof RelativeDateEntry ||
+		normalizedSource.endsWith('events_d.csv') ||
+		/(?:^|\/)events_d\.csv$/.test(normalizedSource)
+	) {
+		return 'relative_observance';
+	}
+
+	if (/\bbirthday\b/i.test(entry.name || '')) {
+		return 'birthday';
+	}
+
+	return 'general';
 }
 
 /**
@@ -520,8 +595,15 @@ export function validatePromptQuestion(questionResponse: string): string {
 export function validateEventDescription(
 	description: string,
 	name: string,
-	throwOnFailure: boolean = false
+	throwOnFailure: boolean = false,
+	entry?: Pick<Entry, 'name' | 'source'>
 ): string {
+	const eventKind = entry
+		? classifyEventEntry(entry)
+		: /\bbirthday\b/i.test(name)
+			? 'birthday'
+			: 'general';
+
 	try {
 		if (!description || typeof description !== 'string') {
 			logAIFailure('EventDescription', name, description, 'Invalid response type');
@@ -533,20 +615,41 @@ export function validateEventDescription(
 
 		const cleaned = sanitized.trim();
 		const wordCount = cleaned.split(/\s+/).length;
+		const minLength = eventKind === 'historical_anniversary' ? 140 : 180;
+		const maxWords = eventKind === 'historical_anniversary' ? 650 : 700;
 
-		if (cleaned.length < 200) {
+		if (cleaned.length < minLength) {
 			logAIFailure(
 				'EventDescription',
 				name,
 				cleaned,
-				`Description too short: ${cleaned.length} chars`
+				`Description too short for ${eventKind}: ${cleaned.length} chars`
 			);
 			throw new Error(`Generated description too short for event: ${name}`);
 		}
 
-		if (wordCount > 700) {
-			logAIFailure('EventDescription', name, cleaned, `Description too long: ${wordCount} words`);
+		if (wordCount > maxWords) {
+			logAIFailure(
+				'EventDescription',
+				name,
+				cleaned,
+				`Description too long for ${eventKind}: ${wordCount} words`
+			);
 			throw new Error(`Generated description too long for event: ${name}`);
+		}
+
+		const lowerCleaned = cleaned.toLowerCase();
+		const refusalIndicators = [
+			'as an ai',
+			'i cannot',
+			"i can't",
+			'unable to provide',
+			'no information available'
+		];
+
+		if (refusalIndicators.some((indicator) => lowerCleaned.includes(indicator))) {
+			logAIFailure('EventDescription', name, cleaned, 'Contains refusal or placeholder language');
+			throw new Error(`Generated description was not usable for event: ${name}`);
 		}
 
 		// Check for remaining unwanted formatting after sanitization
@@ -569,7 +672,15 @@ export function validateEventDescription(
 		}
 
 		// Otherwise, fail closed with a safe fallback
-		const fallback = `The event "${name}" is an exciting occasion that brings people together to celebrate and engage in unique experiences.`;
+		let fallback = `The event "${name}" is an informative observance that offers historical context and opportunities for learning.`;
+		if (eventKind === 'place_birthday') {
+			fallback = `The event "${name}" marks a historical milestone for a place and highlights its origins, context, and significance.`;
+		} else if (eventKind === 'organization_birthday') {
+			fallback = `The event "${name}" marks the founding or milestone of an organization and offers context about its history and impact.`;
+		} else if (eventKind === 'historical_anniversary') {
+			fallback = `The event "${name}" commemorates a historical milestone and invites exploration of what happened and why it still matters.`;
+		}
+
 		logAIFailure(
 			'EventDescription',
 			name,
@@ -1188,6 +1299,7 @@ REQUIREMENTS:
 - Focus: What the event celebrates or commemorates, its history and significance, interesting facts, and learning opportunities
 - Bounds: There is no guarantee that any in-person attendance or online organization exists; assume it is an informational event
 and focus on the event's history, meaning, and context
+- Classification awareness: Event titles may refer to places, organizations, institutions, or historical milestones; do not assume every "Birthday" refers to a place
 - Tone: Informative and welcoming, sparking curiosity without promotional pressure
 - Format: Single paragraph, no bullet points or special formatting, complete sentences
 - Emphasize discovery, learning, and connection rather than obligations or imperatives
@@ -1196,12 +1308,38 @@ OUTPUT FORMAT: Return only the description text as a single complete paragraph.
 `;
 
 export const eventDescriptionPrompt = (entry: Entry, date: Date): string => {
-	const isBirthday = entry.name.includes('Birthday');
+	const entryKind = classifyEventEntry(entry);
+	const sourceLabel = entry.source || 'unknown';
+
+	let kindSpecificGuidance =
+		'IMPORTANT: Keep the description neutral and grounded in verifiable historical context.';
+
+	if (entryKind === 'place_birthday') {
+		kindSpecificGuidance =
+			'IMPORTANT: This is a birthday of a place (country, city, county, province, territory, or region), not a person or animal. Focus on the geographic or civic entity and its historical development.';
+	} else if (entryKind === 'organization_birthday') {
+		kindSpecificGuidance =
+			'IMPORTANT: This is a founding birthday of an organization, institution, company, or alliance. Do not describe it as a country or city birthday.';
+	} else if (entryKind === 'historical_anniversary') {
+		kindSpecificGuidance =
+			'IMPORTANT: This is a historical milestone anniversary. Focus on what happened, why it was significant at the time, and what impact it had later.';
+	} else if (entryKind === 'relative_observance') {
+		kindSpecificGuidance =
+			'IMPORTANT: This observance follows a relative calendar rule (such as the nth weekday of a month). Emphasize the observance and its meaning rather than fixed-year milestones.';
+	} else if (entryKind === 'birthday') {
+		kindSpecificGuidance =
+			'IMPORTANT: The title includes "Birthday," but the subject may be a place, organization, or another entity. Infer carefully from context and avoid person-centered assumptions unless explicitly supported.';
+	}
 
 	return `Describe the event titled "${entry.name}" happening on ${date.toISOString()}. This is primarily an informational
 observance without specific location.
 
-${isBirthday ? 'IMPORTANT: This is a birthday of a PLACE (such as a country, town, city, or region), NOT a person or animal. The name provided is a shorthand (e.g., "Jackson", "Cook County", "Botswana"). Focus on the geographic/political entity and its history.\n\n' : ''}
+Entry metadata:
+- Source file: ${sourceLabel}
+- Classification: ${entryKind}
+
+${kindSpecificGuidance}
+
 Focus on:
 - What the event celebrates or commemorates
 - Historical context and significance

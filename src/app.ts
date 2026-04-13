@@ -2015,9 +2015,17 @@ app.post('/events/thumbnail/:id/generate', async (c) => {
 		return c.text('Event name is required to generate thumbnail', 400);
 	}
 
+	const source = c.req.query('source')?.trim();
+	if (source && !prompts.isPlaceBirthdaySource(source)) {
+		return c.text('Only place-based birthday source entries can generate place thumbnails', 400);
+	}
+
 	const location = extractLocationFromEventName(name);
 	if (!location) {
-		return c.text('Only birthday events are allowed for automatic thumbnail generation', 400);
+		return c.text(
+			'Only place-based birthday events are allowed for automatic thumbnail generation',
+			400
+		);
 	}
 
 	try {

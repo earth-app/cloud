@@ -760,6 +760,8 @@ describe('createEvent', () => {
 
 		expect(result).not.toBeNull();
 		expect(result?.name).toMatch(/Bahamas' \d+(st|nd|rd|th) Birthday/);
+		expect(result?.fields.moho_source).toBe('birthdays/countries.csv');
+		expect(result?.fields.moho_kind).toBe('place_birthday');
 	});
 
 	it('returns null when computed date is invalid', async () => {
@@ -1209,6 +1211,34 @@ describe('postEvent', () => {
 
 		expect(data.id).toBe('44');
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it('skips place-thumbnail lookup for non-place birthday sources', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: '46', name: "Apple Inc's Birthday" }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		const data = await postEvent(
+			{
+				name: "Apple Inc's Birthday",
+				description: 'A valid description.',
+				activities: [],
+				fields: {
+					moho_source: 'birthdays/companies.csv'
+				},
+				type: 'ONLINE',
+				date: Date.now(),
+				visibility: 'PUBLIC'
+			} as any,
+			createBindings({ MAPS_API_KEY: 'test-maps-key' } as Partial<Bindings>),
+			{ waitUntil: () => {} }
+		);
+
+		expect(data.id).toBe('46');
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it('skips thumbnail generation for non-birthday events with numeric ids', async () => {

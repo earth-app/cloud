@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/util/maps', async () => {
+	const actual = await vi.importActual<typeof import('../../src/util/maps')>('../../src/util/maps');
+	return actual;
+});
+
 import {
 	extractCountry,
 	extractLocality,
@@ -33,7 +39,7 @@ afterEach(() => {
 
 describe('findPlaceThumbnail', () => {
 	it('returns image bytes and author for successful place lookup flow', async () => {
-		const searchBody = { places: [{ name: 'places/abc' }] };
+		const searchBody = { places: [{ name: 'places/abc', types: ['locality', 'political'] }] };
 		const detailsBody = {
 			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
 		};
@@ -70,6 +76,42 @@ describe('findPlaceThumbnail', () => {
 		expect(result).toEqual([null, null]);
 	});
 
+	it('falls back when locality search resolves to a non-place type', async () => {
+		const localityNonPlace = { places: [{ name: 'places/business', types: ['establishment'] }] };
+		const broadPlace = { places: [{ name: 'places/abc', types: ['country', 'political'] }] };
+		const detailsBody = {
+			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
+		};
+		const imageBytes = new Uint8Array([1, 2, 3]);
+
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(localityNonPlace), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(broadPlace), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(detailsBody), { status: 200 }))
+			.mockResolvedValueOnce(
+				new Response(imageBytes, {
+					status: 200,
+					headers: { 'Content-Type': 'image/webp' }
+				})
+			);
+
+		const [image, author] = await findPlaceThumbnail('Apple Inc', createBindings());
+		expect(Array.from(image || [])).toEqual([1, 2, 3]);
+		expect(author).toBe('Author A');
+	});
+
+	it('returns null tuple when search results are non-place entity types', async () => {
+		const localityNonPlace = { places: [{ name: 'places/business', types: ['establishment'] }] };
+		const broadNonPlace = { places: [{ name: 'places/poi', types: ['point_of_interest'] }] };
+
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify(localityNonPlace), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify(broadNonPlace), { status: 200 }));
+
+		const result = await findPlaceThumbnail('Acme Corporation', createBindings());
+		expect(result).toEqual([null, null]);
+	});
+
 	it('returns null tuple if search request fails', async () => {
 		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Network error'));
 
@@ -87,7 +129,7 @@ describe('findPlaceThumbnail', () => {
 	});
 
 	it('returns null tuple when no photos found', async () => {
-		const searchBody = { places: [{ name: 'places/abc' }] };
+		const searchBody = { places: [{ name: 'places/abc', types: ['locality'] }] };
 		const detailsBody = { photos: [] };
 
 		vi.spyOn(globalThis, 'fetch')
@@ -99,7 +141,7 @@ describe('findPlaceThumbnail', () => {
 	});
 
 	it('returns null tuple when photo fetch fails', async () => {
-		const searchBody = { places: [{ name: 'places/abc' }] };
+		const searchBody = { places: [{ name: 'places/abc', types: ['locality'] }] };
 		const detailsBody = {
 			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
 		};
@@ -114,7 +156,7 @@ describe('findPlaceThumbnail', () => {
 	});
 
 	it('returns null tuple when photo fetch returns non-image content type', async () => {
-		const searchBody = { places: [{ name: 'places/abc' }] };
+		const searchBody = { places: [{ name: 'places/abc', types: ['locality'] }] };
 		const detailsBody = {
 			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
 		};
@@ -134,7 +176,7 @@ describe('findPlaceThumbnail', () => {
 	});
 
 	it('returns null tuple when photo fetch returns empty body', async () => {
-		const searchBody = { places: [{ name: 'places/abc' }] };
+		const searchBody = { places: [{ name: 'places/abc', types: ['locality'] }] };
 		const detailsBody = {
 			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
 		};
@@ -154,7 +196,7 @@ describe('findPlaceThumbnail', () => {
 	});
 
 	it('returns null tuple when photo has no bytes', async () => {
-		const searchBody = { places: [{ name: 'places/abc' }] };
+		const searchBody = { places: [{ name: 'places/abc', types: ['locality'] }] };
 		const detailsBody = {
 			photos: [{ name: 'photos/1', authorAttributions: [{ displayName: 'Author A' }] }]
 		};

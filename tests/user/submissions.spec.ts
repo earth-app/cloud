@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	addSubmissionToIndex,
 	deleteEventImageSubmissions,
@@ -43,6 +43,13 @@ beforeEach(() => {
 	mockExtractCountry.mockReturnValue(null);
 	mockReverseGeocode.mockResolvedValue(null as any);
 	mockAddBadgeProgress.mockResolvedValue(undefined as any);
+});
+
+afterAll(() => {
+	vi.unmock('../../src/util/maps');
+	vi.unmock('../../src/user/badges');
+	vi.unmock('exifreader');
+	vi.resetModules();
 });
 
 describe('addSubmissionToIndex', () => {

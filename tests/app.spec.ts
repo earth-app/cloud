@@ -1,4 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../src/user/badges', async () => {
+	const actual = await vi.importActual<typeof import('../src/user/badges')>('../src/user/badges');
+	return actual;
+});
+
+vi.mock('../src/util/maps', async () => {
+	const actual = await vi.importActual<typeof import('../src/util/maps')>('../src/util/maps');
+	return actual;
+});
+
 import app from '../src/app';
 import { createMockBindings } from './helpers/mock-bindings';
 import { createMockAiRun } from './helpers/mock-ai';
@@ -383,6 +394,16 @@ describe('POST /events/thumbnail/:id/generate', () => {
 		expect(response.status).toBe(400);
 	});
 
+	it('returns 400 when source indicates a non-place birthday entry', async () => {
+		const response = await callApp(
+			'/events/thumbnail/12/generate?name=Apple%20Inc%27s%20Birthday&source=birthdays/companies.csv',
+			{
+				method: 'POST'
+			}
+		);
+		expect(response.status).toBe(400);
+	});
+
 	it('returns 404 when no place thumbnail is found', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			new Response('maps failure', { status: 500 })
@@ -399,10 +420,13 @@ describe('POST /events/thumbnail/:id/generate', () => {
 		const bindings = createMockBindings();
 		vi.spyOn(globalThis, 'fetch')
 			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ places: [{ name: 'places/abc123' }] }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				})
+				new Response(
+					JSON.stringify({ places: [{ name: 'places/abc123', types: ['locality', 'political'] }] }),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
 			)
 			.mockResolvedValueOnce(
 				new Response(
@@ -460,10 +484,13 @@ describe('POST /events/thumbnail/:id/generate', () => {
 		});
 		vi.spyOn(globalThis, 'fetch')
 			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ places: [{ name: 'places/abc123' }] }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				})
+				new Response(
+					JSON.stringify({ places: [{ name: 'places/abc123', types: ['locality', 'political'] }] }),
+					{
+						status: 200,
+						headers: { 'Content-Type': 'application/json' }
+					}
+				)
 			)
 			.mockResolvedValueOnce(
 				new Response(JSON.stringify({ photos: [{ name: 'photos/p1' }] }), {
