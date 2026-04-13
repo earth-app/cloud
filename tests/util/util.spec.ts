@@ -187,17 +187,42 @@ describe('batchProcess', () => {
 });
 
 describe('encrypt', () => {
-	it('encrypts payload by prepending iv bytes', async () => {
+	it('encrypts payload using versioned envelope format', async () => {
 		const data = new TextEncoder().encode('hello world');
 		const key = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 		const encrypted = await encrypt(data, key);
+		const version = encrypted[0];
+		const wrappedKeyIv = encrypted.slice(1, 13);
+		const wrappedDataKey = encrypted.slice(13, 61);
+		const payloadIv = encrypted.slice(61, 73);
 
+		expect(version).toBe(1);
 		expect(encrypted.byteLength).toBeGreaterThan(data.byteLength);
-		expect(encrypted.slice(0, 12)).toHaveLength(12);
+		expect(wrappedKeyIv).toHaveLength(12);
+		expect(wrappedDataKey).toHaveLength(48);
+		expect(payloadIv).toHaveLength(12);
 	});
 });
 
 describe('decrypt', () => {
+	async function encryptLegacy(data: Uint8Array, key: string): Promise<Uint8Array> {
+		const keyData = Uint8Array.from(atob(key), (c) => c.charCodeAt(0));
+		const cryptoKey = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
+			'encrypt'
+		]);
+		const iv = crypto.getRandomValues(new Uint8Array(12));
+		const encrypted = await crypto.subtle.encrypt(
+			{ name: 'AES-GCM', iv },
+			cryptoKey,
+			data as BufferSource
+		);
+
+		const result = new Uint8Array(iv.length + encrypted.byteLength);
+		result.set(iv, 0);
+		result.set(new Uint8Array(encrypted), iv.length);
+		return result;
+	}
+
 	it('decrypts encrypted payload with matching key', async () => {
 		const data = new TextEncoder().encode('earth app');
 		const key = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
@@ -205,6 +230,15 @@ describe('decrypt', () => {
 		const decrypted = await decrypt(encrypted, key);
 
 		expect(new TextDecoder().decode(decrypted)).toBe('earth app');
+	});
+
+	it('decrypts legacy payloads for backward compatibility', async () => {
+		const data = new TextEncoder().encode('legacy earth app');
+		const key = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+		const encrypted = await encryptLegacy(data, key);
+		const decrypted = await decrypt(encrypted, key);
+
+		expect(new TextDecoder().decode(decrypted)).toBe('legacy earth app');
 	});
 
 	it('throws on malformed encrypted payload', async () => {

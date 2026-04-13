@@ -182,20 +182,114 @@ export async function batchProcess<T>(
 	return results;
 }
 
+const ENVELOPE_VERSION_V1 = 1;
+const AES_GCM_IV_LENGTH = 12;
+const DATA_ENCRYPTION_KEY_LENGTH = 32;
+const WRAPPED_KEY_LENGTH = DATA_ENCRYPTION_KEY_LENGTH + 16; // 16-byte GCM auth tag
+
+async function importAesGcmKey(base64Key: string, usages: KeyUsage[]): Promise<CryptoKey> {
+	const keyData = Uint8Array.from(atob(base64Key), (c) => c.charCodeAt(0));
+	return crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, usages);
+}
+
+async function importRawAesGcmKey(rawKey: BufferSource, usages: KeyUsage[]): Promise<CryptoKey> {
+	return crypto.subtle.importKey('raw', rawKey, { name: 'AES-GCM' }, false, usages);
+}
+
+async function decryptLegacyPayload(
+	encryptedData: Uint8Array,
+	key: CryptoKey
+): Promise<Uint8Array> {
+	if (encryptedData.length < AES_GCM_IV_LENGTH + 1) {
+		throw new Error('Encrypted data is too short to contain IV and ciphertext');
+	}
+
+	const iv = encryptedData.slice(0, AES_GCM_IV_LENGTH);
+	const ciphertext = encryptedData.slice(AES_GCM_IV_LENGTH);
+	const decrypted = await crypto.subtle.decrypt(
+		{ name: 'AES-GCM', iv },
+		key,
+		ciphertext as BufferSource
+	);
+
+	return new Uint8Array(decrypted);
+}
+
+async function decryptEnvelopeV1(
+	encryptedData: Uint8Array,
+	masterKey: CryptoKey
+): Promise<Uint8Array> {
+	const minimumLength = 1 + AES_GCM_IV_LENGTH + WRAPPED_KEY_LENGTH + AES_GCM_IV_LENGTH + 1;
+	if (encryptedData.length < minimumLength) {
+		throw new Error('Encrypted data is too short to be a valid envelope payload');
+	}
+
+	let offset = 1;
+	const wrappedKeyIv = encryptedData.slice(offset, offset + AES_GCM_IV_LENGTH);
+	offset += AES_GCM_IV_LENGTH;
+
+	const wrappedDataKey = encryptedData.slice(offset, offset + WRAPPED_KEY_LENGTH);
+	offset += WRAPPED_KEY_LENGTH;
+
+	const payloadIv = encryptedData.slice(offset, offset + AES_GCM_IV_LENGTH);
+	offset += AES_GCM_IV_LENGTH;
+
+	const ciphertext = encryptedData.slice(offset);
+
+	const dataKeyRaw = await crypto.subtle.decrypt(
+		{ name: 'AES-GCM', iv: wrappedKeyIv },
+		masterKey,
+		wrappedDataKey as BufferSource
+	);
+	const dataKey = await importRawAesGcmKey(new Uint8Array(dataKeyRaw), ['decrypt']);
+	const decrypted = await crypto.subtle.decrypt(
+		{ name: 'AES-GCM', iv: payloadIv },
+		dataKey,
+		ciphertext as BufferSource
+	);
+
+	return new Uint8Array(decrypted);
+}
+
 export async function encrypt(data: Uint8Array, encryptionKey: string): Promise<Uint8Array> {
-	const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
-	const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
-		'encrypt'
-	]);
+	const masterKey = await importAesGcmKey(encryptionKey, ['encrypt']);
 
-	// Generate a random 12-byte IV
-	const iv = crypto.getRandomValues(new Uint8Array(12));
-	const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data as BufferSource);
+	// generate a random per-object DEK, encrypt data with DEK,
+	// then wrap the DEK with the master key so each object uses independent key material
+	const dataEncryptionKeyRaw = crypto.getRandomValues(new Uint8Array(DATA_ENCRYPTION_KEY_LENGTH));
+	const dataEncryptionKey = await importRawAesGcmKey(dataEncryptionKeyRaw, ['encrypt']);
 
-	// Prepend IV to ciphertext
-	const result = new Uint8Array(iv.length + encrypted.byteLength);
-	result.set(iv, 0);
-	result.set(new Uint8Array(encrypted), iv.length);
+	const payloadIv = crypto.getRandomValues(new Uint8Array(AES_GCM_IV_LENGTH));
+	const encryptedPayload = await crypto.subtle.encrypt(
+		{ name: 'AES-GCM', iv: payloadIv },
+		dataEncryptionKey,
+		data as BufferSource
+	);
+
+	const wrappedKeyIv = crypto.getRandomValues(new Uint8Array(AES_GCM_IV_LENGTH));
+	const wrappedDataKey = await crypto.subtle.encrypt(
+		{ name: 'AES-GCM', iv: wrappedKeyIv },
+		masterKey,
+		dataEncryptionKeyRaw as BufferSource
+	);
+
+	const result = new Uint8Array(
+		1 +
+			AES_GCM_IV_LENGTH +
+			wrappedDataKey.byteLength +
+			AES_GCM_IV_LENGTH +
+			encryptedPayload.byteLength
+	);
+	let offset = 0;
+	result[offset] = ENVELOPE_VERSION_V1;
+	offset += 1;
+	result.set(wrappedKeyIv, offset);
+	offset += AES_GCM_IV_LENGTH;
+	result.set(new Uint8Array(wrappedDataKey), offset);
+	offset += wrappedDataKey.byteLength;
+	result.set(payloadIv, offset);
+	offset += AES_GCM_IV_LENGTH;
+	result.set(new Uint8Array(encryptedPayload), offset);
 
 	return result;
 }
@@ -205,25 +299,21 @@ export async function decrypt(
 	encryptionKey: string
 ): Promise<Uint8Array> {
 	try {
-		const keyData = Uint8Array.from(atob(encryptionKey), (c) => c.charCodeAt(0));
-		const key = await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM' }, false, [
-			'decrypt'
-		]);
+		const masterKey = await importAesGcmKey(encryptionKey, ['decrypt']);
 
-		if (encryptedData.length < 13) {
-			throw new Error('Encrypted data is too short to contain IV and ciphertext');
+		if (encryptedData.length === 0) {
+			throw new Error('Encrypted data is empty');
 		}
 
-		// Extract IV (first 12 bytes) and ciphertext
-		const iv = encryptedData.slice(0, 12);
-		const ciphertext = encryptedData.slice(12);
-		const decrypted = await crypto.subtle.decrypt(
-			{ name: 'AES-GCM', iv },
-			key,
-			ciphertext as BufferSource
-		);
+		if (encryptedData[0] === ENVELOPE_VERSION_V1) {
+			try {
+				return await decryptEnvelopeV1(encryptedData, masterKey);
+			} catch {
+				// if legacy payload starts with 0x01, fall through and try legacy format
+			}
+		}
 
-		return new Uint8Array(decrypted);
+		return await decryptLegacyPayload(encryptedData, masterKey);
 	} catch (err) {
 		console.error('Image decryption failed:', err);
 		throw new Error(
