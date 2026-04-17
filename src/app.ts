@@ -1587,20 +1587,7 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 	};
 
 	try {
-		body = await c.req.json<{
-			device: QuestDeviceMetadata;
-			rank?: string;
-			response: {
-				type: string;
-				index: number;
-				altIndex?: number;
-				dataUrl?: string;
-				eventId?: string;
-				timestamp?: number;
-				scoreKey?: string;
-				score?: number;
-			};
-		}>();
+		body = await c.req.json<typeof body>();
 	} catch (jsonErr) {
 		return c.text('Request body must be valid JSON', 400);
 	}
