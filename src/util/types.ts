@@ -22,6 +22,7 @@ export type ExecutionCtxLike = {
 	waitUntil(promise: Promise<unknown>): void;
 };
 
+export type AccountType = typeof com.earthapp.account.AccountType.prototype.name;
 export type ActivityType = typeof com.earthapp.activity.ActivityType.prototype.name;
 export type Privacy = typeof com.earthapp.account.Privacy.prototype.name;
 
@@ -94,6 +95,11 @@ export type Event = {
 	end_date?: number;
 	visibility: Privacy;
 	activities: EventActivity[];
+	host?: {
+		username: string;
+		full_name: string;
+		account_type: AccountType;
+	};
 	location?: {
 		latitude: number;
 		longitude: number;

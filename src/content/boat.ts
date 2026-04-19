@@ -1146,7 +1146,37 @@ export async function recommendEvents(
 			.filter((r) => r.score >= scoreThreshold && r.id >= 0 && r.id < contexts.length) // bounds check
 			.sort((a, b) => b.score - a.score)
 			.slice(0, limit)
-			.map((r) => contexts[r.id].original);
+			.map((r) => contexts[r.id].original)
+			.sort((a, b) => {
+				let weight = 0;
+
+				// prioritize events hosted with account type WRITER or ORGANIZER
+				if (a.host || b.host) {
+					const aHostType = a.host?.account_type || '';
+					const bHostType = b.host?.account_type || '';
+					if (aHostType === 'WRITER' || aHostType === 'ORGANIZER') weight -= 1;
+					if (bHostType === 'WRITER' || bHostType === 'ORGANIZER') weight += 1;
+				}
+
+				// prioritize events with more activities
+				const aActivities = a.activities ? a.activities.length : 0;
+				const bActivities = b.activities ? b.activities.length : 0;
+				if (aActivities > bActivities) weight -= 1;
+				else if (bActivities > aActivities) weight += 1;
+
+				// prioritize events that are sooner / end sooner
+				if (a.date < b.date) weight -= 1;
+				else if (b.date < a.date) weight += 1;
+
+				if (a.end_date || b.end_date) {
+					const aEnd = a.end_date || a.date;
+					const bEnd = b.end_date || b.date;
+					if (aEnd < bEnd) weight -= 1;
+					else if (bEnd < aEnd) weight += 1;
+				}
+
+				return weight;
+			});
 
 		// If no events meet threshold, relax it
 		if (topRanked.length === 0) {
