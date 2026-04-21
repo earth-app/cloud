@@ -51,6 +51,7 @@ import {
 	TOP_LEADERBOARD_COUNT
 } from './user/journies';
 import {
+	BadgeTracker,
 	badges,
 	getBadgeProgress,
 	addBadgeProgress,
@@ -86,6 +87,7 @@ import {
 } from './user/quests/tracking';
 import { QuestDeviceMetadata } from './user/quests/validation';
 import { HTTPException } from 'hono/http-exception';
+import { getContentAnalytics, getContentAnalyticsByOwner } from './content/analytics';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -108,6 +110,88 @@ app.post('/admin/migrate-legacy-keys', async (c) => {
 	} catch (err) {
 		console.error('Error during legacy key migration:', err);
 		return c.text('Failed to migrate legacy keys', 500);
+	}
+});
+
+// Analytics + Timer
+
+app.post('/users/timer', async (c) => {
+	let body: {
+		action?: string;
+		userId?: string;
+		field?: string;
+		metadata?: Record<string, any>;
+	};
+
+	try {
+		body = await c.req.json<{
+			action?: string;
+			userId?: string;
+			field?: string;
+			metadata?: Record<string, any>;
+		}>();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const action = typeof body.action === 'string' ? body.action.trim() : '';
+	const userId = typeof body.userId === 'string' ? body.userId.trim() : '';
+	const field = typeof body.field === 'string' ? body.field.trim() : '';
+	const metadata =
+		body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+			? body.metadata
+			: undefined;
+
+	if (!action) {
+		return c.text('Action is required', 400);
+	}
+
+	if (action !== 'start' && action !== 'stop') {
+		return c.text('Invalid action', 400);
+	}
+
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (!field) {
+		return c.text('Field is required', 400);
+	}
+
+	const id = c.env.TIMER.idFromName(userId);
+	const stub = c.env.TIMER.get(id);
+
+	return stub.fetch('https://do/timer', {
+		method: 'POST',
+		body: JSON.stringify({ action, userId, field, metadata }),
+		headers: {
+			'Content-Type': 'application/json'
+		}
+	});
+});
+
+app.get('/content_analytics/individual/:id', async (c) => {
+	const id = c.req.param('id');
+	if (!id) {
+		return c.text('Content ID is required', 400);
+	}
+
+	const analytics = await getContentAnalytics(id, c.env);
+	return c.json(analytics, 200);
+});
+
+app.get('/content_analytics/user/:id', async (c) => {
+	const id = normalizeId(c.req.param('id') || '');
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	try {
+		const analytics = await getContentAnalyticsByOwner(id, c.env);
+		return c.json(analytics, 200);
+	} catch (err) {
+		console.error(`Error getting content analytics for user '${id}':`, err);
+		return c.text('Failed to get content analytics', 500);
 	}
 });
 
@@ -704,37 +788,6 @@ app.post('/users/recommend_articles', async (c) => {
 	);
 });
 
-app.post('/users/timer', async (c) => {
-	const { action, userId, field } = await c.req.json<{
-		action: string;
-		userId: string;
-		field: string;
-	}>();
-
-	if (!action) {
-		return c.text('Action is required', 400);
-	}
-
-	if (!userId) {
-		return c.text('User ID is required', 400);
-	}
-
-	if (!field) {
-		return c.text('Field is required', 400);
-	}
-
-	const id = c.env.TIMER.idFromName(userId);
-	const stub = c.env.TIMER.get(id);
-
-	return stub.fetch('https://do/timer', {
-		method: 'POST',
-		body: JSON.stringify({ action, userId, field }),
-		headers: {
-			'Content-Type': 'application/json'
-		}
-	});
-});
-
 /// User Journeys
 
 app.get('/users/journey/activity/:id/count', async (c) => {
@@ -1162,13 +1215,15 @@ app.post('/users/badges/:id/track', async (c) => {
 		return c.text('tracker_id not associated with any badge', 400);
 	}
 
+	const trackerId = body.tracker_id as BadgeTracker;
+
 	try {
-		await addBadgeProgress(id, body.tracker_id, body.value, c.env.KV);
-		const newlyGranted = await checkAndGrantBadges(id, body.tracker_id, c.env, c.executionCtx);
+		await addBadgeProgress(id, trackerId, body.value, c.env.KV);
+		const newlyGranted = await checkAndGrantBadges(id, trackerId, c.env, c.executionCtx);
 
 		return c.json(
 			{
-				tracker_id: body.tracker_id,
+				tracker_id: trackerId,
 				value: body.value,
 				newly_granted: newlyGranted
 			},

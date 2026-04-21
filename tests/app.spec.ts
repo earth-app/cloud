@@ -11,6 +11,7 @@ vi.mock('../src/util/maps', async () => {
 });
 
 import app from '../src/app';
+import { logAnalyticsBatch } from '../src/content/analytics';
 import { createMockBindings } from './helpers/mock-bindings';
 import { createMockAiRun } from './helpers/mock-ai';
 
@@ -673,6 +674,14 @@ describe('POST /users/timer', () => {
 		expect(response.status).toBe(400);
 	});
 
+	it('returns 400 for unsupported actions', async () => {
+		const response = await callApp('/users/timer', {
+			method: 'POST',
+			body: JSON.stringify({ action: 'pause', userId: '1', field: 'articles_read_time:1' })
+		});
+		expect(response.status).toBe(400);
+	});
+
 	it('forwards valid timer actions to the durable object', async () => {
 		const response = await callApp('/users/timer', {
 			method: 'POST',
@@ -680,6 +689,49 @@ describe('POST /users/timer', () => {
 		});
 		expect(response.status).toBe(200);
 		expect(await response.text()).toBe('ok');
+	});
+
+	it('forwards metadata to the timer durable object', async () => {
+		const fetchSpy = vi.fn(async () => new Response('ok'));
+		const bindings = createMockBindings({
+			TIMER: {
+				idFromName: (name: string) => name,
+				get: () => ({
+					fetch: fetchSpy
+				})
+			} as any
+		});
+
+		const metadata = {
+			article: {
+				id: 'article-1',
+				author_id: 'author-1',
+				title: 'Testing Metadata Forwarding'
+			}
+		};
+
+		const response = await callApp(
+			'/users/timer',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					action: 'start',
+					userId: '222',
+					field: 'articles_read_time:article-1',
+					metadata
+				})
+			},
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+		const forwardedBody = JSON.parse(String(init.body)) as {
+			metadata?: typeof metadata;
+		};
+		expect(forwardedBody.metadata).toEqual(metadata);
 	});
 
 	it('rejects missing timer user and field', async () => {
@@ -694,6 +746,110 @@ describe('POST /users/timer', () => {
 			body: JSON.stringify({ action: 'start', userId: '123' })
 		});
 		expect(missingField.status).toBe(400);
+	});
+});
+
+describe('GET /content_analytics/user/:id', () => {
+	it('returns owner-scoped analytics and aggregate stats', async () => {
+		const bindings = createMockBindings();
+
+		await logAnalyticsBatch(
+			'article-u1-a',
+			'reader-1',
+			[
+				{
+					category: 'article_read_time',
+					value: 90,
+					metadata: { author_id: '500', title: 'A' },
+					includeTimingStats: true
+				},
+				{
+					category: 'articles_clicked',
+					value: 1,
+					metadata: { author_id: '500' }
+				}
+			],
+			bindings
+		);
+
+		await logAnalyticsBatch(
+			'article-u1-b',
+			'reader-2',
+			[
+				{
+					category: 'article_read_time',
+					value: 30,
+					metadata: { author_id: '500', title: 'B' },
+					includeTimingStats: true
+				},
+				{
+					category: 'articles_clicked',
+					value: 1,
+					metadata: { author_id: '500' }
+				}
+			],
+			bindings
+		);
+
+		await logAnalyticsBatch(
+			'article-u2',
+			'reader-3',
+			[
+				{
+					category: 'article_read_time',
+					value: 12,
+					metadata: { author_id: '999', title: 'Other' },
+					includeTimingStats: true
+				}
+			],
+			bindings
+		);
+
+		const response = await callApp(
+			'/content_analytics/user/500',
+			{ method: 'GET' },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(200);
+
+		const body = await response.json<{
+			owner_host: string;
+			total_contents: number;
+			content_ids: string[];
+			analytics: Array<Record<string, unknown>>;
+			aggregate: {
+				article_read_time?: { total: number; average: number; p90: number; p99: number };
+				articles_clicked?: { total: number };
+			};
+		}>();
+
+		expect(body.owner_host).toBe('500');
+		expect(body.total_contents).toBe(2);
+		expect(body.analytics).toHaveLength(2);
+		expect(body.content_ids).toEqual(expect.arrayContaining(['article-u1-a', 'article-u1-b']));
+		expect(body.aggregate.article_read_time?.total).toBe(120);
+		expect(body.aggregate.article_read_time?.average).toBe(60);
+		expect(body.aggregate.article_read_time?.p90).toBe(90);
+		expect(body.aggregate.article_read_time?.p99).toBe(90);
+		expect(body.aggregate.articles_clicked?.total).toBe(2);
+	});
+
+	it('returns empty analytics for owners without content', async () => {
+		const response = await callApp('/content_analytics/user/123456', { method: 'GET' });
+		expect(response.status).toBe(200);
+
+		const body = await response.json<{
+			content_ids: string[];
+			analytics: Array<Record<string, unknown>>;
+			total_contents: number;
+			aggregate: Record<string, unknown>;
+		}>();
+
+		expect(body.content_ids).toEqual([]);
+		expect(body.analytics).toEqual([]);
+		expect(body.total_contents).toBe(0);
+		expect(body.aggregate).toEqual({});
 	});
 });
 

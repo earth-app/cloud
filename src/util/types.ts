@@ -59,7 +59,13 @@ export type Article = {
 	description: string;
 	tags: string[];
 	content: string;
-	author: {}; // user object
+	author: {
+		username: string;
+		full_name: string;
+		account: {
+			account_type: AccountType;
+		};
+	};
 	author_id: string;
 	color: string;
 	color_hex: string;

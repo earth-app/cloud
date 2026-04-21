@@ -10,6 +10,8 @@ export type BadgeTracker =
 	| 'events_created' // handled over mantle2
 	| 'articles_read'
 	| 'articles_read_time'
+	| 'prompts_read'
+	| 'prompts_read_time'
 	| 'events_attended' // handled over mantle2
 	| 'prompts_created' // handled over mantle2
 	| 'event_images_submitted'
@@ -678,7 +680,7 @@ export async function getBadgeProgress(
 
 export async function addBadgeProgress(
 	userId: string,
-	trackerId: string,
+	trackerId: BadgeTracker,
 	value: TrackerEntry['value'] | TrackerEntry['value'][],
 	kv: KVNamespace
 ): Promise<void> {
