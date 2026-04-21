@@ -152,6 +152,14 @@ export const badges = (
 			progress: (...args: any[]) => min(args, 1),
 			tracker_id: 'article_quizzes_completed'
 		},
+		{
+			id: 'questioneer',
+			description: 'Read prompts for a combined total of 30 minutes',
+			icon: 'mdi:format-list-bulleted',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 30),
+			tracker_id: 'prompts_read_time'
+		},
 		// rare badges
 		{
 			id: 'avid_reader',
@@ -332,6 +340,14 @@ export const badges = (
 			icon: 'mdi:globe-model',
 			rarity: 'rare'
 		},
+		{
+			id: 'deep_thinker',
+			description: 'Read 50 different prompts',
+			icon: 'mdi:thought-bubble',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 50),
+			tracker_id: 'prompts_read'
+		},
 		// amazing badges
 		{
 			id: 'journey_master',
@@ -447,6 +463,14 @@ export const badges = (
 			progress: (...args: any[]) => min(args, 60 * 60 * 45),
 			tracker_id: 'articles_read_time'
 		},
+		{
+			id: 'super_questioneer',
+			description: 'Read prompts for a combined total of 4 hours',
+			icon: 'mdi:format-list-bulleted-triangle',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 4 * 60),
+			tracker_id: 'prompts_read_time'
+		},
 		// green badges
 		{
 			id: 'old_account_2',
@@ -537,6 +561,14 @@ export const badges = (
 			rarity: 'green',
 			progress: (...args: any[]) => min(args, 60 * 60 * 350),
 			tracker_id: 'articles_read_time'
+		},
+		{
+			id: 'ultra_questioneer',
+			description: 'Read prompts for a combined total of 10 hours',
+			icon: 'mdi:format-list-bulleted-square',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 10 * 60),
+			tracker_id: 'prompts_read_time'
 		}
 	] as (Badge & { name?: string })[]
 ).map((badge) => {
