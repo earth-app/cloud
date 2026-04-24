@@ -71,7 +71,7 @@ import {
 } from './user/points';
 import { scoreImage, ScoreResult, scoreText } from './content/ferry';
 import { sendUserNotification } from './user/notifications';
-import { quests } from './user/quests';
+import { getAllQuests, getQuest } from './user/quests';
 import {
 	getCurrentQuestProgress,
 	getCompletedQuestProgress,
@@ -88,6 +88,14 @@ import {
 import { QuestDeviceMetadata } from './user/quests/validation';
 import { HTTPException } from 'hono/http-exception';
 import { getContentAnalytics, getContentAnalyticsByOwner } from './content/analytics';
+import {
+	CustomQuestCreateInput,
+	CustomQuestUpdateInput,
+	getCustomQuest,
+	deleteCustomQuest,
+	createCustomQuest,
+	updateCustomQuest
+} from './user/quests/custom';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -1520,6 +1528,7 @@ app.put('/users/impact_points/:id/set', async (c) => {
 // User Quests
 
 app.get('/users/quests', async (c) => {
+	const quests = await getAllQuests(c.env.KV);
 	return c.json(quests, 200);
 });
 
@@ -1538,7 +1547,7 @@ app.get('/users/quests/:id', async (c) => {
 	}
 
 	try {
-		const quest = quests.find((q) => q.id === id);
+		const quest = await getQuest(id, c.env.KV);
 		if (!quest) {
 			return c.text('Quest not found', 404);
 		}
@@ -1586,7 +1595,7 @@ app.post('/users/quests/progress/:user_id', async (c) => {
 	}
 
 	const questId = body.quest_id.toLowerCase();
-	const quest = quests.find((q) => q.id === questId);
+	const quest = await getQuest(questId, c.env.KV);
 	if (!quest) {
 		return c.text('Quest not found', 404);
 	}
@@ -1908,7 +1917,7 @@ app.get('/users/quests/history/:user_id', async (c) => {
 					: null;
 				return {
 					questId,
-					quest: quests.find((q) => q.id === questId) ?? null,
+					quest: await getQuest(questId, c.env.KV),
 					...(completed ? { completedAt: completed.completedAt, progress: enrichedProgress } : {})
 				};
 			})
@@ -1940,7 +1949,12 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 		return c.text('Quest ID must be between 3 and 50 characters', 400);
 	}
 
-	if (quests.findIndex((q) => q.id === questId) === -1) {
+	if (!/^[a-z0-9_-]+$/.test(questId)) {
+		return c.text('Quest ID must be alphanumeric with optional dashes or underscores', 400);
+	}
+
+	const quest = await getQuest(questId, c.env.KV);
+	if (!quest) {
 		return c.text('Quest not found', 404);
 	}
 
@@ -1954,6 +1968,170 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 	} catch (err) {
 		console.error(`Error getting completed quest '${questId}' for user '${userId}':`, err);
 		return c.text('Failed to get completed quest progress', 500);
+	}
+});
+
+/// Custom Quests
+
+app.post('/users/quests/custom', async (c) => {
+	const userId = c.req.query('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	const { title, description, icon, steps, permissions, reward } =
+		await c.req.json<CustomQuestCreateInput>();
+
+	if (!title || title.trim().length === 0) {
+		return c.text('Title is required', 400);
+	}
+
+	if (!description || description.trim().length === 0) {
+		return c.text('Description is required', 400);
+	}
+
+	if (!steps || !Array.isArray(steps) || steps.length === 0) {
+		return c.text('At least one step is required', 400);
+	}
+
+	if (!reward || typeof reward !== 'number' || reward <= 0) {
+		return c.text('Reward must be a positive number', 400);
+	}
+
+	try {
+		const customQuest = await createCustomQuest(
+			{
+				owner_id: userId,
+				title: title.trim(),
+				description: description.trim(),
+				icon: icon?.trim() || 'mdi:earth',
+				steps,
+				permissions: permissions || [],
+				reward
+			},
+			c.env.KV
+		);
+
+		return c.json(customQuest, 201);
+	} catch (err) {
+		console.error(`Error creating custom quest for user '${userId}':`, err);
+		return c.text('Failed to create custom quest', 500);
+	}
+});
+
+app.patch('/users/quests/custom/:quest_id', async (c) => {
+	const userId = c.req.query('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	const questId = c.req.param('quest_id')?.toLowerCase();
+	if (!questId) {
+		return c.text('Quest ID is required', 400);
+	}
+
+	if (questId.length < 3 || questId.length > 50) {
+		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	}
+
+	const body = await c.req.json<CustomQuestUpdateInput>();
+	if (
+		body.title === undefined &&
+		body.description === undefined &&
+		body.icon === undefined &&
+		body.steps === undefined &&
+		body.permissions === undefined &&
+		body.reward === undefined
+	) {
+		return c.text('At least one field must be provided', 400);
+	}
+	if (body.title !== undefined && body.title.trim().length === 0) {
+		return c.text('Title cannot be empty', 400);
+	}
+
+	if (body.description !== undefined && body.description.trim().length === 0) {
+		return c.text('Description cannot be empty', 400);
+	}
+
+	if (body.reward !== undefined && (typeof body.reward !== 'number' || body.reward <= 0)) {
+		return c.text('Reward must be a positive number', 400);
+	}
+
+	try {
+		const quest = await getCustomQuest(questId, c.env.KV);
+		if (!quest) {
+			return c.text('Custom quest not found', 404);
+		}
+
+		if (quest.owner_id !== userId) {
+			return c.text('You do not have permission to edit this custom quest', 403);
+		}
+
+		const updatedQuest = await updateCustomQuest(questId, body, c.env.KV);
+		if (!updatedQuest) {
+			return c.text('Custom quest not found', 404);
+		}
+		return c.json(updatedQuest, 200);
+	} catch (err) {
+		console.error(`Error updating custom quest '${questId}' for user '${userId}':`, err);
+		return c.text('Failed to update custom quest', 500);
+	}
+});
+
+app.delete('/users/quests/custom/:quest_id', async (c) => {
+	const userId = c.req.query('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	const questId = c.req.param('quest_id')?.toLowerCase();
+	if (!questId) {
+		return c.text('Quest ID is required', 400);
+	}
+
+	if (questId.length < 3 || questId.length > 50) {
+		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const quest = await getCustomQuest(questId, c.env.KV);
+		if (!quest) {
+			return c.text('Custom quest not found', 404);
+		}
+
+		if (quest.owner_id !== userId) {
+			return c.text('You do not have permission to delete this custom quest', 403);
+		}
+
+		await deleteCustomQuest(questId, c.env.KV);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error deleting custom quest '${questId}' for user '${userId}':`, err);
+		return c.text('Failed to delete custom quest', 500);
 	}
 });
 

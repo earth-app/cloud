@@ -158,6 +158,9 @@ describe('app route registration', () => {
 				'PUT /users/impact_points/:id/set',
 				'GET /users/quests',
 				'GET /users/quests/:id',
+				'POST /users/quests/custom',
+				'PATCH /users/quests/custom/:quest_id',
+				'DELETE /users/quests/custom/:quest_id',
 				'POST /users/quests/progress/:user_id',
 				'PATCH /users/quests/progress/:user_id',
 				'DELETE /users/quests/progress/:user_id',
@@ -275,6 +278,107 @@ describe('GET /users/quests', () => {
 		const json = await response.json<unknown[]>();
 		expect(Array.isArray(json)).toBe(true);
 		expect(json.length).toBeGreaterThan(0);
+	});
+});
+
+describe('custom quests', () => {
+	it('creates quests without accepting audit fields from the client', async () => {
+		const response = await callApp('/users/quests/custom?user_id=123', {
+			method: 'POST',
+			body: JSON.stringify({
+				title: 'My Quest',
+				description: 'Do a thing',
+				icon: 'mdi:star',
+				steps: [
+					{
+						type: 'article_quiz',
+						description: 'Read an article.',
+						parameters: ['TECHNOLOGY', 0.8]
+					}
+				],
+				reward: 25,
+				created_at: '2000-01-01T00:00:00.000Z',
+				updated_at: '2000-01-01T00:00:00.000Z'
+			})
+		});
+
+		expect(response.status).toBe(201);
+		const quest = await response.json<{
+			id: string;
+			owner_id: string;
+			created_at?: string;
+			updated_at?: string;
+		}>();
+		expect(quest.owner_id).toBe('123');
+		expect(quest.created_at).toBeDefined();
+		expect(quest.updated_at).toBeDefined();
+		expect(quest.created_at).not.toBe('2000-01-01T00:00:00.000Z');
+		expect(quest.updated_at).not.toBe('2000-01-01T00:00:00.000Z');
+	});
+
+	it('enforces ownership for update and delete', async () => {
+		const bindings = createMockBindings();
+		const create = await callApp(
+			'/users/quests/custom?user_id=123',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					title: 'Owned Quest',
+					description: 'Do a thing',
+					icon: 'mdi:star',
+					steps: [
+						{
+							type: 'article_quiz',
+							description: 'Read an article.',
+							parameters: ['TECHNOLOGY', 0.8]
+						}
+					],
+					reward: 25
+				})
+			},
+			true,
+			bindings
+		);
+		expect(create.status).toBe(201);
+		const created = await create.json<{ id: string }>();
+
+		const forbiddenUpdate = await callApp(
+			`/users/quests/custom/${created.id}?user_id=456`,
+			{
+				method: 'PATCH',
+				body: JSON.stringify({ title: 'Hacked' })
+			},
+			true,
+			bindings
+		);
+		expect(forbiddenUpdate.status).toBe(403);
+
+		const missingUpdate = await callApp(
+			'/users/quests/custom/does-not-exist?user_id=123',
+			{
+				method: 'PATCH',
+				body: JSON.stringify({ title: 'Missing' })
+			},
+			true,
+			bindings
+		);
+		expect(missingUpdate.status).toBe(404);
+
+		const forbiddenDelete = await callApp(
+			`/users/quests/custom/${created.id}?user_id=456`,
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(forbiddenDelete.status).toBe(403);
+
+		const deleteResponse = await callApp(
+			`/users/quests/custom/${created.id}?user_id=123`,
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(deleteResponse.status).toBe(204);
 	});
 });
 
@@ -727,7 +831,7 @@ describe('POST /users/timer', () => {
 
 		expect(response.status).toBe(200);
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
-		const [, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+		const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
 		const forwardedBody = JSON.parse(String(init.body)) as {
 			metadata?: typeof metadata;
 		};

@@ -1,5 +1,6 @@
 import { ScoringCriterion } from '../../content/ferry';
 import { ActivityType, EventActivity, Rarity } from '../../util/types';
+import { CustomQuest, getCustomQuest, getCustomQuests } from './custom';
 
 export type Quest = {
 	id: string;
@@ -1130,3 +1131,21 @@ export const quests = [
 		permissions: ['camera']
 	}
 ] as Quest[];
+
+export async function getAllQuests(kv: KVNamespace): Promise<(CustomQuest | Quest)[]> {
+	const quests0 = [...quests];
+
+	// add custom quests
+	const customQuests = (await getCustomQuests(kv)).map(async (q) => await getCustomQuest(q.id, kv));
+
+	return [...quests0, ...(await Promise.all(customQuests))].filter((q) => q != null);
+}
+
+export async function getQuest(id: string, kv: KVNamespace): Promise<CustomQuest | Quest | null> {
+	const quest = quests.find((q) => q.id === id);
+	if (quest) {
+		return quest;
+	}
+
+	return await getCustomQuest(id, kv);
+}
