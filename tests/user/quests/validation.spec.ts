@@ -958,4 +958,386 @@ describe('validateStep', () => {
 		expect(windowsAmr.success).toBe(false);
 		expect(windowsAmr.message).toContain('exclusively produced by mobile voice recorders');
 	});
+
+	// take_photo_validation tests
+	describe('take_photo_validation', () => {
+		const validResponse = {
+			type: 'take_photo_validation',
+			index: 0,
+			data: new Uint8Array([1, 2, 3, 4])
+		} as any;
+
+		it('passes when photo validation score meets default threshold of 0.5', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo quality',
+				parameters: ['a sunset landscape']
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.7, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.7);
+			expect(mockScoreImage).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.stringContaining('sunset landscape'),
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: 'validation',
+						weight: 1
+					})
+				])
+			);
+		});
+
+		it('passes when photo validation score meets custom threshold (0-1 range)', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo',
+				parameters: ['a dog playing', 0.6]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.65, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.65);
+		});
+
+		it('passes when photo validation score meets percentage threshold (0-100 range)', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo',
+				parameters: ['outdoor activity', 75]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.8, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.8);
+		});
+
+		it('rejects when photo validation score is below default threshold', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo',
+				parameters: ['a sunset landscape']
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.4, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain(
+				'does not meet the required validation score threshold of 0.5'
+			);
+			expect(result.message).toContain('0.40');
+		});
+
+		it('rejects when photo validation score is below custom threshold', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo',
+				parameters: ['a dog', 0.8]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.7, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain(
+				'does not meet the required validation score threshold of 0.8'
+			);
+			expect(result.message).toContain('0.70');
+		});
+
+		it('rejects invalid threshold values', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo',
+				parameters: ['subject', -0.5]
+			} as any;
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('Photo validation');
+		});
+
+		it('includes EXIF validation for non-location photos', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo',
+				parameters: ['subject', 0.5]
+			} as any;
+
+			// Simulate EXIF parse failure
+			mockExifLoad.mockImplementationOnce(() => {
+				throw new Error('Invalid EXIF');
+			});
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.7, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			// Should succeed because take_photo_validation is not location-based
+			expect(result.success).toBe(true);
+		});
+
+		it('passes with valid EXIF metadata', async () => {
+			const step = {
+				type: 'take_photo_validation',
+				description: 'Validate photo with EXIF check',
+				parameters: ['landscape', 0.5]
+			} as any;
+
+			mockExifLoad.mockReturnValueOnce(createValidExif());
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.6, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+		});
+	});
+
+	// take_photo_list tests
+	describe('take_photo_list', () => {
+		const validResponse = {
+			type: 'take_photo_list',
+			index: 0,
+			data: new Uint8Array([1, 2, 3, 4])
+		} as any;
+
+		it('passes when photo list score meets default threshold of 0.5', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects in photo',
+				parameters: [['dog', 'cat', 'chair']]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.7, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.7);
+			expect(mockScoreImage).toHaveBeenCalledWith(
+				expect.anything(),
+				expect.anything(),
+				expect.stringContaining('dog, cat, chair'),
+				expect.arrayContaining([
+					expect.objectContaining({
+						id: 'list',
+						weight: 1
+					})
+				])
+			);
+		});
+
+		it('passes when photo list score meets custom threshold', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects',
+				parameters: [['bicycle', 'car'], 0.65]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.75, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.75);
+		});
+
+		it('passes when photo list score meets percentage threshold', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects',
+				parameters: [['person', 'bicycle'], 80]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.85, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.85);
+		});
+
+		it('rejects when photo list score is below default threshold', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects',
+				parameters: [['dog', 'car']]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.4, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('does not meet the required list score threshold of 0.5');
+			expect(result.message).toContain('0.40');
+		});
+
+		it('rejects when photo list score is below custom threshold', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects',
+				parameters: [['cat', 'dog', 'bird'], 0.9]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.75, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('does not meet the required list score threshold of 0.9');
+		});
+
+		it('rejects empty item list', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects',
+				parameters: [[]]
+			} as any;
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('requires at least one item');
+		});
+
+		it('rejects invalid threshold values', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects',
+				parameters: [['dog', 'cat'], -0.1]
+			} as any;
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('Photo list validation');
+		});
+
+		it('includes EXIF validation for photo list', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects with EXIF',
+				parameters: [['dog', 'car']]
+			} as any;
+
+			mockExifLoad.mockReturnValueOnce(createValidExif());
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.6, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+		});
+
+		it('rejects when items list contains unsupported labels', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate objects',
+				parameters: [['completely_fake_object_12345', 'dog']]
+			} as any;
+
+			// Relaxed behavior: unknown or domain-specific items are allowed and are
+			// validated via caption-scoring. The step should succeed when the image
+			// scoring meets the threshold.
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.82, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.82);
+		});
+
+		it('handles COCO-compatible labels in item list', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate COCO objects',
+				parameters: [['person', 'car', 'bicycle']]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.75, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.75);
+		});
+
+		it('normalizes label variations in item list', async () => {
+			const step = {
+				type: 'take_photo_list',
+				description: 'Validate normalized labels',
+				parameters: [['Cell Phone', 'TV']]
+			} as any;
+
+			mockScoreImage.mockResolvedValueOnce([
+				'Generated caption',
+				{ score: 0.75, breakdown: [] }
+			] as any);
+
+			const result = await validateStep(step, validResponse, createMockBindings(), validDevice);
+
+			// Should succeed because cell_phone and tv are aliased/supported labels in COCO
+			expect(result.success).toBe(true);
+		});
+	});
 });

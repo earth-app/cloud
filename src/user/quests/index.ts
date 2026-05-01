@@ -38,6 +38,14 @@ export type QuestStep = {
 			parameters: [ScoringCriterion[], string, number]; // rubric criteria, caption prompt, score threshold
 	  }
 	| {
+			type: 'take_photo_validation';
+			parameters: [string, number?]; // validation prompt, optional score threshold (default 0.5)
+	  }
+	| {
+			type: 'take_photo_list';
+			parameters: [string[], number?]; // list of objects, optional score threshold (default 0.5)
+	  }
+	| {
 			type: 'article_quiz'; // handled automatically by cloud
 			parameters: [ActivityType, number]; // article type, score threshold
 	  }

@@ -23,7 +23,9 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 				| 'take_photo_classification'
 				| 'take_photo_caption'
 				| 'draw_picture'
-				| 'take_photo_objects';
+				| 'take_photo_objects'
+				| 'take_photo_validation'
+				| 'take_photo_list';
 			data: Uint8Array;
 	  }
 	| {
@@ -53,7 +55,9 @@ export type QuestStepProgressEntry = {
 				| 'take_photo_classification'
 				| 'take_photo_caption'
 				| 'draw_picture'
-				| 'take_photo_objects';
+				| 'take_photo_objects'
+				| 'take_photo_validation'
+				| 'take_photo_list';
 			score?: number; // validation score (e.g. confidence) for this step submission, if applicable
 			prompt?: string; // generated prompt from take_photo_caption
 			r2Key: string;

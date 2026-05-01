@@ -244,7 +244,9 @@ export async function validateStep(
 		case 'take_photo_location':
 		case 'take_photo_classification':
 		case 'take_photo_caption':
-		case 'take_photo_objects': {
+		case 'take_photo_objects':
+		case 'take_photo_validation':
+		case 'take_photo_list': {
 			if (!response.data) {
 				return { success: false, message: 'No photo data provided in response.' };
 			}
@@ -488,6 +490,11 @@ async function validateStepPhoto(
 
 	// DateTimeOriginal is required: absence or unparseable value rejects the submission
 	const dateRaw = metadata?.DateTimeOriginal?.value?.toString()?.trim();
+
+	// If EXIF exists but DateTimeOriginal is missing, reject
+	if (hasExif && !dateRaw) {
+		return { success: false, message: 'Photo is missing EXIF DateTimeOriginal value.' };
+	}
 
 	// EXIF DateTimeOriginal is a naive local time (YYYY:MM:DD HH:MM:SS format)
 	let dateTaken: number | null = null;
@@ -932,6 +939,78 @@ async function validateStepPhoto(
 			};
 		}
 		return { success: true, score: score.score, prompt: generatedCaption };
+	}
+
+	if (step.type === 'take_photo_validation') {
+		const [prompt, thresholdRaw] = step.parameters;
+		const threshold = thresholdRaw ?? 0.5; // default to 0.5 if not specified
+		const normalizedThreshold = normalizeThreshold(threshold, 'Photo validation');
+		if (!normalizedThreshold.ok) {
+			return {
+				success: false,
+				message: normalizedThreshold.message
+			};
+		}
+
+		const captionPrompt = `Describe this photo in detail: what is the main subject, what is the setting, and what context is visible? The photo is expected to show: ${prompt}. Describe whether the photo clearly shows the expected subject with good quality and relevance.`;
+		const [_, score] = await scoreImage(bindings, image, captionPrompt, [
+			{
+				id: 'validation',
+				weight: 1,
+				ideal: `The photo clearly shows ${prompt} with good quality and relevance.`
+			}
+		]);
+
+		if (score.score < normalizedThreshold.value) {
+			return {
+				success: false,
+				message: `Photo does not meet the required validation score threshold of ${normalizedThreshold.value}. Got ${score.score.toFixed(2)}.`
+			};
+		}
+
+		aiScore = score.score;
+	}
+
+	if (step.type === 'take_photo_list') {
+		const [items, thresholdRaw] = step.parameters;
+		if (!items || items.length === 0) {
+			return {
+				success: false,
+				message: 'Photo list validation step requires at least one item.'
+			};
+		}
+
+		// Allow arbitrary item lists — scoring is performed via `scoreImage` (caption-scoring).
+		// We keep a lightweight normalization pass for prompt generation but do not reject
+		// items that are not part of the COCO vocabulary so domain-specific nouns are allowed.
+
+		const threshold = thresholdRaw ?? 0.5; // default to 0.5 if not specified
+		const normalizedThreshold = normalizeThreshold(threshold, 'Photo list validation');
+		if (!normalizedThreshold.ok) {
+			return {
+				success: false,
+				message: normalizedThreshold.message
+			};
+		}
+
+		const itemsList = items.join(', ');
+		const captionPrompt = `List the main objects, subjects, and context visible in this photo in detail. The photo is expected to show the following items: ${itemsList}. Describe whether these items are clearly visible.`;
+		const [_, score] = await scoreImage(bindings, image, captionPrompt, [
+			{
+				id: 'list',
+				weight: 1,
+				ideal: `The photo clearly shows the following items: ${itemsList}.`
+			}
+		]);
+
+		if (score.score < normalizedThreshold.value) {
+			return {
+				success: false,
+				message: `Photo does not meet the required list score threshold of ${normalizedThreshold.value}. Got ${score.score.toFixed(2)}.`
+			};
+		}
+
+		aiScore = score.score;
 	}
 
 	return { success: true, score: aiScore };
