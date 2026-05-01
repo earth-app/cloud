@@ -6,7 +6,7 @@ import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util
 import { addImpactPoints } from '../points';
 import { sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
-import { QuestDeviceMetadata, validateStep } from './validation';
+import { normalizeThreshold, QuestDeviceMetadata, validateStep } from './validation';
 
 export type QuestProgress = {
 	questId: string;
@@ -716,25 +716,35 @@ export async function handleQuizQuestStep(
 					const alt = stepDef[altIdx];
 					if (alt.type !== 'article_quiz') continue;
 					if (completedAltIndices.has(altIdx)) continue;
+
 					const [requiredActivityType, scoreThreshold] = alt.parameters;
+					const normalizedThreshold = normalizeThreshold(scoreThreshold, 'Article quiz');
+
+					if (!normalizedThreshold.ok) continue;
 					if (!articleTypes.includes(requiredActivityType)) continue;
-					if (scorePercent < scoreThreshold * 100) continue;
+					if (scorePercent < normalizedThreshold.value * 100) continue;
+
 					matchedStepIndex = idx;
 					matchedAltIndex = altIdx;
 					matchedStepDef = alt;
-					thresholdPercent = scoreThreshold * 100;
+					thresholdPercent = normalizedThreshold.value * 100;
 					break;
 				}
 			} else {
 				// normal step — only the current step is eligible; past ones are already completed
 				if (idx !== currentStepIndex) continue;
 				if (stepDef.type !== 'article_quiz') continue;
+
 				const [requiredActivityType, scoreThreshold] = stepDef.parameters;
+				const normalizedThreshold = normalizeThreshold(scoreThreshold, 'Article quiz');
+
+				if (!normalizedThreshold.ok) continue;
 				if (!articleTypes.includes(requiredActivityType)) continue;
-				if (scorePercent < scoreThreshold * 100) continue;
+				if (scorePercent < normalizedThreshold.value * 100) continue;
+
 				matchedStepIndex = idx;
 				matchedStepDef = stepDef;
-				thresholdPercent = scoreThreshold * 100;
+				thresholdPercent = normalizedThreshold.value * 100;
 			}
 
 			if (matchedStepIndex !== null) break;
@@ -774,17 +784,7 @@ export async function handleQuizQuestStep(
 		const stepDesc = matchedStepDef.description;
 		ctx.waitUntil(
 			(async () => {
-				if (questResult.completed) {
-					await sendUserNotification(
-						bindings,
-						userId,
-						`Quest "${currentQuest.title}" Completed!`,
-						'You have successfully completed the quest and earned impact points!',
-						undefined,
-						'success',
-						'quest'
-					);
-				} else {
+				if (!questResult.completed) {
 					await sendUserNotification(
 						bindings,
 						userId,
