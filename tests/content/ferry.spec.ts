@@ -93,7 +93,18 @@ describe('classifyImage', () => {
 });
 
 describe('detectObjects', () => {
-	it('normalizes detection output with box coordinates', async () => {
+	it('normalizes array output and provides fallback boxes when absent', async () => {
+		const aiRun = vi.fn(async () => [
+			{ label: 'traffic light, signal', score: 0.8 },
+			{ label: 'low', score: 0.001 }
+		]);
+		const bindings = createBindings(aiRun);
+		const result = await detectObjects(bindings, new Uint8Array([1]));
+
+		expect(result).toEqual([{ label: 'traffic_light', confidence: 0.8, box: [0, 0, 0, 0] }]);
+	});
+
+	it('supports legacy object detection responses with a result field and coordinates', async () => {
 		const aiRun = vi.fn(async () => ({
 			result: [
 				{ label: 'traffic light, signal', score: 0.8, box: { xmin: 1, ymin: 2, xmax: 3, ymax: 4 } },
