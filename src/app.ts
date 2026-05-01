@@ -1647,6 +1647,8 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 		'take_photo_classification',
 		'take_photo_caption',
 		'take_photo_objects',
+		'take_photo_validation',
+		'take_photo_list',
 		'draw_picture',
 		'transcribe_audio'
 	];

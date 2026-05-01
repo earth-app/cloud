@@ -1,33 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({
-	retrieveLeaderboard: vi.fn(),
-	createPrompt: vi.fn(),
-	postPrompt: vi.fn(),
-	findArticle: vi.fn(),
-	createArticle: vi.fn(),
-	createArticleQuiz: vi.fn(),
-	postArticle: vi.fn(),
-	retrieveEvents: vi.fn(),
-	createEvent: vi.fn(),
-	postEvent: vi.fn()
-}));
+var mocks: {
+	retrieveLeaderboard: ReturnType<typeof vi.fn>;
+	createPrompt: ReturnType<typeof vi.fn>;
+	postPrompt: ReturnType<typeof vi.fn>;
+	findArticle: ReturnType<typeof vi.fn>;
+	createArticle: ReturnType<typeof vi.fn>;
+	createArticleQuiz: ReturnType<typeof vi.fn>;
+	postArticle: ReturnType<typeof vi.fn>;
+	retrieveEvents: ReturnType<typeof vi.fn>;
+	createEvent: ReturnType<typeof vi.fn>;
+	postEvent: ReturnType<typeof vi.fn>;
+};
+
+function createMocks() {
+	return {
+		retrieveLeaderboard: vi.fn(),
+		createPrompt: vi.fn(),
+		postPrompt: vi.fn(),
+		findArticle: vi.fn(),
+		createArticle: vi.fn(),
+		createArticleQuiz: vi.fn(),
+		postArticle: vi.fn(),
+		retrieveEvents: vi.fn(),
+		createEvent: vi.fn(),
+		postEvent: vi.fn()
+	};
+}
 
 vi.mock('../src/user/journies', () => ({
 	TOP_LEADERBOARD_COUNT: 250,
-	retrieveLeaderboard: mocks.retrieveLeaderboard
+	retrieveLeaderboard: (mocks ??= createMocks()).retrieveLeaderboard
 }));
 
 vi.mock('../src/content/boat', () => ({
-	createPrompt: mocks.createPrompt,
-	postPrompt: mocks.postPrompt,
-	findArticle: mocks.findArticle,
-	createArticle: mocks.createArticle,
-	createArticleQuiz: mocks.createArticleQuiz,
-	postArticle: mocks.postArticle,
-	retrieveEvents: mocks.retrieveEvents,
-	createEvent: mocks.createEvent,
-	postEvent: mocks.postEvent
+	createPrompt: (mocks ??= createMocks()).createPrompt,
+	postPrompt: (mocks ??= createMocks()).postPrompt,
+	findArticle: (mocks ??= createMocks()).findArticle,
+	createArticle: (mocks ??= createMocks()).createArticle,
+	createArticleQuiz: (mocks ??= createMocks()).createArticleQuiz,
+	postArticle: (mocks ??= createMocks()).postArticle,
+	retrieveEvents: (mocks ??= createMocks()).retrieveEvents,
+	createEvent: (mocks ??= createMocks()).createEvent,
+	postEvent: (mocks ??= createMocks()).postEvent
 }));
 
 import scheduled from '../src/scheduled';
@@ -35,6 +50,7 @@ import { createMockBindings } from './helpers/mock-bindings';
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	mocks ??= createMocks();
 	mocks.retrieveLeaderboard.mockResolvedValue([]);
 	mocks.createPrompt.mockResolvedValue('Prompt?');
 	mocks.postPrompt.mockResolvedValue({ id: 'p1' });
@@ -93,8 +109,8 @@ beforeEach(() => {
 });
 
 describe('scheduled', () => {
-	it('caches all leaderboard journey types on hourly cron', async () => {
-		await scheduled({ cron: '0 * * * *' } as ScheduledController, createMockBindings(), {
+	it('caches all leaderboard journey types on 4-hour cron', async () => {
+		await scheduled({ cron: '0 */4 * * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}
 		} as any);
 
@@ -117,8 +133,8 @@ describe('scheduled', () => {
 		expect(mocks.postPrompt).toHaveBeenCalledWith('Prompt?', expect.anything());
 	});
 
-	it('creates and posts generated articles on article cron', async () => {
-		await scheduled({ cron: '*/24 * * * *' } as ScheduledController, createMockBindings(), {
+	it('creates and posts generated articles on hourly cron', async () => {
+		await scheduled({ cron: '0 * * * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}
 		} as any);
 

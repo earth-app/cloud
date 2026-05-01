@@ -692,8 +692,8 @@ describe('rankActivitiesForEvent', () => {
 });
 
 describe('retrieveEvents', () => {
-	it('returns a list of upcoming calendar entries', () => {
-		expect(Array.isArray(retrieveEvents())).toBe(true);
+	it('returns a list of upcoming calendar entries', async () => {
+		expect(Array.isArray(await retrieveEvents())).toBe(true);
 	});
 });
 
