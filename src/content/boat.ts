@@ -1355,20 +1355,12 @@ export async function postEvent(
 
 	const eventId = BigInt(eventIdRaw);
 
-	// Only generate place thumbnails for place-based birthday sources.
-	// New moho birthday datasets also include organizations and companies,
-	// which should not trigger place lookup.
-	// Extract from persisted name first, because downstream callers (like crust)
-	// use the saved event name when generating thumbnails manually.
+	// event thumbnail generation for birthday events based on location name extracted
 	const persistedName = typeof data.name === 'string' ? data.name : '';
 	const sourceName = event.name || '';
-	const mohoSource = (event.fields?.moho_source || '').trim();
-	const isPlaceBirthdayEvent = prompts.isPlaceBirthdaySource(mohoSource);
 	const locationName =
 		extractLocationFromEventName(persistedName) || extractLocationFromEventName(sourceName);
-	const hasBirthdayName = /birthday/i.test(persistedName) || /birthday/i.test(sourceName);
-	const shouldGeneratePlaceThumbnail =
-		Boolean(locationName) && (isPlaceBirthdayEvent || (!mohoSource && hasBirthdayName));
+	const shouldGeneratePlaceThumbnail = Boolean(locationName);
 
 	if (shouldGeneratePlaceThumbnail && locationName) {
 		console.log(`Generating thumbnail for birthday event: ${locationName} (event ${eventIdRaw})`);
@@ -1392,22 +1384,7 @@ export async function postEvent(
 			});
 		}
 	} else {
-		if (hasBirthdayName && mohoSource && !isPlaceBirthdayEvent) {
-			console.log('Skipping thumbnail generation for non-place birthday source', {
-				eventId: eventIdRaw,
-				mohoSource,
-				sourceName,
-				persistedName
-			});
-		} else if (hasBirthdayName) {
-			console.warn('Skipping thumbnail generation: failed to parse birthday location', {
-				mohoSource,
-				sourceName,
-				persistedName
-			});
-		} else {
-			console.log(`Skipping thumbnail generation for non-birthday event: ${sourceName}`);
-		}
+		console.log(`Skipping thumbnail generation for non-birthday event: ${sourceName}`);
 	}
 
 	return data;
