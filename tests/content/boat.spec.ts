@@ -54,7 +54,13 @@ function makeArticle(id: string, title: string): Article {
 		description: `${title} description`,
 		tags: ['NATURE'],
 		content: `${title} content`.repeat(8),
-		author: {},
+		author: {
+			username: `user_${id}`,
+			full_name: `User ${id}`,
+			account: {
+				account_type: 'ADMINISTRATOR'
+			}
+		},
 		author_id: '1',
 		color: '#ffffff',
 		color_hex: '#ffffff',
@@ -1213,13 +1219,16 @@ describe('postEvent', () => {
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 
-	it('skips place-thumbnail lookup for non-place birthday sources', async () => {
-		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(JSON.stringify({ id: '46', name: "Apple Inc's Birthday" }), {
-				status: 200,
-				headers: { 'Content-Type': 'application/json' }
-			})
-		);
+	it('attempts place-thumbnail lookup for parseable birthday names regardless of moho source', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ id: '46', name: "Apple Inc's Birthday" }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(new Response('maps-down', { status: 500 }));
 
 		const data = await postEvent(
 			{
@@ -1238,7 +1247,7 @@ describe('postEvent', () => {
 		);
 
 		expect(data.id).toBe('46');
-		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 
 	it('skips thumbnail generation for non-birthday events with numeric ids', async () => {
