@@ -131,7 +131,6 @@ describe('app route registration', () => {
 				'GET /articles/quiz/score',
 				'POST /articles/quiz/submit',
 				'POST /articles/quiz/create',
-				'POST /prompts/grade',
 				'POST /users/recommend_activities',
 				'GET /users/profile_photo/:id',
 				'PUT /users/profile_photo/:id',
@@ -2405,27 +2404,6 @@ describe('POST /articles/grade', () => {
 					id: '100',
 					content: 'A long article body about restoration systems.'
 				})
-			},
-			true,
-			bindings
-		);
-		expect(response.status).toBe(200);
-	});
-});
-
-describe('POST /prompts/grade', () => {
-	it('returns AI-backed grading data for valid prompts', async () => {
-		const bindings = createMockBindings({
-			AI: {
-				run: createMockAiRun()
-			} as any
-		});
-
-		const response = await callApp(
-			'/prompts/grade',
-			{
-				method: 'POST',
-				body: JSON.stringify({ id: 'p1', prompt: 'How can cities restore marshlands?' })
 			},
 			true,
 			bindings
