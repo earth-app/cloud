@@ -899,7 +899,7 @@ export async function rankActivitiesForEvent(
 
 type UpcomingCalendarEntries = ReturnType<typeof getEntriesInNextWeeks>;
 
-export function retrieveEvents(): UpcomingCalendarEntries {
+export async function retrieveEvents(): Promise<UpcomingCalendarEntries> {
 	const candidateRoots = ['/bundle/data', 'bundle/data', './bundle/data'];
 
 	for (const root of candidateRoots) {

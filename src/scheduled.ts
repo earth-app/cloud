@@ -79,7 +79,7 @@ export default async function scheduled(
 		console.log('Running scheduled task: Event creation from calendar');
 		console.log('Started at', new Date().toISOString());
 
-		const entries = retrieveEvents();
+		const entries = await retrieveEvents();
 		const events: Array<Record<string, unknown> | null> = [];
 		for (const entry of entries) {
 			try {
