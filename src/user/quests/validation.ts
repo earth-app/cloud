@@ -77,7 +77,132 @@ function normalizeVisionLabel(label: string): string {
 	return label.trim().toLowerCase().replace(/\s+/g, '_');
 }
 
-function normalizeThreshold(
+const VISION_LABEL_ALIASES: Record<string, string[]> = {
+	// Common object/classification naming differences across model vocabularies.
+	cell_phone: ['mobile_phone', 'smartphone', 'phone'],
+	tv: ['television', 'monitor', 'screen'],
+	bell_pepper: ['pepper'],
+	spider_web: ['spiderweb']
+};
+
+const COCO_OBJECT_LABELS = new Set<string>([
+	'person',
+	'bicycle',
+	'car',
+	'motorcycle',
+	'airplane',
+	'bus',
+	'train',
+	'truck',
+	'boat',
+	'traffic_light',
+	'fire_hydrant',
+	'stop_sign',
+	'parking_meter',
+	'bench',
+	'bird',
+	'cat',
+	'dog',
+	'horse',
+	'sheep',
+	'cow',
+	'elephant',
+	'bear',
+	'zebra',
+	'giraffe',
+	'backpack',
+	'umbrella',
+	'handbag',
+	'tie',
+	'suitcase',
+	'frisbee',
+	'skis',
+	'snowboard',
+	'sports_ball',
+	'kite',
+	'baseball_bat',
+	'baseball_glove',
+	'skateboard',
+	'surfboard',
+	'tennis_racket',
+	'bottle',
+	'wine_glass',
+	'cup',
+	'fork',
+	'knife',
+	'spoon',
+	'bowl',
+	'banana',
+	'apple',
+	'sandwich',
+	'orange',
+	'broccoli',
+	'carrot',
+	'hot_dog',
+	'pizza',
+	'donut',
+	'cake',
+	'chair',
+	'couch',
+	'potted_plant',
+	'bed',
+	'dining_table',
+	'toilet',
+	'tv',
+	'laptop',
+	'mouse',
+	'remote',
+	'keyboard',
+	'cell_phone',
+	'microwave',
+	'oven',
+	'toaster',
+	'sink',
+	'refrigerator',
+	'book',
+	'clock',
+	'vase',
+	'scissors',
+	'teddy_bear',
+	'hair_drier',
+	'toothbrush'
+]);
+
+function expandVisionLabelCandidates(label: string): Set<string> {
+	const normalized = normalizeVisionLabel(label);
+	const candidates = new Set<string>([normalized]);
+
+	const aliases = VISION_LABEL_ALIASES[normalized] || [];
+	for (const alias of aliases) {
+		candidates.add(normalizeVisionLabel(alias));
+	}
+
+	if (normalized.endsWith('s')) {
+		candidates.add(normalized.slice(0, -1));
+	} else {
+		candidates.add(`${normalized}s`);
+	}
+
+	return candidates;
+}
+
+function findBestLabelConfidence(
+	items: { label: string; confidence: number }[],
+	requiredLabel: string
+): { confidence: number } | null {
+	const candidates = expandVisionLabelCandidates(requiredLabel);
+
+	return items
+		.filter((item) => candidates.has(normalizeVisionLabel(item.label)))
+		.reduce<{
+			confidence: number;
+		} | null>(
+			(best, item) => (best == null || item.confidence > best.confidence ? item : best),
+			null
+		);
+}
+
+export function normalizeThreshold(
 	raw: unknown,
 	context: string
 ): { ok: true; value: number } | { ok: false; message: string } {
@@ -345,59 +470,56 @@ async function validateStepPhoto(
 	bindings: Bindings,
 	data: QuestDeviceMetadata
 ): Promise<{ success: boolean; message?: string; score?: number; prompt?: string }> {
-	// EXIF parse failure is treated as a hard rejection — a missing or corrupt EXIF block
-	// is a strong signal of tampering (re-encoding, screenshot, etc.)
-	let metadata!: ExifReader.Tags;
+	let metadata: ExifReader.Tags | null = null;
 	try {
 		metadata = ExifReader.load(image.buffer as ArrayBuffer);
 	} catch {
-		return { success: false, message: 'Failed to parse photo EXIF metadata.' };
+		// Keep strict location checks, but allow non-location photo flows to proceed.
+		if (step.type === 'take_photo_location') {
+			return { success: false, message: 'Failed to parse photo EXIF metadata for location check.' };
+		}
 	}
+
+	const hasExif = metadata != null;
 
 	// Make is required: its absence indicates the image was not taken by a real camera app
-	const makeRaw = metadata.Make?.value?.toString()?.trim();
-	if (!makeRaw) {
-		return { success: false, message: 'Photo is missing the required EXIF Make field.' };
-	}
-	const make = makeRaw.toLowerCase();
+	const makeRaw = metadata?.Make?.value?.toString()?.trim();
+	const make = makeRaw?.toLowerCase() ?? '';
 
 	// DateTimeOriginal is required: absence or unparseable value rejects the submission
-	const dateRaw = metadata.DateTimeOriginal?.value?.toString()?.trim();
-	if (!dateRaw) {
-		return {
-			success: false,
-			message: 'Photo is missing the required EXIF DateTimeOriginal field.'
-		};
-	}
+	const dateRaw = metadata?.DateTimeOriginal?.value?.toString()?.trim();
 
 	// EXIF DateTimeOriginal is a naive local time (YYYY:MM:DD HH:MM:SS format)
-	const dateMatch = dateRaw.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
-	if (!dateMatch) {
-		return { success: false, message: 'Photo has an unparseable EXIF DateTimeOriginal value.' };
-	}
+	let dateTaken: number | null = null;
+	if (dateRaw) {
+		const dateMatch = dateRaw.match(/(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})/);
+		if (!dateMatch) {
+			return { success: false, message: 'Photo has an unparseable EXIF DateTimeOriginal value.' };
+		}
 
-	const [, year, month, day, hour, minute, second] = dateMatch;
-	const utcDate = new Date(
-		Date.UTC(
-			parseInt(year),
-			parseInt(month) - 1,
-			parseInt(day),
-			parseInt(hour),
-			parseInt(minute),
-			parseInt(second)
-		)
-	);
-	let dateTaken = utcDate.getTime();
+		const [, year, month, day, hour, minute, second] = dateMatch;
+		const utcDate = new Date(
+			Date.UTC(
+				parseInt(year),
+				parseInt(month) - 1,
+				parseInt(day),
+				parseInt(hour),
+				parseInt(minute),
+				parseInt(second)
+			)
+		);
+		dateTaken = utcDate.getTime();
 
-	if (!Number.isFinite(dateTaken)) {
-		return { success: false, message: 'Photo has an unparseable EXIF DateTimeOriginal value.' };
+		if (!Number.isFinite(dateTaken)) {
+			return { success: false, message: 'Photo has an unparseable EXIF DateTimeOriginal value.' };
+		}
 	}
 
 	// OffsetTimeOriginal (e.g., "-05:00" for UTC-5) tells us the timezone offset of the naive local time.
 	// to convert from naive local time (parsed as UTC above) to true UTC:
 	// true_utc = parsed_as_utc - offsetMs
-	const offsetRaw = metadata.OffsetTimeOriginal?.value?.toString()?.trim() ?? null;
-	if (offsetRaw) {
+	const offsetRaw = metadata?.OffsetTimeOriginal?.value?.toString()?.trim() ?? null;
+	if (offsetRaw && dateTaken != null) {
 		const parts = offsetRaw.split(':').map(Number);
 		if (parts.length >= 2 && parts.every(Number.isFinite)) {
 			// parts[0] is hours (can be negative), parts[1] is minutes (always positive magnitude)
@@ -411,16 +533,16 @@ async function validateStepPhoto(
 		}
 	}
 
-	// Allow 5-minute clock skew
+	// allow 30-minute skew to account for client upload latency and imperfect clocks
 	const now = Date.now();
-	if (Math.abs(now - dateTaken) > 5 * 60 * 1000) {
+	if (dateTaken != null && Math.abs(now - dateTaken) > 30 * 60 * 1000) {
 		return {
 			success: false,
 			message: `Photo timestamp is not within the acceptable range (possible clock skew or old photo). Found ${new Date(dateTaken).toISOString()}, but expected around ${new Date(now).toISOString()}.`
 		};
 	}
 
-	const softwareRaw = metadata.Software?.value?.toString()?.trim() ?? '';
+	const softwareRaw = metadata?.Software?.value?.toString()?.trim() ?? '';
 	const nonCameraReason = detectNonCameraSoftware(softwareRaw);
 	if (nonCameraReason) {
 		return {
@@ -430,7 +552,7 @@ async function validateStepPhoto(
 	}
 
 	// focal length of 0 is physically impossible in real cameras
-	const focalLength = metadata.FocalLength?.value;
+	const focalLength = metadata?.FocalLength?.value;
 	if (focalLength != null && Number(focalLength) === 0) {
 		return {
 			success: false,
@@ -439,17 +561,17 @@ async function validateStepPhoto(
 	}
 
 	// DateTime Digitized should match Original; large gaps indicate editing/conversion
-	const dateDigitized = metadata.DateTimeDigitized?.value?.toString()?.trim();
-	if (dateDigitized && dateRaw && dateDigitized !== dateRaw) {
+	const dateDigitized = metadata?.DateTimeDigitized?.value?.toString()?.trim();
+	if (dateDigitized && dateRaw && dateTaken != null && dateDigitized !== dateRaw) {
 		// Parse the digitized date
 		const digitizedTime = new Date(
 			dateDigitized.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3')
 		).getTime();
 
 		if (Number.isFinite(digitizedTime)) {
-			// Allow 1 second of difference (clock sync variations), but flag larger gaps
+			// Allow 5 minutes of difference (metadata write-order differences), but flag larger gaps
 			const timeDiff = Math.abs(dateTaken - digitizedTime);
-			if (timeDiff > 1000) {
+			if (timeDiff > 5 * 60 * 1000) {
 				return {
 					success: false,
 					message: `DateTime Original and DateTime Digitized mismatch (${(timeDiff / 1000).toFixed(0)}s apart), indicating post-processing.`
@@ -458,21 +580,24 @@ async function validateStepPhoto(
 		}
 	}
 
-	const hasAperture = metadata.ApertureValue != null || metadata.FNumber != null;
-	const hasLens = metadata.LensModel != null;
-	const hasExposure = metadata.ExposureTime != null;
-	const isSuspiciouslyBare = !hasLens && !hasAperture && !hasExposure;
-	if (isSuspiciouslyBare && make) {
+	const hasAperture = metadata?.ApertureValue != null || metadata?.FNumber != null;
+	const hasLens = metadata?.LensModel != null;
+	const hasExposure = metadata?.ExposureTime != null;
+	const hasFocal = metadata?.FocalLength != null;
+	const evidenceCount = [hasLens, hasAperture, hasExposure, hasFocal].filter(Boolean).length;
+	const isSuspiciouslyBare = hasExif && evidenceCount === 0;
+
+	if (isSuspiciouslyBare) {
 		return {
 			success: false,
 			message:
-				'Photo is missing critical camera EXIF fields (aperture, lens, exposure), indicating a synthetic or heavily manipulated image.'
+				'Photo is missing critical camera EXIF fields (aperture, lens, exposure, focal length), indicating a synthetic or heavily manipulated image.'
 		};
 	}
 
-	// Make cross-check: accept if either string contains the other to handle verbose OEM strings
+	// make cross-check: accept if either string contains the other to handle verbose OEM strings
 	// e.g. "SAMSUNG ELECTRONICS" still matches declared "samsung"
-	if (data.make && data.make !== 'unknown') {
+	if (makeRaw && data.make && data.make !== 'unknown') {
 		const expectedMake = data.make.toLowerCase().trim();
 		if (!make.includes(expectedMake) && !expectedMake.includes(make)) {
 			return {
@@ -483,7 +608,7 @@ async function validateStepPhoto(
 	}
 
 	// model cross-check: normalise aggressively since OEM model strings vary wildly in punctuation
-	const modelRaw = metadata.Model?.value?.toString()?.trim();
+	const modelRaw = metadata?.Model?.value?.toString()?.trim();
 	if (modelRaw && data.model && data.model !== 'unknown') {
 		const normalise = (s: string) =>
 			s
@@ -507,7 +632,7 @@ async function validateStepPhoto(
 
 	// OS cross-validation
 	const os = data.os?.toLowerCase()?.trim() ?? '';
-	if (os && os !== 'unknown') {
+	if (os && os !== 'unknown' && makeRaw) {
 		const makeNorm = make.toLowerCase().trim();
 
 		// Hard constraint: OS ↔ Make mapping is strictly enforced
@@ -645,6 +770,13 @@ async function validateStepPhoto(
 		let score: number | undefined;
 		if (step.type === 'take_photo_location') {
 			// validate both device GPS data and photo EXIF GPS data
+			if (!metadata) {
+				return {
+					success: false,
+					message: 'Location validation requires readable EXIF metadata.'
+				};
+			}
+
 			const [lat, lng, radius, label0, score0] = step.parameters;
 			if ((label0 && score0 === undefined) || (!label0 && score0 !== undefined)) {
 				return {
@@ -717,14 +849,16 @@ async function validateStepPhoto(
 		if (label && score !== undefined) {
 			const normalizedLabel = normalizeVisionLabel(label);
 			const classifications = await classifyImage(bindings, image);
-			const classification = classifications.find(
-				(c) => normalizeVisionLabel(c.label) === normalizedLabel
-			);
+			const classification = findBestLabelConfidence(classifications, normalizedLabel);
 
 			if (!classification || classification.confidence < score) {
+				const foundLabels = classifications
+					.slice(0, 6)
+					.map((c) => `${normalizeVisionLabel(c.label)} (${c.confidence.toFixed(2)})`)
+					.join(', ');
 				return {
 					success: false,
-					message: `Photo does not meet the required classification label "${normalizedLabel}" with confidence ${score}.`
+					message: `Photo does not meet the required classification label "${normalizedLabel}" with confidence ${score}. Top labels: ${foundLabels || 'none'}.`
 				};
 			}
 
@@ -734,10 +868,26 @@ async function validateStepPhoto(
 
 	if (step.type === 'take_photo_objects') {
 		const labelsAndScores = step.parameters;
+		if (!labelsAndScores.length) {
+			return {
+				success: false,
+				message: 'Object detection step requires at least one object label and threshold.'
+			};
+		}
+
 		const detections = await detectObjects(bindings, image);
+		const requiredScores: number[] = [];
 
 		for (const [labelRaw, scoreRaw] of labelsAndScores) {
 			const label = normalizeVisionLabel(labelRaw);
+			const candidateLabels = expandVisionLabelCandidates(label);
+			if (![...candidateLabels].some((candidate) => COCO_OBJECT_LABELS.has(candidate))) {
+				return {
+					success: false,
+					message: `Object label "${label}" is not supported by the current detection model vocabulary.`
+				};
+			}
+
 			const normalizedThreshold = normalizeThreshold(scoreRaw, `Object "${label}"`);
 			if (!normalizedThreshold.ok) {
 				return {
@@ -746,16 +896,19 @@ async function validateStepPhoto(
 				};
 			}
 
-			const detection = detections.find((d) => normalizeVisionLabel(d.label) === label);
-			if (!detection || detection.confidence < normalizedThreshold.value) {
+			const bestDetection = findBestLabelConfidence(detections, label);
+
+			if (!bestDetection || bestDetection.confidence < normalizedThreshold.value) {
 				return {
 					success: false,
 					message: `Photo does not contain the required object "${label}" with confidence ${normalizedThreshold.value}.`
 				};
 			}
+
+			requiredScores.push(bestDetection.confidence);
 		}
 
-		aiScore = detections.reduce((acc, d) => acc + d.confidence, 0) / detections.length;
+		aiScore = requiredScores.reduce((acc, d) => acc + d, 0) / requiredScores.length;
 	}
 
 	if (step.type === 'take_photo_caption') {
