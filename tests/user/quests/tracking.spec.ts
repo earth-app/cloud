@@ -17,6 +17,7 @@ import {
 	startQuest,
 	updateQuestProgress
 } from '../../../src/user/quests/tracking';
+import { quests } from '../../../src/user/quests';
 import { createMockBindings } from '../../helpers/mock-bindings';
 import { MockKVNamespace } from '../../helpers/mock-kv';
 import { deflate, encrypt } from '../../../src/util/util';
@@ -774,5 +775,43 @@ describe('handleQuizQuestStep', () => {
 		);
 
 		expect(result).toEqual({ handled: false });
+	});
+
+	it('accepts article quiz thresholds declared as percentages in auto-handling flow', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const pending: Promise<unknown>[] = [];
+		const ctx = {
+			waitUntil: (promise: Promise<unknown>) => {
+				pending.push(Promise.resolve(promise));
+			}
+		};
+
+		const funFacts = quests.find((q) => q.id === 'fun_facts')!;
+		const firstStep = funFacts.steps[0] as { type: 'article_quiz'; parameters: [string, number] };
+		const originalThreshold = firstStep.parameters[1];
+		firstStep.parameters[1] = 80;
+
+		try {
+			await startQuest('702', 'fun_facts', bindings);
+			await kv.put(
+				'article:quiz_score:702:100',
+				JSON.stringify({ score: 8, scorePercent: 80, total: 10 })
+			);
+
+			const result = await handleQuizQuestStep(
+				'702',
+				'article:quiz_score:702:100',
+				80,
+				['HOME_IMPROVEMENT' as any],
+				bindings,
+				ctx as any
+			);
+
+			await Promise.all(pending);
+			expect(result.handled).toBe(true);
+		} finally {
+			firstStep.parameters[1] = originalThreshold;
+		}
 	});
 });

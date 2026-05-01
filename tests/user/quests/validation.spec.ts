@@ -311,7 +311,7 @@ describe('validateStep', () => {
 		expect(result.message).toContain('required score threshold');
 	});
 
-	it('rejects take_photo_classification when EXIF metadata cannot be parsed', async () => {
+	it('accepts non-location photo steps when EXIF metadata cannot be parsed', async () => {
 		mockExifLoad.mockImplementationOnce(() => {
 			throw new Error('bad exif');
 		});
@@ -328,11 +328,11 @@ describe('validateStep', () => {
 		} as any;
 
 		const result = await validateStep(step, response, createMockBindings(), validDevice);
-		expect(result.success).toBe(false);
-		expect(result.message).toContain('Failed to parse photo EXIF metadata');
+		expect(result.success).toBe(true);
+		expect(result.score).toBe(0.9);
 	});
 
-	it('rejects take_photo_classification when EXIF make is missing', async () => {
+	it('accepts non-location photo steps when EXIF make is missing', async () => {
 		mockExifLoad.mockReturnValueOnce(createValidExif({ Make: undefined }));
 
 		const step = {
@@ -347,8 +347,8 @@ describe('validateStep', () => {
 		} as any;
 
 		const result = await validateStep(step, response, createMockBindings(), validDevice);
-		expect(result.success).toBe(false);
-		expect(result.message).toContain('missing the required EXIF Make field');
+		expect(result.success).toBe(true);
+		expect(result.score).toBe(0.9);
 	});
 
 	it('rejects take_photo_location when device GPS metadata is missing', async () => {
@@ -447,6 +447,28 @@ describe('validateStep', () => {
 		const result = await validateStep(step, response, createMockBindings(), validDevice);
 		expect(result.success).toBe(true);
 		expect(result.score).toBeCloseTo(0.825);
+	});
+
+	it('uses the best confidence when multiple detections share the same required label', async () => {
+		mockDetectObjects.mockResolvedValueOnce([
+			{ label: 'dog', confidence: 0.2 },
+			{ label: 'dog', confidence: 0.91 }
+		] as any);
+
+		const step = {
+			type: 'take_photo_objects',
+			description: 'Take a photo with a dog in it',
+			parameters: [['dog', 0.7]]
+		} as any;
+		const response = {
+			type: 'take_photo_objects',
+			index: 0,
+			data: new Uint8Array([255, 216, 255])
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(true);
+		expect(result.score).toBe(0.91);
 	});
 
 	it('matches classification labels case-insensitively with underscore normalization', async () => {
@@ -693,7 +715,7 @@ describe('validateStep', () => {
 		expect(malformedDate.message).toContain('unparseable EXIF DateTimeOriginal');
 	});
 
-	it('rejects stale photo timestamps and zero focal length', async () => {
+	it('rejects very stale photo timestamps and zero focal length', async () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
@@ -707,7 +729,7 @@ describe('validateStep', () => {
 
 		mockExifLoad.mockReturnValueOnce(
 			createValidExif({
-				DateTimeOriginal: { value: exifDate(new Date(Date.now() - 10 * 60 * 1000)) }
+				DateTimeOriginal: { value: exifDate(new Date(Date.now() - 2 * 60 * 60 * 1000)) }
 			})
 		);
 		const stale = await validateStep(step, response, createMockBindings(), validDevice);
@@ -720,7 +742,7 @@ describe('validateStep', () => {
 		expect(focal.message).toContain('invalid focal length');
 	});
 
-	it('rejects inconsistent digitized timestamps and suspiciously bare camera metadata', async () => {
+	it('rejects significantly inconsistent digitized timestamps and suspiciously bare camera metadata', async () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
@@ -733,7 +755,9 @@ describe('validateStep', () => {
 		} as any;
 
 		mockExifLoad.mockReturnValueOnce(
-			createValidExif({ DateTimeDigitized: { value: exifDate(new Date(Date.now() - 120000)) } })
+			createValidExif({
+				DateTimeDigitized: { value: exifDate(new Date(Date.now() - 10 * 60 * 1000)) }
+			})
 		);
 		const digitizedMismatch = await validateStep(step, response, createMockBindings(), validDevice);
 		expect(digitizedMismatch.success).toBe(false);
@@ -752,6 +776,23 @@ describe('validateStep', () => {
 		const suspicious = await validateStep(step, response, createMockBindings(), validDevice);
 		expect(suspicious.success).toBe(false);
 		expect(suspicious.message).toContain('missing critical camera EXIF fields');
+	});
+
+	it('rejects object labels that are outside the supported detection vocabulary', async () => {
+		const step = {
+			type: 'take_photo_objects',
+			description: 'Take a photo with a unicorn in it',
+			parameters: [['unicorn', 0.7]]
+		} as any;
+		const response = {
+			type: 'take_photo_objects',
+			index: 0,
+			data: new Uint8Array([255, 216, 255])
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(false);
+		expect(result.message).toContain('not supported by the current detection model vocabulary');
 	});
 
 	it('rejects model and OS version mismatches in photo metadata', async () => {
