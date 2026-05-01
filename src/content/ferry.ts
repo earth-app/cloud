@@ -29,9 +29,10 @@ export interface ScoreResult {
 }
 
 async function embedText(env: Bindings, text: string): Promise<number[]> {
-	return tryCache(`embedding:text:${text.substring(0, 100)}`, env.CACHE, async () => {
+	return tryCache(`embedding:text:${hashText(text)}`, env.CACHE, async () => {
 		const response = (await env.AI.run(embedModel, {
-			text
+			text,
+			pooling: 'cls'
 		})) as Ai_Cf_Baai_Bge_M3_Output_Embedding;
 
 		if (!response?.data || response.data.length === 0) {
@@ -42,8 +43,22 @@ async function embedText(env: Bindings, text: string): Promise<number[]> {
 	});
 }
 
-const MIN_SIM = 0.25;
-const MAX_SIM = 0.6;
+// use a smooth mapping from cosine similarity [-1, 1] -> [0, 1] to avoid
+// hard clipping artifacts that can create left/right score skew
+function normalizeSimilarity(sim: number): number {
+	if (!Number.isFinite(sim)) return 0;
+	return Math.min(1, Math.max(0, (sim + 1) / 2));
+}
+
+function hashText(text: string): string {
+	// 32-bit FNV-1a hash to avoid cache key collisions on shared prefixes
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < text.length; i++) {
+		hash ^= text.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193);
+	}
+	return (hash >>> 0).toString(16).padStart(8, '0');
+}
 
 function cosineSimilarity(a: number[], b: number[]): number {
 	let dot = 0;
@@ -57,10 +72,6 @@ function cosineSimilarity(a: number[], b: number[]): number {
 	}
 
 	return dot / (Math.sqrt(normA) * Math.sqrt(normB));
-}
-
-function normalizeSimilarity(sim: number): number {
-	return Math.min(1, Math.max(0, (sim - MIN_SIM) / (MAX_SIM - MIN_SIM)));
 }
 
 export async function scoreText(
@@ -141,8 +152,7 @@ export async function scoreAudio(
 
 	// transcript, score
 	const transcript = await env.AI.run(audioTranscriptionModel, {
-		audio: base64,
-		initial_prompt: prompt
+		audio: base64
 	});
 
 	const text = transcript?.text?.trim();
@@ -157,13 +167,13 @@ export async function classifyImage(
 	env: Bindings,
 	image: Uint8Array
 ): Promise<{ label: string; confidence: number }[]> {
-	const response = await env.AI.run(imageClassificationModel, {
+	const response = (await env.AI.run(imageClassificationModel, {
 		image: [...new Uint8Array(image)]
-	});
+	})) as AiImageClassificationOutput;
 
 	return (
 		response
-			.filter((r) => r.score && r.label) // filter out invalid results
+			.filter((r) => r.score != null && r.label) // filter out invalid results
 			.filter((r) => r.score! > 0.01)
 			// take primary label (before first comma) to normalize multi-name imagenet labels e.g. "ant, emmet, pismire" -> "ant"
 			.map((r) => ({
@@ -177,25 +187,38 @@ export async function detectObjects(
 	env: Bindings,
 	image: Uint8Array
 ): Promise<{ label: string; confidence: number; box: [number, number, number, number] }[]> {
-	const response = await env.AI.run(objectDetectionModel as any, {
+	const response = (await env.AI.run(objectDetectionModel as any, {
 		image: [...new Uint8Array(image)]
-	});
+	})) as
+		| AiObjectDetectionOutput
+		| {
+				result?: {
+					label?: string;
+					score?: number;
+					box?: { xmin: number; ymin: number; xmax: number; ymax: number };
+				}[];
+		  };
 
-	const results: {
+	const legacyResults =
+		typeof response === 'object' && response && !Array.isArray(response)
+			? (response as { result?: unknown[] }).result
+			: undefined;
+
+	const normalizedResults: {
 		label?: string;
 		score?: number;
 		box?: { xmin: number; ymin: number; xmax: number; ymax: number };
-	}[] = response.result || [];
+	}[] = (Array.isArray(response) ? response : legacyResults || []).map((r) => r || {});
 
 	return (
-		results
-			.filter((r) => r.score && r.label && r.box) // filter out invalid results
+		normalizedResults
+			.filter((r) => r.score != null && r.label) // filter out invalid results
 			.filter((r) => r.score! > 0.01)
 			// take primary label (before first comma) to normalize multi-name coco labels
 			.map((r) => ({
 				label: r.label!.split(',')[0].trim().toLowerCase().replace(/\s+/g, '_'),
 				confidence: r.score!,
-				box: [r.box!.xmin, r.box!.ymin, r.box!.xmax, r.box!.ymax]
+				box: r.box ? [r.box.xmin, r.box.ymin, r.box.xmax, r.box.ymax] : [0, 0, 0, 0]
 			}))
 	);
 }
