@@ -576,28 +576,6 @@ app.post('/articles/quiz/create', async (c) => {
 	return c.json(processedQuiz, 201);
 });
 
-// Prompts
-
-app.post('/prompts/grade', async (c) => {
-	const body = await c.req.json<{
-		id: string;
-		prompt: string;
-	}>();
-
-	if (!body.prompt) {
-		return c.text('Invalid request body', 400);
-	}
-
-	const key = `cache:prompt_score:${body.id}`;
-	const score = await tryCache(
-		key,
-		c.env.CACHE,
-		async () => await scoreText(c.env, body.prompt || '', prompts.promptCriteria),
-		60 * 60 * 24 * 2 // scores should not change, cache for prompt lifetime
-	);
-	return c.json(score, 200);
-});
-
 // Users
 
 app.post('/users/recommend_activities', async (c) => {
