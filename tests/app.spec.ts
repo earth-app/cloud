@@ -1664,7 +1664,7 @@ describe('GET /users/quests/:id', () => {
 		const response = await callApp('/users/quests/activity_quest_hiking_123', { method: 'GET' });
 		expect(response.status).toBe(200);
 
-		const quest = await response.json();
+		const quest = await response.json<any>();
 		expect(quest.id).toBe('activity_quest_hiking_123');
 		expect(quest.title).toBe('Explore Hiking');
 		expect(quest.icon).toBe('material-symbols:hiking');
@@ -1697,7 +1697,7 @@ describe('GET /users/quests/:id', () => {
 		const response = await callApp('/users/quests/activity_quest_reading_101', { method: 'GET' });
 		expect(response.status).toBe(200);
 
-		const quest = await response.json();
+		const quest = await response.json<any>();
 		const flatSteps = quest.steps.flat();
 		const stepTypes = flatSteps.map((s: any) => s.type);
 
@@ -1736,7 +1736,7 @@ describe('GET /users/quests/:id', () => {
 		const response = await callApp('/users/quests/activity_quest_sports_456', { method: 'GET' });
 		expect(response.status).toBe(200);
 
-		const quest = await response.json();
+		const quest = await response.json<any>();
 		const flatSteps = quest.steps.flat();
 		const stepTypes = flatSteps.map((s: any) => s.type);
 
