@@ -17,7 +17,9 @@ export default async function scheduled(
 	env: Bindings,
 	ctx: ExecutionContext
 ) {
-	if (controller.cron === '*/12 * * * *') {
+	const cron = (controller.cron || '').trim();
+
+	if (cron === '*/12 * * * *') {
 		console.log('Running scheduled task: Create new prompt');
 		console.log('Started at', new Date().toISOString());
 
@@ -29,7 +31,7 @@ export default async function scheduled(
 		return;
 	}
 
-	if (controller.cron === '0 * * * *') {
+	if (cron === '0 * * * *') {
 		console.log('Running scheduled task: Create new articles (top 3 + bottom 2 ranked)');
 		console.log('Started at', new Date().toISOString());
 
@@ -59,7 +61,7 @@ export default async function scheduled(
 		return;
 	}
 
-	if (controller.cron === '0 */4 * * *') {
+	if (cron === '0 */4 * * *') {
 		console.log('Running scheduled task: Cache leaderboards');
 		console.log('Started at', new Date().toISOString());
 
@@ -75,7 +77,7 @@ export default async function scheduled(
 		return;
 	}
 
-	if (controller.cron === '0 0 */2 * *') {
+	if (cron === '0 0 */2 * *') {
 		console.log('Running scheduled task: Event creation from calendar');
 		console.log('Started at', new Date().toISOString());
 
