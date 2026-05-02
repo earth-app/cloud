@@ -1625,6 +1625,7 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			timestamp?: number;
 			scoreKey?: string;
 			score?: number;
+			text?: string;
 		};
 	};
 
@@ -1690,6 +1691,10 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			data: parsed.data
 		} as QuestStepResponse;
 	} else {
+		if (body.response.type === 'describe_text' && typeof body.response.text !== 'string') {
+			return c.text('Text is required for describe_text steps', 400);
+		}
+
 		response = {
 			type: body.response.type,
 			index: body.response.index,
@@ -1697,7 +1702,8 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 			...(body.response.eventId !== undefined && { eventId: body.response.eventId }),
 			...(body.response.timestamp !== undefined && { timestamp: body.response.timestamp }),
 			...(body.response.scoreKey !== undefined && { scoreKey: body.response.scoreKey }),
-			...(body.response.score !== undefined && { score: body.response.score })
+			...(body.response.score !== undefined && { score: body.response.score }),
+			...(body.response.text !== undefined && { text: body.response.text })
 		} as QuestStepResponse;
 	}
 

@@ -4,7 +4,13 @@ import { createMockBindings } from '../../helpers/mock-bindings';
 import { MockKVNamespace } from '../../helpers/mock-kv';
 import ExifReader from 'exifreader';
 import { parseBuffer } from 'music-metadata';
-import { classifyImage, detectObjects, scoreAudio, scoreImage } from '../../../src/content/ferry';
+import {
+	classifyImage,
+	detectObjects,
+	scoreAudio,
+	scoreImage,
+	scoreText
+} from '../../../src/content/ferry';
 
 vi.mock('exifreader', () => ({
 	default: {
@@ -20,7 +26,8 @@ vi.mock('../../../src/content/ferry', () => ({
 	classifyImage: vi.fn(),
 	detectObjects: vi.fn(),
 	scoreAudio: vi.fn(),
-	scoreImage: vi.fn()
+	scoreImage: vi.fn(),
+	scoreText: vi.fn()
 }));
 
 const mockExifLoad = vi.mocked(ExifReader.load);
@@ -29,6 +36,7 @@ const mockClassifyImage = vi.mocked(classifyImage);
 const mockDetectObjects = vi.mocked(detectObjects);
 const mockScoreAudio = vi.mocked(scoreAudio);
 const mockScoreImage = vi.mocked(scoreImage);
+const mockScoreText = vi.mocked(scoreText);
 
 function exifDate(date: Date): string {
 	const pad = (n: number) => String(n).padStart(2, '0');
@@ -76,6 +84,7 @@ beforeEach(() => {
 	] as any);
 	mockScoreAudio.mockResolvedValue(['transcript', { score: 0.9, breakdown: [] }] as any);
 	mockScoreImage.mockResolvedValue(['generated caption', { score: 0.9, breakdown: [] }] as any);
+	mockScoreText.mockResolvedValue({ score: 0.9, breakdown: [] } as any);
 });
 
 describe('validateStep', () => {
@@ -983,6 +992,7 @@ describe('validateStep', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.score).toBe(0.7);
+			expect(result.prompt).toBe('Generated caption');
 			expect(mockScoreImage).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.anything(),
@@ -1153,6 +1163,7 @@ describe('validateStep', () => {
 
 			expect(result.success).toBe(true);
 			expect(result.score).toBe(0.7);
+			expect(result.prompt).toBe('Generated caption');
 			expect(mockScoreImage).toHaveBeenCalledWith(
 				expect.anything(),
 				expect.anything(),
@@ -1338,6 +1349,111 @@ describe('validateStep', () => {
 
 			// Should succeed because cell_phone and tv are aliased/supported labels in COCO
 			expect(result.success).toBe(true);
+		});
+	});
+
+	describe('describe_text', () => {
+		const criteria = [{ id: 'clarity', weight: 1, ideal: 'clear and specific response' }];
+
+		it('passes when scoreText score meets threshold and returns trimmed prompt text', async () => {
+			const step = {
+				type: 'describe_text',
+				description: 'Describe your favorite outdoor activity',
+				parameters: [criteria, 0.7]
+			} as any;
+			const response = {
+				type: 'describe_text',
+				index: 0,
+				text: '  I enjoy hiking in forest preserves because it helps me focus.  '
+			} as any;
+
+			mockScoreText.mockResolvedValueOnce({ score: 0.82, breakdown: [] } as any);
+
+			const result = await validateStep(step, response, createMockBindings(), {
+				make: 'unknown',
+				model: 'unknown',
+				os: 'unknown'
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.82);
+			expect(result.prompt).toBe('I enjoy hiking in forest preserves because it helps me focus.');
+			expect(mockScoreText).toHaveBeenCalledWith(
+				expect.anything(),
+				'I enjoy hiking in forest preserves because it helps me focus.',
+				criteria
+			);
+		});
+
+		it('supports percentage thresholds for describe_text', async () => {
+			const step = {
+				type: 'describe_text',
+				description: 'Describe your favorite outdoor activity',
+				parameters: [criteria, 80]
+			} as any;
+			const response = {
+				type: 'describe_text',
+				index: 0,
+				text: 'I like to volunteer at the local park cleanup every weekend.'
+			} as any;
+
+			mockScoreText.mockResolvedValueOnce({ score: 0.81, breakdown: [] } as any);
+
+			const result = await validateStep(step, response, createMockBindings(), {
+				make: 'unknown',
+				model: 'unknown',
+				os: 'unknown'
+			});
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.81);
+		});
+
+		it('rejects describe_text when text is empty', async () => {
+			const step = {
+				type: 'describe_text',
+				description: 'Describe your favorite outdoor activity',
+				parameters: [criteria, 0.7]
+			} as any;
+			const response = {
+				type: 'describe_text',
+				index: 0,
+				text: '   '
+			} as any;
+
+			const result = await validateStep(step, response, createMockBindings(), {
+				make: 'unknown',
+				model: 'unknown',
+				os: 'unknown'
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('cannot be empty');
+			expect(mockScoreText).not.toHaveBeenCalled();
+		});
+
+		it('rejects describe_text when score is below threshold', async () => {
+			const step = {
+				type: 'describe_text',
+				description: 'Describe your favorite outdoor activity',
+				parameters: [criteria, 0.85]
+			} as any;
+			const response = {
+				type: 'describe_text',
+				index: 0,
+				text: 'I like biking around my neighborhood.'
+			} as any;
+
+			mockScoreText.mockResolvedValueOnce({ score: 0.6, breakdown: [] } as any);
+
+			const result = await validateStep(step, response, createMockBindings(), {
+				make: 'unknown',
+				model: 'unknown',
+				os: 'unknown'
+			});
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('required score threshold of 0.85');
 		});
 	});
 });

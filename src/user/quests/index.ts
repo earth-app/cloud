@@ -1,5 +1,6 @@
 import { ScoringCriterion } from '../../content/ferry';
 import { ActivityType, EventActivity, Rarity } from '../../util/types';
+import { designActivityQuest, getActivity } from './activity';
 import { CustomQuest, getCustomQuest, getCustomQuests } from './custom';
 
 export type Quest = {
@@ -68,6 +69,10 @@ export type QuestStep = {
 	| {
 			type: 'order_items';
 			parameters: [string[]]; // list of items to order (in correct order)
+	  }
+	| {
+			type: 'describe_text';
+			parameters: [ScoringCriterion[], number, number?]; // rubric criteria, score threshold, min length
 	  }
 );
 
@@ -1153,6 +1158,12 @@ export async function getQuest(id: string, kv: KVNamespace): Promise<CustomQuest
 	const quest = quests.find((q) => q.id === id);
 	if (quest) {
 		return quest;
+	}
+
+	if (id.startsWith('activity_quest_')) {
+		const activityId = id.replace('activity_quest_', '');
+		const activity = await getActivity(activityId);
+		return designActivityQuest(activity);
 	}
 
 	return await getCustomQuest(id, kv);

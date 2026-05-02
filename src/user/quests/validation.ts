@@ -1,5 +1,11 @@
 import { QuestStep } from '.';
-import { classifyImage, detectObjects, scoreAudio, scoreImage } from '../../content/ferry';
+import {
+	classifyImage,
+	detectObjects,
+	scoreAudio,
+	scoreImage,
+	scoreText
+} from '../../content/ferry';
 import ExifReader from 'exifreader';
 import { parseBuffer } from 'music-metadata';
 import { isInsideLocation } from '../../util/util';
@@ -269,6 +275,9 @@ export async function validateStep(
 		}
 		case 'article_quiz': {
 			return await validateArticleQuiz(step, response, bindings);
+		}
+		case 'describe_text': {
+			return await validateDescribeText(step, response, bindings);
 		}
 	}
 
@@ -928,17 +937,15 @@ async function validateStepPhoto(
 			};
 		}
 
-		// Use a descriptive captioning instruction for LLaVA rather than the raw task prompt,
-		// which is not a valid VQA question and causes unreliable/inflated model outputs.
 		const captionPrompt = `Describe this photo in detail: what is the main subject, what is the setting, and what context is visible? The photo is expected to show: ${prompt}.`;
-		const [generatedCaption, score] = await scoreImage(bindings, image, captionPrompt, criteria);
+		const [caption, score] = await scoreImage(bindings, image, captionPrompt, criteria);
 		if (score.score < normalizedThreshold.value) {
 			return {
 				success: false,
 				message: `Photo caption does not meet the required score threshold of ${normalizedThreshold.value}. Got ${score.score}.`
 			};
 		}
-		return { success: true, score: score.score, prompt: generatedCaption };
+		return { success: true, score: score.score, prompt: caption };
 	}
 
 	if (step.type === 'take_photo_validation') {
@@ -953,7 +960,7 @@ async function validateStepPhoto(
 		}
 
 		const captionPrompt = `Describe this photo in detail: what is the main subject, what is the setting, and what context is visible? The photo is expected to show: ${prompt}. Describe whether the photo clearly shows the expected subject with good quality and relevance.`;
-		const [_, score] = await scoreImage(bindings, image, captionPrompt, [
+		const [caption, score] = await scoreImage(bindings, image, captionPrompt, [
 			{
 				id: 'validation',
 				weight: 1,
@@ -968,7 +975,7 @@ async function validateStepPhoto(
 			};
 		}
 
-		aiScore = score.score;
+		return { success: true, score: score.score, prompt: caption };
 	}
 
 	if (step.type === 'take_photo_list') {
@@ -995,7 +1002,7 @@ async function validateStepPhoto(
 
 		const itemsList = items.join(', ');
 		const captionPrompt = `List the main objects, subjects, and context visible in this photo in detail. The photo is expected to show the following items: ${itemsList}. Describe whether these items are clearly visible.`;
-		const [_, score] = await scoreImage(bindings, image, captionPrompt, [
+		const [caption, score] = await scoreImage(bindings, image, captionPrompt, [
 			{
 				id: 'list',
 				weight: 1,
@@ -1010,7 +1017,7 @@ async function validateStepPhoto(
 			};
 		}
 
-		aiScore = score.score;
+		return { success: true, score: score.score, prompt: caption };
 	}
 
 	return { success: true, score: aiScore };
@@ -1081,4 +1088,49 @@ async function validateDrawing(
 	}
 
 	return { success: true, score: score.score };
+}
+
+async function validateDescribeText(
+	step: QuestStep,
+	response: QuestStepResponse & { type: 'describe_text' },
+	bindings: Bindings
+): Promise<{ success: boolean; message?: string; score?: number; prompt?: string }> {
+	if (step.type !== 'describe_text') {
+		return { success: false, message: `Expected describe_text step, got ${step.type}` };
+	}
+
+	if (typeof response.text !== 'string') {
+		return { success: false, message: 'Text response must be a string.' };
+	}
+
+	const normalizedText = response.text.trim();
+	if (!normalizedText) {
+		return { success: false, message: 'Text response cannot be empty.' };
+	}
+
+	const [criteria, threshold, minLength] = step.parameters;
+	if (minLength && normalizedText.length < minLength) {
+		return {
+			success: false,
+			message: `Response text is less than ${minLength} characters`
+		};
+	}
+
+	const normalizedThreshold = normalizeThreshold(threshold, 'Text description score');
+	if (!normalizedThreshold.ok) {
+		return {
+			success: false,
+			message: normalizedThreshold.message
+		};
+	}
+
+	const score = await scoreText(bindings, normalizedText, criteria);
+	if (score.score < normalizedThreshold.value) {
+		return {
+			success: false,
+			message: `Text description does not meet the required score threshold of ${normalizedThreshold.value}. Got ${score.score.toFixed(2)}.`
+		};
+	}
+
+	return { success: true, score: score.score, prompt: normalizedText };
 }

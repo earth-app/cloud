@@ -1645,6 +1645,120 @@ describe('GET /users/quests/:id', () => {
 		const longId = await callApp('/users/quests/' + 'a'.repeat(51), { method: 'GET' });
 		expect(longId.status).toBe(400);
 	});
+
+	it('returns activity quest with deterministic structure for valid activity_quest IDs', async () => {
+		// Mock the fetch to return an activity
+		const mockActivity = {
+			id: 'hiking_123',
+			name: 'Hiking',
+			description: 'An outdoor recreational activity',
+			aliases: ['trekking', 'trail_walking'],
+			types: ['NATURE', 'SPORT', 'HEALTH'],
+			fields: { icon: 'material-symbols:hiking' }
+		};
+
+		vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify(mockActivity), { status: 200 })
+		);
+
+		const response = await callApp('/users/quests/activity_quest_hiking_123', { method: 'GET' });
+		expect(response.status).toBe(200);
+
+		const quest = await response.json();
+		expect(quest.id).toBe('activity_quest_hiking_123');
+		expect(quest.title).toBe('Explore Hiking');
+		expect(quest.icon).toBe('material-symbols:hiking');
+		expect(quest.steps).toBeDefined();
+		expect(Array.isArray(quest.steps)).toBe(true);
+
+		// Validate step structure
+		expect(quest.steps.length).toBeGreaterThan(0);
+		const firstStep = Array.isArray(quest.steps[0]) ? quest.steps[0][0] : quest.steps[0];
+		expect(firstStep).toHaveProperty('type');
+		expect(firstStep).toHaveProperty('description');
+		expect(firstStep).toHaveProperty('parameters');
+	});
+
+	it('validates activity quest step progression for activities with < 4 types', async () => {
+		// Mock activity with 2 types (< 4)
+		const mockActivity = {
+			id: 'reading_101',
+			name: 'Reading',
+			description: 'A quiet activity involving books.',
+			aliases: ['reading_books'],
+			types: ['LEARNING', 'RELAXATION'],
+			fields: {}
+		};
+
+		vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify(mockActivity), { status: 200 })
+		);
+
+		const response = await callApp('/users/quests/activity_quest_reading_101', { method: 'GET' });
+		expect(response.status).toBe(200);
+
+		const quest = await response.json();
+		const flatSteps = quest.steps.flat();
+		const stepTypes = flatSteps.map((s: any) => s.type);
+
+		// Should have photo validation, variable step 2, article quizzes for all types (step 3)
+		expect(stepTypes[0]).toBe('take_photo_validation');
+
+		// Article quizzes: step 3 has both types at 80%, final step re-quizzes last type at 100%
+		const articleQuizzes = flatSteps.filter((s: any) => s.type === 'article_quiz');
+		expect(articleQuizzes.length).toBeGreaterThanOrEqual(2); // At least 2 for the 2 types
+
+		// Verify match_terms and order_items are present for variety with < 4 types
+		expect(stepTypes).toContain('match_terms');
+		expect(stepTypes).toContain('order_items');
+
+		// Verify final step has 100% accuracy requirement
+		const finalArticleQuiz = articleQuizzes[articleQuizzes.length - 1];
+		expect(finalArticleQuiz.parameters[1]).toBe(1.0); // 100% accuracy for final step
+	});
+
+	it('validates activity quest step progression for activities with >= 4 types', async () => {
+		// Mock activity with 5 types (>= 4)
+		const mockActivity = {
+			id: 'sports_456',
+			name: 'Sports',
+			description:
+				'Physical activities involving skill and exertion. Sports can be competitive or recreational. People engage in sports for fitness, entertainment, social connection, and personal achievement. There are many different types of sports ranging from team-based activities to individual pursuits.',
+			aliases: ['athletics'],
+			types: ['SPORT', 'HEALTH', 'SOCIAL', 'RECREATION', 'ENTERTAINMENT'],
+			fields: {}
+		};
+
+		vi.spyOn(global, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify(mockActivity), { status: 200 })
+		);
+
+		const response = await callApp('/users/quests/activity_quest_sports_456', { method: 'GET' });
+		expect(response.status).toBe(200);
+
+		const quest = await response.json();
+		const flatSteps = quest.steps.flat();
+		const stepTypes = flatSteps.map((s: any) => s.type);
+
+		// Should have at least match_terms and order_items for variety
+		expect(stepTypes).toContain('match_terms');
+		expect(stepTypes).toContain('order_items');
+
+		// For 5 types: step 3 covers last 3, step 5 covers first 2 (uncovered)
+		// Final step re-quizzes last type at 100% accuracy for mastery
+		const articleQuizzes = flatSteps.filter((s: any) => s.type === 'article_quiz');
+		expect(articleQuizzes.length).toBe(6); // 5 types + 1 duplicate (last type at 100%)
+
+		// Verify all types are covered at least once
+		const allArticleTypes = articleQuizzes.map((s: any) => s.parameters?.[0]);
+		const uniqueTypes = new Set(allArticleTypes);
+		expect(uniqueTypes.size).toBe(5); // All 5 types covered
+
+		// Verify final step is at 100% accuracy
+		const finalArticleQuiz = articleQuizzes[articleQuizzes.length - 1];
+		expect(finalArticleQuiz.parameters[1]).toBe(1.0);
+		expect(finalArticleQuiz.parameters[0]).toBe('ENTERTAINMENT'); // Last type (index 4)
+	});
 });
 
 describe('POST /users/quests/progress/:user_id', () => {

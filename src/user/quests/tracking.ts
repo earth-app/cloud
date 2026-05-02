@@ -40,6 +40,7 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 			score: number;
 	  }
 	| { type: 'match_terms' | 'order_items' } // validated externally via separate endpoints
+	| { type: 'describe_text'; text: string }
 );
 
 // stored in kv - binary data is replaced with an r2 bucket key
@@ -59,13 +60,14 @@ export type QuestStepProgressEntry = {
 				| 'take_photo_validation'
 				| 'take_photo_list';
 			score?: number; // validation score (e.g. confidence) for this step submission, if applicable
-			prompt?: string; // generated prompt from take_photo_caption
+			prompt?: string; // generated prompt from take_photo_caption, take_photo_validation, or take_photo_list
 			r2Key: string;
 	  }
 	| { type: 'attend_event'; eventId: string; timestamp: number }
 	| { type: 'transcribe_audio'; r2Key: string }
 	| { type: 'article_quiz'; scoreKey: string; score: number }
 	| { type: 'match_terms' | 'order_items' }
+	| { type: 'describe_text'; text: string; score?: number; prompt?: string }
 );
 
 // r2 path for a step's binary payload
@@ -206,7 +208,9 @@ async function toProgressEntry(
 		response.type === 'take_photo_classification' ||
 		response.type === 'take_photo_caption' ||
 		response.type === 'draw_picture' ||
-		response.type === 'take_photo_objects'
+		response.type === 'take_photo_objects' ||
+		response.type === 'take_photo_validation' ||
+		response.type === 'take_photo_list'
 	) {
 		const r2Key = stepR2Key(userId, questId, response.index, altIdx);
 		await uploadStepData(response.data, r2Key, bindings);
@@ -234,7 +238,19 @@ async function toProgressEntry(
 		};
 	}
 
-	// attend_event, article_quiz, match_terms, order_items have no binary payload
+	if (response.type === 'describe_text') {
+		return {
+			type: 'describe_text',
+			index: response.index,
+			altIndex: response.altIndex,
+			submittedAt,
+			text: response.text,
+			score,
+			prompt
+		};
+	}
+
+	// attend_event, article_quiz, match_terms, and order_items have no binary payload
 	return { ...(response as unknown as QuestStepProgressEntry), submittedAt };
 }
 
