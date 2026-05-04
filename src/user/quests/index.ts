@@ -1252,6 +1252,8 @@ export async function getQuest(id: string, kv: KVNamespace): Promise<CustomQuest
 	if (id.startsWith('activity_quest_')) {
 		const activityId = id.replace('activity_quest_', '');
 		const activity = await getActivity(activityId);
+		if (!activity) return null;
+
 		return designActivityQuest(activity);
 	}
 
