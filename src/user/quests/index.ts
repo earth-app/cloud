@@ -1142,6 +1142,95 @@ export const quests = [
 		],
 		reward: 2500,
 		permissions: ['camera']
+	},
+	{
+		id: 'reader',
+		title: 'Reader',
+		description: 'Expand your knowledge by reading articles on a variety of topics!',
+		icon: 'mdi:book-open',
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about studying and complete the quiz with at least 80% accuracy.',
+				parameters: ['STUDY', 0.8]
+			},
+			{
+				type: 'describe_text',
+				description: 'Describe your favorite book in 100 words or less.',
+				parameters: ['Describe your favorite book in 100 words or less.', 0.7],
+				delay: 1200
+			},
+			[
+				{
+					type: 'order_items',
+					description: 'Order these classic novels from earliest to most recent publication date.',
+					parameters: [
+						[
+							'Pride and Prejudice',
+							'Moby Dick',
+							'The Great Gatsby',
+							'1984',
+							'To Kill a Mockingbird',
+							'The Catcher in the Rye',
+							'Lord of the Flies',
+							'The Lord of the Rings',
+							'The Hobbit',
+							"Harry Potter and the Sorcerer's Stone"
+						]
+					],
+					reward: 100
+				},
+				{
+					type: 'draw_picture',
+					description: 'Draw a picture of a book cover.',
+					parameters: ['A picture of a book cover.', 0.6],
+					reward: 50
+				},
+				{
+					type: 'attend_event',
+					description: 'Attend a project-related event with at least 20 attendees.',
+					parameters: [{ type: 'activity_type', value: 'PROJECT' }, 20],
+					reward: 100
+				}
+			],
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of a book cover.',
+				parameters: ['A photo of a book cover.', 0.6],
+				delay: 1500
+			},
+			[
+				{
+					type: 'match_terms',
+					description: 'Match the author to their most famous work.',
+					parameters: [
+						'Match the author to their most famous work.',
+						[
+							['Jane Austen', 'Pride and Prejudice'],
+							['Herman Melville', 'Moby Dick'],
+							['George Orwell', '1984'],
+							['J.D. Salinger', 'The Catcher in the Rye'],
+							['Harper Lee', 'To Kill a Mockingbird']
+						]
+					],
+					reward: 25
+				},
+				{
+					type: 'article_quiz',
+					description: 'Answer questions about learning with 100% accuracy.',
+					parameters: ['LEARNING', 1.0],
+					reward: 150
+				}
+			],
+			{
+				type: 'transcribe_audio',
+				description: 'Describe your favorite author for 30 seconds.',
+				parameters: ['Describe your favorite author.', 0.7],
+				delay: 1800
+			}
+		]
 	}
 ] as Quest[];
 
