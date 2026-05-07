@@ -579,6 +579,39 @@ app.post('/articles/quiz/create', async (c) => {
 	return c.json(processedQuiz, 201);
 });
 
+// serves both create + update
+app.post('/articles/quiz/create_manual', async (c) => {
+	const body = await c.req.json<{
+		articleId: string;
+		quiz: ArticleQuizQuestion[];
+	}>();
+
+	if (!body.articleId || !body.quiz) {
+		return c.text('Article ID and quiz are required', 400);
+	}
+
+	if (!Array.isArray(body.quiz) || body.quiz.length === 0) {
+		return c.text('Quiz must be a non-empty array of questions', 400);
+	}
+
+	const key = `article:quiz:${normalizeId(body.articleId)}`;
+	await c.env.KV.put(key, JSON.stringify(body.quiz)); // no expiration, quiz is persistent
+
+	return c.json({ message: 'Quiz created or updated successfully' }, 201);
+});
+
+app.delete('/articles/quiz/delete', async (c) => {
+	const { articleId } = await c.req.json<{ articleId: string }>();
+	if (!articleId) {
+		return c.text('Article ID is required', 400);
+	}
+
+	const key = `article:quiz:${normalizeId(articleId)}`;
+	await c.env.KV.delete(key);
+
+	return c.json({ message: 'Quiz deleted successfully' }, 200);
+});
+
 // Users
 
 app.delete('/users/:id', async (c) => {
