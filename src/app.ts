@@ -21,14 +21,15 @@ import {
 import { getSynonyms } from './util/lang';
 import * as prompts from './util/ai';
 
-import { ActivityType, Article, Bindings, Event } from './util/types';
+import { ActivityType, Article, Bindings, Event, ExecutionCtxLike } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import {
 	toDataURL,
 	normalizeId,
 	migrateAllLegacyKeys,
 	fromDataURL,
-	detectAudioFormat
+	detectAudioFormat,
+	batchProcess
 } from './util/util';
 import {
 	getEventImageSubmissionsWithData,
@@ -38,7 +39,7 @@ import {
 	submitEventImage
 } from './user/submissions';
 import { ImageSizes, getProfileVariation, newProfilePhoto } from './user/profile';
-import { tryCache } from './util/cache';
+import { clearCachePrefix, tryCache } from './util/cache';
 import {
 	addActivityToJourney,
 	getActivityJourney,
@@ -92,10 +93,12 @@ import {
 	CustomQuestCreateInput,
 	CustomQuestUpdateInput,
 	getCustomQuest,
+	getCustomQuestsByOwner,
 	deleteCustomQuest,
 	createCustomQuest,
 	updateCustomQuest
 } from './user/quests/custom';
+import { deleteUserDataVariant, deleteR2Prefix } from './util/deletion';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -577,6 +580,51 @@ app.post('/articles/quiz/create', async (c) => {
 });
 
 // Users
+
+app.delete('/users/:id', async (c) => {
+	const id = c.req.param('id')?.trim();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	const id0 = normalizeId(id);
+	const intId = BigInt(id0);
+
+	if (intId <= 0n) {
+		return c.text('Invalid User ID', 400);
+	}
+
+	if (intId === 1n) {
+		return c.text('Cannot delete admin user', 400);
+	}
+
+	const variants = Array.from(new Set([id0, id]));
+
+	c.executionCtx.waitUntil(
+		(async () => {
+			try {
+				await Promise.all(
+					variants.map((variant) => deleteUserDataVariant(variant, intId, c.env, c.executionCtx))
+				);
+
+				// remove any profile/quest blobs written under users/<id>/ in R2
+				await Promise.all(
+					variants.map(async (variant) => {
+						await deleteR2Prefix(c.env.R2, `users/${variant}/`);
+					})
+				);
+			} catch (err) {
+				console.error(`Failed deleting user data for '${id0}':`, err);
+			}
+		})()
+	);
+
+	return c.json({ message: 'User data deletion initiated' }, 200);
+});
 
 app.post('/users/recommend_activities', async (c) => {
 	const body = await c.req.json<{
