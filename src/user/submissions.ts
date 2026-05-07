@@ -188,6 +188,7 @@ export async function deleteEventImageSubmission(
 		Promise.all([
 			bindings.R2.delete(imagePath),
 			bindings.KV.delete(`event:submission:${submissionId}`),
+			bindings.KV.delete(`event:image:score:${eventId}:${submissionId}`),
 			removeSubmissionFromIndex(`event:${eventId}:submission_ids`, submissionId, bindings.KV),
 			removeSubmissionFromIndex(`user:${userId}:submission_ids`, submissionId, bindings.KV),
 			removeSubmissionFromIndex(
@@ -249,22 +250,76 @@ export async function deleteEventImageSubmissions(
 		return;
 	}
 
-	// delete all submissions in parallel with batching
-	const promises = submissionIds.map(async (submissionId) => {
-		const imagePath = `events/${eventId}/submissions/${userId}_${submissionId}.webp`;
+	// Resolve submission metadata first so user-only and event-only deletions can remove correct keys.
+	const resolved = await Promise.all(
+		submissionIds.map(async (submissionId) => {
+			const mapped = await bindings.KV.getWithMetadata<{ eventId?: string; userId?: string }>(
+				`event:submission:${submissionId}`
+			);
 
-		await Promise.all([
-			bindings.R2.delete(imagePath),
-			bindings.KV.delete(`event:submission:${submissionId}`),
-			removeSubmissionFromIndex(`event:${eventId}:submission_ids`, submissionId, bindings.KV),
-			removeSubmissionFromIndex(`user:${userId}:submission_ids`, submissionId, bindings.KV),
-			removeSubmissionFromIndex(
-				`event:${eventId}:user:${userId}:submission_ids`,
+			const mappedEventId = mapped.metadata?.eventId;
+			const mappedUserId = mapped.metadata?.userId;
+
+			const eventId0 = mappedEventId || (eventId ? eventId.toString() : null);
+			const userId0 = mappedUserId || (userId ? userId.toString() : null);
+
+			const imagePath =
+				typeof mapped.value === 'string' && mapped.value.length > 0
+					? mapped.value
+					: eventId0 && userId0
+						? `events/${eventId0}/submissions/${userId0}_${submissionId}.webp`
+						: null;
+
+			return {
 				submissionId,
-				bindings.KV
-			)
-		]);
-	});
+				eventId: eventId0,
+				userId: userId0,
+				imagePath
+			};
+		})
+	);
+
+	// delete all submissions in parallel with batching
+	const promises = resolved.map(
+		async ({ submissionId, eventId: eventId0, userId: userId0, imagePath }) => {
+			const ops: Promise<unknown>[] = [bindings.KV.delete(`event:submission:${submissionId}`)];
+
+			if (imagePath) {
+				ops.push(bindings.R2.delete(imagePath));
+			}
+
+			if (eventId0) {
+				ops.push(
+					removeSubmissionFromIndex(`event:${eventId0}:submission_ids`, submissionId, bindings.KV)
+				);
+				ops.push(bindings.KV.delete(`event:image:score:${eventId0}:${submissionId}`));
+			}
+
+			if (userId0) {
+				ops.push(
+					removeSubmissionFromIndex(`user:${userId0}:submission_ids`, submissionId, bindings.KV)
+				);
+			}
+
+			if (eventId0 && userId0) {
+				ops.push(
+					removeSubmissionFromIndex(
+						`event:${eventId0}:user:${userId0}:submission_ids`,
+						submissionId,
+						bindings.KV
+					)
+				);
+
+				ops.push(bindings.CACHE.delete(`event:${eventId0}:submissions`));
+				ops.push(bindings.CACHE.delete(`user:${userId0}:submissions`));
+				ops.push(bindings.CACHE.delete(`event:${eventId0}:submissions:full`));
+				ops.push(bindings.CACHE.delete(`user:${userId0}:submissions:full`));
+				ops.push(bindings.CACHE.delete(`event:${eventId0}:user:${userId0}:submissions:full`));
+			}
+
+			await Promise.all(ops);
+		}
+	);
 
 	ctx.waitUntil(
 		(async () => {

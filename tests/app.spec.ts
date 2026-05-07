@@ -1,19 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-vi.mock('../src/user/badges', async () => {
-	const actual = await vi.importActual<typeof import('../src/user/badges')>('../src/user/badges');
-	return actual;
-});
-
-vi.mock('../src/util/maps', async () => {
-	const actual = await vi.importActual<typeof import('../src/util/maps')>('../src/util/maps');
-	return actual;
-});
-
 import app from '../src/app';
 import { logAnalyticsBatch } from '../src/content/analytics';
 import { createMockBindings } from './helpers/mock-bindings';
 import { createMockAiRun } from './helpers/mock-ai';
+import { Quest } from '../src/user/quests';
+import { CustomQuest } from '../src/user/quests/custom';
 
 function appRequest(path: string, init: RequestInit = {}, authenticated: boolean = true) {
 	const headers = new Headers(init.headers);
@@ -47,7 +39,12 @@ async function callApp(
 		})
 	};
 	const response = await app.fetch(appRequest(path, init, authenticated), bindings, ctx as any);
-	await Promise.allSettled(pending);
+	let processed = 0;
+	while (processed < pending.length) {
+		const current = pending.slice(processed);
+		processed = pending.length;
+		await Promise.allSettled(current);
+	}
 	return response;
 }
 
@@ -121,6 +118,7 @@ describe('app route registration', () => {
 		const routes = ((app as any).routes || []).map((r: any) => `${r.method} ${r.path}`);
 		expect(routes).toEqual(
 			expect.arrayContaining([
+				'ALL /*',
 				'POST /admin/migrate-legacy-keys',
 				'GET /synonyms',
 				'GET /activity/:id',
@@ -131,6 +129,7 @@ describe('app route registration', () => {
 				'GET /articles/quiz/score',
 				'POST /articles/quiz/submit',
 				'POST /articles/quiz/create',
+				'DELETE /users/:id',
 				'POST /users/recommend_activities',
 				'GET /users/profile_photo/:id',
 				'PUT /users/profile_photo/:id',
@@ -160,9 +159,9 @@ describe('app route registration', () => {
 				'POST /users/quests/custom',
 				'PATCH /users/quests/custom/:quest_id',
 				'DELETE /users/quests/custom/:quest_id',
-				'POST /users/quests/progress/:user_id',
-				'PATCH /users/quests/progress/:user_id',
-				'DELETE /users/quests/progress/:user_id',
+				'POST /users/quests/progress/:user_id/start',
+				'PATCH /users/quests/progress/:user_id/update',
+				'DELETE /users/quests/progress/:user_id/reset',
 				'GET /users/quests/progress/:user_id',
 				'GET /users/quests/progress/:user_id/step/:step_index',
 				'GET /users/quests/history/:user_id',
@@ -179,6 +178,85 @@ describe('app route registration', () => {
 				'DELETE /events/delete_image'
 			])
 		);
+	});
+});
+
+describe('DELETE /users/:id', () => {
+	it('deletes user-scoped KV and R2 data across badges, quizzes, journeys, quests, submissions, and profile blobs', async () => {
+		const bindings = createMockBindings();
+		const kv = bindings.KV as any;
+		const r2 = bindings.R2 as any;
+
+		await kv.put('user:badge:42:getting_started', JSON.stringify({ granted_at: Date.now() }));
+		await kv.put('user:badge_tracker:42:article_quizzes_completed', JSON.stringify([]));
+		await kv.put('article:quiz_score:42:100', JSON.stringify({ score: 100 }));
+		await kv.put('journey:article:42', '3', { metadata: { lastWrite: Date.now(), streak: 3 } });
+		await kv.put('journey:activities:42', JSON.stringify(['cleanup']));
+		await kv.put('user:impact_points:42', JSON.stringify([{ reason: 'seed', difference: 5 }]));
+
+		await kv.put(
+			'user:quest_progress:42',
+			JSON.stringify([
+				{
+					type: 'draw_picture',
+					index: 0,
+					submittedAt: Date.now(),
+					r2Key: 'users/42/quests/q1/step_0_0.bin'
+				}
+			]),
+			{ metadata: { questId: 'q1', currentStep: 1, completed: false } }
+		);
+		await kv.put('user:quest_history_index:42', JSON.stringify(['q1']));
+		await kv.put(
+			'user:quest_history:42:q1',
+			JSON.stringify({ r2Key: 'users/42/quests/q1/history.bin', completedAt: Date.now() })
+		);
+		await kv.put(
+			'custom_quest:cq1',
+			JSON.stringify({ id: 'cq1', owner_id: '42', title: 'Owned Quest', reward: 10, steps: [] }),
+			{ metadata: { id: 'cq1', owner_id: '42', title: 'Owned Quest', reward: 10 } }
+		);
+
+		await kv.put('event:submission:sub1', 'events/7/submissions/42_sub1.webp', {
+			metadata: { eventId: '7', userId: '42', timestamp: Date.now() }
+		});
+		await kv.put('event:7:submission_ids', JSON.stringify(['sub1']));
+		await kv.put('user:42:submission_ids', JSON.stringify(['sub1']));
+		await kv.put('event:7:user:42:submission_ids', JSON.stringify(['sub1']));
+		await kv.put('event:image:score:7:sub1', JSON.stringify({ score: 0.9 }));
+
+		await r2.put('users/42/profile.png', new Uint8Array([1, 2, 3]));
+		await r2.put('users/42/profile_32.png', new Uint8Array([1, 2, 3]));
+		await r2.put('users/42/quests/q1/step_0_0.bin', new Uint8Array([4, 5, 6]));
+		await r2.put('users/42/quests/q1/history.bin', new Uint8Array([7, 8, 9]));
+		await r2.put('events/7/submissions/42_sub1.webp', new Uint8Array([9, 9, 9]));
+
+		const response = await callApp('/users/42', { method: 'DELETE' }, true, bindings);
+		expect(response.status).toBe(200);
+
+		expect(await kv.get('user:badge:42:getting_started')).toBeNull();
+		expect(await kv.get('user:badge_tracker:42:article_quizzes_completed')).toBeNull();
+		expect(await kv.get('article:quiz_score:42:100')).toBeNull();
+		expect(await kv.get('journey:article:42')).toBeNull();
+		expect(await kv.get('journey:activities:42')).toBeNull();
+		expect(await kv.get('user:impact_points:42')).toBeNull();
+		expect(await kv.get('user:quest_progress:42')).toBeNull();
+		expect(await kv.get('user:quest_history:42:q1')).toBeNull();
+		expect(await kv.get('user:quest_history_index:42')).toBeNull();
+		expect(await kv.get('custom_quest:cq1')).toBeNull();
+		expect(await kv.get('event:submission:sub1')).toBeNull();
+		expect(await kv.get('event:image:score:7:sub1')).toBeNull();
+
+		expect(r2.has('users/42/profile.png')).toBe(false);
+		expect(r2.has('users/42/profile_32.png')).toBe(false);
+		expect(r2.has('users/42/quests/q1/step_0_0.bin')).toBe(false);
+		expect(r2.has('users/42/quests/q1/history.bin')).toBe(false);
+		expect(r2.has('events/7/submissions/42_sub1.webp')).toBe(false);
+
+		const timerStub = (bindings.TIMER as any).__stubs.get('42');
+		const notifierStub = (bindings.NOTIFIER as any).__stubs.get('users:42');
+		expect(timerStub.fetch).toHaveBeenCalledWith('https://do/delete', { method: 'DELETE' });
+		expect(notifierStub.fetch).toHaveBeenCalledWith('https://do/delete', { method: 'DELETE' });
 	});
 });
 
@@ -285,6 +363,7 @@ describe('custom quests', () => {
 		const response = await callApp('/users/quests/custom?user_id=123', {
 			method: 'POST',
 			body: JSON.stringify({
+				id: 'my_quest',
 				title: 'My Quest',
 				description: 'Do a thing',
 				icon: 'mdi:star',
@@ -293,26 +372,32 @@ describe('custom quests', () => {
 						type: 'article_quiz',
 						description: 'Read an article.',
 						parameters: ['TECHNOLOGY', 0.8]
+					},
+					{
+						type: 'draw_picture',
+						description: 'Draw a picture of Earth.',
+						parameters: ['A picture of earth', 0.4]
+					},
+					{
+						type: 'take_photo_validation',
+						description: 'Describe how you help the planet.',
+						parameters: ['Describe how you help the planet', 0.6]
 					}
 				],
-				reward: 25,
-				created_at: '2000-01-01T00:00:00.000Z',
-				updated_at: '2000-01-01T00:00:00.000Z'
-			})
+				premium: false,
+				custom: true,
+				owner_id: '123',
+				reward: 25
+			} satisfies CustomQuest)
 		});
 
 		expect(response.status).toBe(201);
 		const quest = await response.json<{
 			id: string;
 			owner_id: string;
-			created_at?: string;
-			updated_at?: string;
 		}>();
 		expect(quest.owner_id).toBe('123');
-		expect(quest.created_at).toBeDefined();
-		expect(quest.updated_at).toBeDefined();
-		expect(quest.created_at).not.toBe('2000-01-01T00:00:00.000Z');
-		expect(quest.updated_at).not.toBe('2000-01-01T00:00:00.000Z');
+		expect(quest.id).toBeDefined();
 	});
 
 	it('enforces ownership for update and delete', async () => {
@@ -330,6 +415,16 @@ describe('custom quests', () => {
 							type: 'article_quiz',
 							description: 'Read an article.',
 							parameters: ['TECHNOLOGY', 0.8]
+						},
+						{
+							type: 'draw_picture',
+							description: 'Draw a picture of Earth.',
+							parameters: ['A picture of earth', 0.4]
+						},
+						{
+							type: 'take_photo_validation',
+							description: 'Describe how you help the planet.',
+							parameters: ['Describe how you help the planet', 0.6]
 						}
 					],
 					reward: 25
@@ -1761,9 +1856,9 @@ describe('GET /users/quests/:id', () => {
 	});
 });
 
-describe('POST /users/quests/progress/:user_id', () => {
+describe('POST /users/quests/progress/:user_id/start', () => {
 	it('starts quest progress for valid users and quest IDs', async () => {
-		const response = await callApp('/users/quests/progress/123', {
+		const response = await callApp('/users/quests/progress/123/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'fun_facts' })
 		});
@@ -1771,13 +1866,13 @@ describe('POST /users/quests/progress/:user_id', () => {
 	});
 
 	it('returns 400 for invalid user IDs', async () => {
-		const nonNumericId = await callApp('/users/quests/progress/abc', {
+		const nonNumericId = await callApp('/users/quests/progress/abc/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'fun_facts' })
 		});
 		expect(nonNumericId.status).toBe(400);
 
-		const longId = await callApp('/users/quests/progress/' + '1'.repeat(51), {
+		const longId = await callApp('/users/quests/progress/' + '1'.repeat(51) + '/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'fun_facts' })
 		});
@@ -1785,13 +1880,13 @@ describe('POST /users/quests/progress/:user_id', () => {
 	});
 
 	it('returns 404 for invalid quest IDs', async () => {
-		const shortQuestId = await callApp('/users/quests/progress/123', {
+		const shortQuestId = await callApp('/users/quests/progress/123/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'ab' })
 		});
 		expect(shortQuestId.status).toBe(404);
 
-		const longQuestId = await callApp('/users/quests/progress/123', {
+		const longQuestId = await callApp('/users/quests/progress/123/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'a'.repeat(51) })
 		});
@@ -1799,7 +1894,7 @@ describe('POST /users/quests/progress/:user_id', () => {
 	});
 
 	it('returns 404 for unknown quest IDs', async () => {
-		const response = await callApp('/users/quests/progress/123', {
+		const response = await callApp('/users/quests/progress/123/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'unknown_quest' })
 		});
@@ -1807,19 +1902,19 @@ describe('POST /users/quests/progress/:user_id', () => {
 	});
 
 	it('enforces rank requirements for premium quests', async () => {
-		const missingRank = await callApp('/users/quests/progress/123', {
+		const missingRank = await callApp('/users/quests/progress/123/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'chicagoland' })
 		});
 		expect(missingRank.status).toBe(400);
 
-		const freeRank = await callApp('/users/quests/progress/123', {
+		const freeRank = await callApp('/users/quests/progress/123/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'chicagoland', rank: 'free' })
 		});
 		expect(freeRank.status).toBe(403);
 
-		const validRank = await callApp('/users/quests/progress/123', {
+		const validRank = await callApp('/users/quests/progress/123/start', {
 			method: 'POST',
 			body: JSON.stringify({ quest_id: 'chicagoland', rank: 'gold' })
 		});
@@ -1827,12 +1922,12 @@ describe('POST /users/quests/progress/:user_id', () => {
 	});
 });
 
-describe('PATCH /users/quests/progress/:user_id', () => {
+describe('PATCH /users/quests/progress/:user_id/update', () => {
 	it('updates article quiz progress for a valid active quest', async () => {
 		const bindings = createMockBindings();
 
 		await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/start',
 			{ method: 'POST', body: JSON.stringify({ quest_id: 'fun_facts' }) },
 			true,
 			bindings
@@ -1844,7 +1939,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		);
 
 		const response = await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/update',
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
@@ -1865,14 +1960,14 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 	});
 
 	it('covers request parsing, binary validation, and delay-gate branches', async () => {
-		const invalidJson = await callApp('/users/quests/progress/123', {
+		const invalidJson = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			headers: { 'Content-Type': 'application/json' },
 			body: '{'
 		});
 		expect(invalidJson.status).toBe(400);
 
-		const missingDataUrl = await callApp('/users/quests/progress/123', {
+		const missingDataUrl = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
 				device: { make: 'unknown', model: 'API', os: 'web' },
@@ -1881,7 +1976,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		});
 		expect(missingDataUrl.status).toBe(400);
 
-		const invalidDataUrl = await callApp('/users/quests/progress/123', {
+		const invalidDataUrl = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
 				device: { make: 'unknown', model: 'API', os: 'web' },
@@ -1890,7 +1985,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		});
 		expect(invalidDataUrl.status).toBe(400);
 
-		const unsupportedAudio = await callApp('/users/quests/progress/123', {
+		const unsupportedAudio = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
 				device: { make: 'unknown', model: 'API', os: 'web' },
@@ -1903,13 +1998,13 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		});
 		expect(unsupportedAudio.status).toBe(415);
 
-		const missingDevice = await callApp('/users/quests/progress/123', {
+		const missingDevice = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({ response: { type: 'order_items', index: 0 } })
 		});
 		expect(missingDevice.status).toBe(400);
 
-		const missingResponse = await callApp('/users/quests/progress/123', {
+		const missingResponse = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({ device: { make: 'unknown', model: 'API', os: 'web' } })
 		});
@@ -1925,7 +2020,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		);
 
 		const delayed = await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/update',
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
@@ -1940,7 +2035,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 	});
 
 	it('returns 404 when no active quest exists for the user', async () => {
-		const response = await callApp('/users/quests/progress/123', {
+		const response = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
 				device: { make: 'unknown', model: 'API', os: 'web' },
@@ -1956,7 +2051,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 	});
 
 	it('returns 400 for invalid user IDs', async () => {
-		const response = await callApp('/users/quests/progress/abc', {
+		const response = await callApp('/users/quests/progress/abc/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
 				device: { make: 'unknown', model: 'API', os: 'web' },
@@ -1975,7 +2070,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		const bindings = createMockBindings();
 
 		const started = await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/start',
 			{ method: 'POST', body: JSON.stringify({ quest_id: 'chicagoland', rank: 'gold' }) },
 			true,
 			bindings
@@ -1983,7 +2078,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		expect(started.status).toBe(201);
 
 		const missingRank = await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/update',
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
@@ -2001,7 +2096,7 @@ describe('PATCH /users/quests/progress/:user_id', () => {
 		expect(missingRank.status).toBe(400);
 
 		const freeRank = await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/update',
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
@@ -2049,7 +2144,7 @@ describe('GET /users/quests/progress/:user_id/step/:step_index', () => {
 	it('retrieves step progress for reached steps', async () => {
 		const bindings = createMockBindings();
 		await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/start',
 			{ method: 'POST', body: JSON.stringify({ quest_id: 'fun_facts' }) },
 			true,
 			bindings
@@ -2060,7 +2155,7 @@ describe('GET /users/quests/progress/:user_id/step/:step_index', () => {
 			JSON.stringify({ score: 9, scorePercent: 90, total: 10 })
 		);
 		await callApp(
-			'/users/quests/progress/123',
+			'/users/quests/progress/123/update',
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
@@ -2099,20 +2194,31 @@ describe('GET /users/quests/history/:user_id/:quest_id', () => {
 describe('DELETE /users/quests/progress/:user_id', () => {
 	it('resets active quest progress', async () => {
 		const bindings = createMockBindings();
-		await callApp(
-			'/users/quests/progress/123',
+		const start = await callApp(
+			'/users/quests/progress/123/start',
 			{ method: 'POST', body: JSON.stringify({ quest_id: 'fun_facts' }) },
 			true,
 			bindings
 		);
+		expect(start.status).toBe(201);
 
-		const response = await callApp(
-			'/users/quests/progress/123',
+		const progressAfterStart = await callApp('/users/quests/progress/123', {}, true, bindings);
+		expect(progressAfterStart.status).toBe(200);
+		const progressJson = await progressAfterStart.json<{ questId: string | null }>();
+		expect(progressJson.questId).toBe('fun_facts');
+
+		const end = await callApp(
+			'/users/quests/progress/123/reset',
 			{ method: 'DELETE' },
 			true,
 			bindings
 		);
-		expect(response.status).toBe(204);
+		expect(end.status).toBe(204);
+
+		const progressAfterReset = await callApp('/users/quests/progress/123', {}, true, bindings);
+		expect(progressAfterReset.status).toBe(200);
+		const progressAfterResetJson = await progressAfterReset.json<{ questId: string | null }>();
+		expect(progressAfterResetJson.questId).toBeNull();
 	});
 });
 

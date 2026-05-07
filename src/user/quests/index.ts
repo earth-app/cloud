@@ -1282,7 +1282,9 @@ export const quests = [
 				parameters: ['Describe your favorite author.', 0.7],
 				delay: 1800
 			}
-		]
+		],
+		reward: 350,
+		permissions: ['camera']
 	}
 ] as Quest[];
 

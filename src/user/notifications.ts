@@ -135,6 +135,21 @@ export class LiveNotifier {
 		const upgrade = req.headers.get('Upgrade')?.toLowerCase();
 		const url = new URL(req.url);
 
+		if (req.method === 'DELETE' && url.pathname === '/delete') {
+			await this.state.storage.deleteAll();
+
+			for (const socket of Array.from(this.sockets)) {
+				try {
+					socket.close(1000, 'Account deleted');
+				} catch {
+					// ignore socket close failures during purge
+				}
+			}
+
+			this.sockets.clear();
+			return new Response(null, { status: 204 });
+		}
+
 		if (req.method === 'POST' && url.pathname === '/ticket') {
 			let body: { userId?: string; ttlSeconds?: number };
 

@@ -33,6 +33,27 @@ export class MockR2Bucket {
 		this.store.delete(key);
 	}
 
+	async list(options?: {
+		prefix?: string;
+		limit?: number;
+		cursor?: string;
+	}): Promise<{ objects: Array<{ key: string }>; truncated: boolean; cursor?: string }> {
+		const prefix = options?.prefix ?? '';
+		const limit = options?.limit ?? 1000;
+		const cursorIndex = options?.cursor ? Number(options.cursor) : 0;
+
+		const keys = [...this.store.keys()].filter((key) => key.startsWith(prefix)).sort();
+		const page = keys.slice(cursorIndex, cursorIndex + limit);
+		const nextIndex = cursorIndex + page.length;
+		const truncated = nextIndex < keys.length;
+
+		return {
+			objects: page.map((key) => ({ key })),
+			truncated,
+			cursor: truncated ? String(nextIndex) : undefined
+		};
+	}
+
 	has(key: string): boolean {
 		return this.store.has(key);
 	}
@@ -59,11 +80,18 @@ function createMockImagesBinding() {
 }
 
 function createMockDurableObjectNamespace() {
+	const stubs = new Map<string, { fetch: ReturnType<typeof vi.fn> }>();
+
 	return {
+		__stubs: stubs,
 		idFromName: (name: string) => name,
-		get: () => ({
-			fetch: vi.fn(async () => new Response('ok'))
-		})
+		get: (id: string) => {
+			const stub = {
+				fetch: vi.fn(async () => new Response('ok'))
+			};
+			stubs.set(String(id), stub);
+			return stub;
+		}
 	};
 }
 

@@ -19,7 +19,8 @@ export type BadgeTracker =
 	| 'article_quizzes_completed'
 	| 'event_types_attended' // handled over mantle2
 	| 'event_countries_photographed'
-	| 'article_quizzes_completed_perfect_score';
+	| 'article_quizzes_completed_perfect_score'
+	| 'activity_read_time';
 
 export type Badge = {
 	id: string;

@@ -18,13 +18,18 @@ describe('quests', () => {
 
 	it('includes required top-level fields on every quest', () => {
 		for (const quest of quests) {
-			expect(typeof quest.id).toBe('string');
-			expect(typeof quest.title).toBe('string');
-			expect(typeof quest.description).toBe('string');
-			expect(typeof quest.icon).toBe('string');
-			expect(Array.isArray(quest.steps)).toBe(true);
-			expect(quest.steps.length).toBeGreaterThan(0);
-			expect(typeof quest.reward).toBe('number');
+			expect(typeof quest.id, `Quest ID in '${quest.id}' is not a string`).toBe('string');
+			expect(typeof quest.title, `Quest title in '${quest.id}' is not a string`).toBe('string');
+			expect(typeof quest.description, `Quest description in '${quest.id}' is not a string`).toBe(
+				'string'
+			);
+			expect(typeof quest.icon, `Quest icon in '${quest.id}' is not a string`).toBe('string');
+			expect(Array.isArray(quest.steps), `Quest '${quest.id}' steps are not an array`).toBe(true);
+			expect(
+				quest.steps.length,
+				`Quest '${quest.id}' does not have at least three steps`
+			).toBeGreaterThan(2);
+			expect(typeof quest.reward, `Quest reward in '${quest.id}' is not a number`).toBe('number');
 		}
 	});
 

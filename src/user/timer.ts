@@ -72,6 +72,14 @@ export class UserTimer {
 	}
 
 	async fetch(req: Request) {
+		const url = new URL(req.url);
+
+		if (req.method === 'DELETE' && url.pathname === '/delete') {
+			await this.state.storage.deleteAll();
+			this.timer = undefined;
+			return new Response(null, { status: 204 });
+		}
+
 		let body: TimerRequestBody;
 
 		try {
