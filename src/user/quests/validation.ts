@@ -1108,6 +1108,10 @@ async function validateDescribeText(
 		return { success: false, message: 'Text response cannot be empty.' };
 	}
 
+	if (normalizedText.length > 1024) {
+		return { success: false, message: 'Text response exceeds maximum length of 1024 characters.' };
+	}
+
 	const [criteria, threshold, minLength] = step.parameters;
 	if (minLength && normalizedText.length < minLength) {
 		return {
