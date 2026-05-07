@@ -90,6 +90,22 @@ describe('quests', () => {
 		}
 	});
 
+	it('requires every first and last step to be singular and have at least three steps', () => {
+		for (const quest of quests) {
+			expect(
+				quest.steps.length,
+				`Quest ${quest.id} does not have at least three steps`
+			).toBeGreaterThan(2);
+			expect(quest.steps[0], `First step is not singular in quest ${quest.id}`).not.toBeInstanceOf(
+				Array
+			);
+			expect(
+				quest.steps[quest.steps.length - 1],
+				`Last step is not singular in quest ${quest.id}`
+			).not.toBeInstanceOf(Array);
+		}
+	});
+
 	it('uses valid activity enums in article_quiz and attend_event steps', () => {
 		for (const quest of quests) {
 			for (const stepGroup of quest.steps) {

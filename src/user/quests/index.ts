@@ -305,7 +305,12 @@ export const quests = [
 					description: 'Read an article about travel and complete the quiz with 100% accuracy.',
 					parameters: ['TRAVEL', 1.0]
 				}
-			]
+			],
+			{
+				type: 'take_photo_location',
+				description: 'Take a photo of the Chicago River.',
+				parameters: [41.888, -87.6295, 100]
+			}
 		],
 		reward: 300,
 		permissions: ['camera']
@@ -318,6 +323,34 @@ export const quests = [
 		icon: 'mdi:palette',
 		rarity: 'rare',
 		steps: [
+			{
+				type: 'take_photo_caption',
+				description: 'Take a photo that represents your personal style.',
+				parameters: [
+					[
+						{
+							id: 'creativity',
+							ideal:
+								"The caption demonstrates creativity and originality in representing the user's personal style.",
+							weight: 0.4
+						},
+						{
+							id: 'aesthetic_coherence',
+							ideal:
+								"The caption reflects a coherent and consistent aesthetic that effectively captures the user's personal style.",
+							weight: 0.4
+						},
+						{
+							id: 'emotional_expression',
+							ideal:
+								"The caption conveys a strong emotional expression that resonates with the user's personal style.",
+							weight: 0.2
+						}
+					],
+					'Take a photo that represents your personal style.',
+					0.6
+				]
+			},
 			[
 				{
 					type: 'take_photo_objects',
@@ -577,6 +610,12 @@ export const quests = [
 		icon: 'mdi:magnify',
 		rarity: 'rare',
 		steps: [
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about studying and complete the quiz with at least 60% accuracy.',
+				parameters: ['STUDY', 0.6]
+			},
 			[
 				{
 					type: 'take_photo_classification',
@@ -764,7 +803,13 @@ export const quests = [
 					parameters: ['TECHNOLOGY', 1.0],
 					reward: 50
 				}
-			]
+			],
+			{
+				type: 'transcribe_audio',
+				description: 'Describe your favorite piece of technology for 30 seconds.',
+				parameters: ['Describe your favorite piece of technology.', 0.7],
+				delay: 1800
+			}
 		],
 		reward: 450,
 		permissions: ['camera']
@@ -1138,7 +1183,14 @@ export const quests = [
 					],
 					reward: 100
 				}
-			]
+			],
+			{
+				type: 'describe_text',
+				description: 'Describe your favorite nature spot in at least 100 words.',
+				parameters: ['Describe your favorite nature spot in at least 100 words.', 0.7, 100],
+				delay: 6000,
+				reward: 150
+			}
 		],
 		reward: 2500,
 		permissions: ['camera']

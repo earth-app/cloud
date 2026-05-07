@@ -78,6 +78,74 @@ export async function createCustomQuest(
 		updated_at: timestamp
 	};
 
+	// validate steps
+	if (!obj.steps || !Array.isArray(obj.steps) || obj.steps.length < 3) {
+		throw new Error('A custom quest must have at least 3 steps.');
+	}
+
+	if (obj.steps.length > 12) {
+		throw new Error('A custom quest cannot have more than 12 steps.');
+	}
+
+	for (const step of obj.steps) {
+		if (Array.isArray(step)) {
+			if (step.length < 2) {
+				throw new Error('A multiple choice quest step must have at least 2 options.');
+			}
+
+			/// alternates cannot have more than 5 options
+			if (step.length > 5) {
+				throw new Error('A multiple choice quest step cannot have more than 5 options.');
+			}
+
+			for (const option of step) {
+				if (!option.type || !option.description || !option.parameters) {
+					throw new Error('Each quest step option must have a type, description, and parameters.');
+				}
+
+				if (option.description.length > 256) {
+					throw new Error('Quest step descriptions cannot exceed 256 characters.');
+				}
+
+				/// individual step award cannot exceed 50 when there are alternatives
+				if (option.reward && option.reward > 50) {
+					throw new Error(
+						'An individual quest step with alternatives cannot have a reward greater than 50 points.'
+					);
+				}
+			}
+		}
+
+		if (!Array.isArray(step)) {
+			if (!step.type || !step.description || !step.parameters) {
+				throw new Error('Each quest step must have a type, description, and parameters.');
+			}
+
+			if (step.description.length > 256) {
+				throw new Error('Quest step descriptions cannot exceed 256 characters.');
+			}
+
+			/// individual step award cannot exceed 75
+			if (step.reward && step.reward > 75) {
+				throw new Error('An individual quest step cannot have a reward greater than 75 points.');
+			}
+		}
+	}
+
+	/// first + last cannot be multiple choice
+	if (Array.isArray(obj.steps[0])) {
+		throw new Error('The first quest step cannot have multiple choices.');
+	}
+
+	if (Array.isArray(obj.steps[obj.steps.length - 1])) {
+		throw new Error('The last quest step cannot have multiple choices.');
+	}
+
+	/// final reward must be positive / cannot exceed 500 points
+	if (obj.reward <= 0 || obj.reward > 500) {
+		throw new Error('The total reward for a custom quest must be positive and < 500 points.');
+	}
+
 	await kv.put(`custom_quest:${id}`, JSON.stringify(obj), {
 		metadata: {
 			id,
