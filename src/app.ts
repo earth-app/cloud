@@ -1547,7 +1547,7 @@ function normalizeQuestRank(rank?: string): string | null {
 }
 
 // start new quest (will override existing progress)
-app.post('/users/quests/progress/:user_id', async (c) => {
+app.post('/users/quests/progress/:user_id/start', async (c) => {
 	const userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
@@ -1599,7 +1599,7 @@ app.post('/users/quests/progress/:user_id', async (c) => {
 });
 
 // update quest progress
-app.patch('/users/quests/progress/:user_id', async (c) => {
+app.patch('/users/quests/progress/:user_id/update', async (c) => {
 	const userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
@@ -1759,7 +1759,7 @@ app.patch('/users/quests/progress/:user_id', async (c) => {
 	}
 });
 
-app.delete('/users/quests/progress/:user_id', async (c) => {
+app.delete('/users/quests/progress/:user_id/reset', async (c) => {
 	const userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
