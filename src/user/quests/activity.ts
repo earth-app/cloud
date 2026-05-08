@@ -61,92 +61,177 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 				{
 					type: 'attend_event',
 					description: `Attend a community event related to ${activity.name}`,
-					parameters: [{ type: 'activity_type', value: 'COMMUNITY_SERVICE' }, 5] // minimum attendees
+					parameters: [{ type: 'activity_type', value: 'COMMUNITY_SERVICE' }, 5],
+					reward: 50
 				},
 				{
 					type: 'take_photo_validation',
 					description: `Submit a photo of you participating in a community service event related to ${activity.name}`,
 					parameters: [
 						`A photo of you participating in a community service event related to ${activity.name}`
-					]
+					],
+					reward: 50
+				},
+				{
+					type: 'article_read_time',
+					description: `Read about the importance of community service for at least 10 minutes`,
+					parameters: ['COMMUNITY_SERVICE', 10 * 60],
+					reward: 25
 				}
 			];
 		}
 		case 'WORK': {
-			return {
-				type: 'transcribe_audio',
-				description: `Transcribe a short audio clip describing your experience with ${activity.name}`,
-				parameters: [
-					`Please describe your experience with ${activity.name} in a short audio recording.`,
-					0.7 // accuracy threshold
-				]
-			};
+			return [
+				{
+					type: 'transcribe_audio',
+					description: `Transcribe a short audio clip describing your experience with ${activity.name}`,
+					parameters: [
+						`Please describe your experience with ${activity.name} in a short audio recording.`,
+						0.7 // accuracy threshold
+					],
+					reward: 75
+				},
+				{
+					type: 'activity_read_time',
+					description: `Read about ${activity.name} for at least 15 minutes`,
+					parameters: [{ type: 'activity', ...activity }, 15 * 60],
+					reward: 50
+				}
+			];
 		}
 		case 'HOBBY':
 		case 'TECHNOLOGY': {
-			return {
-				type: 'describe_text',
-				description: `Describe how you use ${activity.name} in your daily life and its impact on you`,
-				parameters: [
-					[
-						{
-							id: 'relevance',
-							weight: 0.7,
-							ideal:
-								'The description is highly relevant to the activity and provides specific details about how the user interacts with it.'
-						},
-						{
-							id: 'detail',
-							weight: 0.3,
-							ideal:
-								"The description provides detailed information about the user's experience with the activity."
-						}
+			return [
+				{
+					type: 'describe_text',
+					description: `Describe how you use ${activity.name} in your daily life and its impact on you`,
+					parameters: [
+						[
+							{
+								id: 'relevance',
+								weight: 0.7,
+								ideal:
+									'The description is highly relevant to the activity and provides specific details about how the user interacts with it.'
+							},
+							{
+								id: 'detail',
+								weight: 0.3,
+								ideal:
+									"The description provides detailed information about the user's experience with the activity."
+							}
+						],
+						0.7 // score threshold
 					],
-					0.7 // score threshold
-				]
-			};
+					reward: 25
+				},
+				{
+					type: 'activity_read_time',
+					description: `Read about ${activity.name} for at least 10 minutes`,
+					parameters: [{ type: 'activity', ...activity }, 10 * 60],
+					reward: 50
+				}
+			];
 		}
 		case 'PERSONAL_GOAL': {
-			return {
-				type: 'article_quiz',
-				description: `Read an article on personal goal setting and complete a quiz with at least 80% accuracy`,
-				parameters: ['PERSONAL_GOAL', 0.8] // article type, score threshold
-			};
+			return [
+				{
+					type: 'article_quiz',
+					description: `Read an article on personal goal setting and complete a quiz with at least 80% accuracy`,
+					parameters: ['PERSONAL_GOAL', 0.8] // article type, score threshold
+				},
+				{
+					type: 'respond_to_prompt',
+					description: `Respond to a prompt from @cloud about "goals."`,
+					parameters: ['goals', 1],
+					reward: 20
+				}
+			];
 		}
 		case 'SOCIAL': {
-			return {
-				type: 'describe_text',
-				description: `Describe a memorable social experience you've had related to ${activity.name} and why it was meaningful to you`,
-				parameters: [
-					[
-						{
-							id: 'emotional_impact',
-							weight: 0.5,
-							ideal:
-								'The description effectively conveys the emotional significance of the social experience related to the activity.'
-						},
-						{
-							id: 'specificity',
-							weight: 0.3,
-							ideal:
-								'The description provides specific details about the social experience, including who was involved and what made it memorable.'
-						},
-						{
-							id: 'relevance',
-							weight: 0.2,
-							ideal: 'The description is highly relevant to the activity and the social experience.'
-						}
-					],
-					0.7 // score threshold
-				]
-			};
+			return [
+				{
+					type: 'describe_text',
+					description: `Describe a memorable social experience you've had related to ${activity.name} and why it was meaningful to you`,
+					parameters: [
+						[
+							{
+								id: 'emotional_impact',
+								weight: 0.5,
+								ideal:
+									'The description effectively conveys the emotional significance of the social experience related to the activity.'
+							},
+							{
+								id: 'specificity',
+								weight: 0.3,
+								ideal:
+									'The description provides specific details about the social experience, including who was involved and what made it memorable.'
+							},
+							{
+								id: 'relevance',
+								weight: 0.2,
+								ideal:
+									'The description is highly relevant to the activity and the social experience.'
+							}
+						],
+						0.7 // score threshold
+					]
+				},
+				{
+					type: 'respond_to_prompt',
+					description: `Respond to a prompt from @cloud about "connections."`,
+					parameters: ['connections', 1]
+				}
+			];
+		}
+		case 'STUDY': {
+			return [
+				{
+					type: 'article_read_time',
+					description: `Read articles about studying for at least 15 minutes`,
+					parameters: ['STUDY', 15 * 60]
+				},
+				{
+					type: 'describe_text',
+					description: `Describe your study habits and how you stay motivated to study regularly.`,
+					parameters: [
+						[
+							{
+								id: 'insightfulness',
+								weight: 0.5,
+								ideal:
+									'The description provides insightful details about the user’s study habits and motivation strategies.'
+							},
+							{
+								id: 'specificity',
+								weight: 0.3,
+								ideal:
+									'The description includes specific examples of the user’s study routines and techniques.'
+							},
+							{
+								id: 'relevance',
+								weight: 0.2,
+								ideal:
+									'The description is relevant to the activity of studying and effectively conveys the user’s approach to it.'
+							}
+						],
+						0.65 // score threshold
+					]
+				}
+			];
 		}
 		default: {
-			return {
-				type: 'draw_picture',
-				description: `Draw a picture representing ${activity.name}`,
-				parameters: [`Draw a picture representing ${activity.name}`, 0.5]
-			};
+			return [
+				{
+					type: 'draw_picture',
+					description: `Draw a picture representing ${activity.name}`,
+					parameters: [`Draw a picture representing ${activity.name}`, 0.5]
+				},
+				{
+					type: 'activity_read_time',
+					description: `Read about ${activity.name} for at least 5 minutes`,
+					parameters: [{ type: 'activity', ...activity }, 5 * 60]
+				}
+			];
 		}
 	}
 }
@@ -237,15 +322,25 @@ function middleSteps(activity: Activity): (QuestStep | QuestStep[])[] {
 	);
 	middleSteps.push(step5);
 
-	// step 6 - if there are more than 4 types, add another article quiz on a middle type not already covered
+	// step 6 - if there are more than 4 types, add article_read_time steps for the uncovered types + a respond_to_prompt with activity name
 	if (activity.types.length > 4) {
-		// Ensure we don't duplicate types from step 3 (last 3) or step 5 (first uncovered)
-		// For 5+ types, step 3 covers the last 3, step 5 covers the first (length-3)
-		// So types[1] (if exists and not in step 3/5) could be covered here
-		// For 5 types: step3=[2,3,4], step5=[0,1]. types[1] is in step5, so skip.
-		// For 6 types: step3=[3,4,5], step5=[0,1,2]. types[1] is in step5, so skip.
-		// types[1] is always covered. This step appears to be redundant, so we skip it.
-		// If more variety is desired, consider adding different step types instead.
+		const uncoveredTypes = activity.types.slice(0, activity.types.length - 3);
+		const step6: QuestStep[] = uncoveredTypes.map(
+			(type) =>
+				({
+					type: 'article_read_time',
+					description: `Read about ${type.replace(/_/g, ' ')} for at least 10 minutes`,
+					parameters: [type, 10 * 60], // article type, minimum read time in seconds
+					reward: 50
+				}) satisfies QuestStep
+		);
+		step6.push({
+			type: 'respond_to_prompt',
+			description: `Respond to a prompt about "${activity.name}".`,
+			parameters: [activity.name],
+			reward: 50
+		});
+		middleSteps.push(step6);
 	}
 
 	// step 7 - if the description contains more than 100 words, add a describe_text step asking the user to summarize the description in their own words with a score threshold of 0.5
