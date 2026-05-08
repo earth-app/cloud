@@ -1,7 +1,3 @@
-vi.mock('../../src/user/notifications', () => ({
-	sendUserNotification: vi.fn(async () => undefined)
-}));
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { UserTimer, getReadTime } from '../../src/user/timer';
 import { createMockBindings } from '../helpers/mock-bindings';

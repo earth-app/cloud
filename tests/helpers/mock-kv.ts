@@ -20,6 +20,10 @@ function toText(value: unknown): string {
 export class MockKVNamespace {
 	private readonly store = new Map<string, StoredKVValue>();
 
+	async get<T = unknown>(key: string, type?: 'json'): Promise<T | null>;
+	async get(key: string, type?: 'text'): Promise<string | null>;
+	async get(key: string, type?: 'arrayBuffer'): Promise<ArrayBuffer | null>;
+	async get(key: string, type?: 'stream'): Promise<ReadableStream | null>;
 	async get<T = unknown>(
 		key: string,
 		type?: 'text' | 'json' | 'arrayBuffer' | 'stream'
