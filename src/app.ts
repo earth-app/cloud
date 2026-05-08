@@ -1941,6 +1941,7 @@ app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
 		// enrich with data URLs for binary payloads (photos, drawings, audio)
 		const enrichedStepProgress =
 			stepProgress !== null ? (await enrichProgressEntries([stepProgress], c.env))[0] : null;
+		const isCurrent = stepIndex === currentStepIndex;
 
 		return c.json(
 			{
@@ -1949,6 +1950,7 @@ app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
 				// for alt steps: array of completed alt responses; for normal steps: single response or null
 				response: enrichedStepProgress,
 				isAltStep: Array.isArray(stepDef),
+				isCurrent,
 				completed: stepProgress !== null && stepProgress !== undefined
 			},
 			200
