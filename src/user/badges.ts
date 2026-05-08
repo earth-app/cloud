@@ -349,6 +349,14 @@ export const badges = (
 			progress: (...args: any[]) => min(args, 50),
 			tracker_id: 'prompts_read'
 		},
+		{
+			id: 'pioneer',
+			description: 'Read activities for a combined total of 24 hours',
+			icon: 'mdi:compass-rose',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 24 * 60 * 60),
+			tracker_id: 'activity_read_time'
+		},
 		// amazing badges
 		{
 			id: 'journey_master',
@@ -471,6 +479,14 @@ export const badges = (
 			rarity: 'amazing',
 			progress: (...args: any[]) => min(args, 4 * 60),
 			tracker_id: 'prompts_read_time'
+		},
+		{
+			id: 'super_pioneer',
+			description: 'Read activities for a combined total of 48 hours',
+			icon: 'mdi:sun-compass',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 48 * 60 * 60),
+			tracker_id: 'activity_read_time'
 		},
 		// green badges
 		{
@@ -603,9 +619,10 @@ function min(args: any[], min: number): number {
 
 // storage functions
 
-type TrackerEntry = {
+export type TrackerEntry = {
 	date: number;
 	value: string | number;
+	metadata?: Record<string, any>;
 };
 
 type BadgeMetadata = {
@@ -697,9 +714,19 @@ export async function getBadgeProgress(
 
 		// Determine if this tracker stores numbers or strings
 		const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
+		const hasMetadataEntries = tracker.some((entry) => entry.metadata != null);
 
 		if (lastEntry && typeof lastEntry.value === 'number') {
-			// For numeric trackers, pass the latest accumulated value
+			// Trackers that persist metadata keep per-entry values, so sum them.
+			if (hasMetadataEntries) {
+				const total = tracker.reduce(
+					(sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0),
+					0
+				);
+				return await badge.progress(total, ...progressArgs);
+			}
+
+			// For numeric trackers without metadata, pass the latest accumulated value.
 			return await badge.progress(lastEntry.value, ...progressArgs);
 		} else {
 			// For string trackers, pass array of unique values (for counting)
@@ -715,7 +742,8 @@ export async function addBadgeProgress(
 	userId: string,
 	trackerId: BadgeTracker,
 	value: TrackerEntry['value'] | TrackerEntry['value'][],
-	kv: KVNamespace
+	kv: KVNamespace,
+	metadata?: Record<string, any>
 ): Promise<void> {
 	const normalizedUserId = normalizeId(userId);
 	const trackerKey = `user:badge_tracker:${normalizedUserId}:${trackerId}`;
@@ -741,15 +769,17 @@ export async function addBadgeProgress(
 
 		const sumToAdd = numbers.reduce((acc, val) => acc + val, 0);
 		const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
+		const shouldAppendEntry = Boolean(metadata) || tracker.some((entry) => entry.metadata != null);
 
-		if (lastEntry && typeof lastEntry.value === 'number') {
+		if (!shouldAppendEntry && lastEntry && typeof lastEntry.value === 'number') {
 			lastEntry.value = lastEntry.value + sumToAdd;
 			lastEntry.date = Date.now();
 		} else {
 			// First numeric entry for this tracker
 			tracker.push({
 				date: Date.now(),
-				value: sumToAdd
+				value: sumToAdd,
+				metadata
 			});
 		}
 	}
