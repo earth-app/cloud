@@ -180,6 +180,39 @@ describe('validateStep', () => {
 		expect(result.success).toBe(true);
 	});
 
+	it('accepts article_read_time when duration meets the required threshold', async () => {
+		const step = {
+			type: 'article_read_time',
+			description: 'Read an article',
+			parameters: ['SPORT', 45]
+		} as any;
+		const response = {
+			type: 'article_read_time',
+			index: 0,
+			duration: 45
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(true);
+	});
+
+	it('rejects activity_read_time when duration is below the required threshold', async () => {
+		const step = {
+			type: 'activity_read_time',
+			description: 'Read an activity',
+			parameters: [{ type: 'activity_type', value: 'COMMUNITY_SERVICE' }, 30]
+		} as any;
+		const response = {
+			type: 'activity_read_time',
+			index: 0,
+			duration: 29
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(false);
+		expect(result.message).toContain('does not meet the required');
+	});
+
 	it('rejects article quiz when score is below threshold', async () => {
 		const kv = new MockKVNamespace();
 		await kv.put('score:low', JSON.stringify({ score: 5, scorePercent: 50, total: 10 }));

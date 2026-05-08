@@ -1,6 +1,8 @@
 import { logAnalyticsBatch } from '../content/analytics';
-import { Article, Bindings, Prompt } from '../util/types';
-import { addBadgeProgress } from './badges';
+import { Activity, Article, Bindings, Prompt } from '../util/types';
+import { normalizeId } from '../util/util';
+import { addBadgeProgress, TrackerEntry } from './badges';
+import { checkStepDelay, getCurrentQuestProgress, updateQuestProgress } from './quests/tracking';
 
 type TimerState = {
 	startedAt: number;
@@ -59,6 +61,107 @@ function promptAnalyticsMetadata(prompt?: Partial<Prompt>) {
 	}
 
 	return metadata;
+}
+
+async function maybeAdvanceReadTimeQuestStep(
+	userId: string,
+	tracker: 'articles_read_time' | 'activity_read_time',
+	bindings: Bindings
+) {
+	const questProgress = await getCurrentQuestProgress(userId, bindings);
+	if (!questProgress.quest || questProgress.completed) {
+		return;
+	}
+
+	const readTimeSeconds = await getReadTime(userId, tracker, bindings.KV);
+
+	const currentStepIndex = questProgress.currentStepIndex;
+	const currentStep = questProgress.currentStep;
+	if (!currentStep) {
+		return;
+	}
+
+	const stepType = tracker === 'articles_read_time' ? 'article_read_time' : 'activity_read_time';
+	const currentProgress = questProgress.progress[currentStepIndex];
+
+	let candidateAltIndex: number | undefined;
+	let candidateThreshold: number | undefined;
+
+	if (Array.isArray(currentStep)) {
+		const completedAltIndices = new Set(
+			Array.isArray(currentProgress) ? currentProgress.map((entry) => entry.altIndex ?? 0) : []
+		);
+
+		for (let altIndex = 0; altIndex < currentStep.length; altIndex++) {
+			const step = currentStep[altIndex];
+			if (step.type !== stepType) {
+				continue;
+			}
+
+			if (completedAltIndices.has(altIndex)) {
+				continue;
+			}
+
+			const [, requiredSeconds] = step.parameters;
+			if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
+				continue;
+			}
+
+			candidateAltIndex = altIndex;
+			candidateThreshold = requiredSeconds;
+			break;
+		}
+	} else {
+		if (currentStep.type !== stepType) {
+			return;
+		}
+
+		if (currentProgress) {
+			return;
+		}
+
+		const [, requiredSeconds] = currentStep.parameters;
+		if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
+			return;
+		}
+
+		candidateThreshold = requiredSeconds;
+	}
+
+	if (candidateThreshold == null) {
+		return;
+	}
+
+	const delayStatus = await checkStepDelay(userId, currentStepIndex, candidateAltIndex, bindings);
+	if (!delayStatus.available) {
+		return;
+	}
+
+	const waitUntilPromises: Promise<unknown>[] = [];
+	try {
+		await updateQuestProgress(
+			userId,
+			{
+				type: stepType,
+				index: currentStepIndex,
+				...(candidateAltIndex !== undefined ? { altIndex: candidateAltIndex } : {}),
+				duration: Math.max(readTimeSeconds, candidateThreshold)
+			} as any,
+			{ make: 'unknown', model: 'API', os: 'web' },
+			bindings,
+			{
+				waitUntil(promise) {
+					waitUntilPromises.push(Promise.resolve(promise));
+				}
+			}
+		);
+		await Promise.all(waitUntilPromises);
+	} catch (error) {
+		const status = (error as { status?: number }).status;
+		if (status && status !== 409) {
+			console.warn('Failed to auto-complete read-time quest step:', error);
+		}
+	}
 }
 
 export class UserTimer {
@@ -160,12 +263,12 @@ async function applyField(
 			// mark as read if >1 minute
 			if (duration > 60) {
 				if (fieldParameter) {
-					await addBadgeProgress(userId, 'articles_read', fieldParameter, bindings.KV);
+					await addBadgeProgress(userId, 'articles_read', fieldParameter, bindings.KV, { article });
 				}
 			}
 
 			// add to articles_read_time
-			await addBadgeProgress(userId, 'articles_read_time', duration, bindings.KV);
+			await addBadgeProgress(userId, 'articles_read_time', duration, bindings.KV, { article });
 
 			if (contentId) {
 				const entries: {
@@ -192,6 +295,8 @@ async function applyField(
 
 				await logAnalyticsBatch(contentId, userId, entries, bindings);
 			}
+
+			await maybeAdvanceReadTimeQuestStep(userId, 'articles_read_time', bindings);
 			break;
 		}
 		case 'prompts_read_time': {
@@ -202,12 +307,12 @@ async function applyField(
 			// mark as read if >30 seconds
 			if (duration > 30) {
 				if (fieldParameter) {
-					await addBadgeProgress(userId, 'prompts_read', fieldParameter, bindings.KV);
+					await addBadgeProgress(userId, 'prompts_read', fieldParameter, bindings.KV, { prompt });
 				}
 			}
 
 			// add to prompts_read_time
-			await addBadgeProgress(userId, 'prompts_read_time', duration, bindings.KV);
+			await addBadgeProgress(userId, 'prompts_read_time', duration, bindings.KV, { prompt });
 
 			if (contentId) {
 				const entries: {
@@ -236,5 +341,57 @@ async function applyField(
 			}
 			break;
 		}
+		case 'activity_read_time': {
+			const activity = toRecord(metadata.activity) as Partial<Activity> | undefined;
+
+			// add to activity_read_time
+			await addBadgeProgress(userId, 'activity_read_time', duration, bindings.KV, { activity });
+			await maybeAdvanceReadTimeQuestStep(userId, 'activity_read_time', bindings);
+			break;
+		}
 	}
+}
+
+// returns reading time in seconds either all time or between start and end timestamps (in ms)
+
+export async function getReadTime(
+	userId: string,
+	tracker: 'prompts_read_time' | 'articles_read_time' | 'activity_read_time',
+	kv: KVNamespace,
+	start?: number,
+	end?: number,
+	filter?: (metadata: Record<string, any>) => boolean
+) {
+	const normalizedUserId = normalizeId(userId);
+	const entries = await kv.get<TrackerEntry[]>(
+		`user:badge_tracker:${normalizedUserId}:${tracker}`,
+		'json'
+	);
+
+	if (!entries) return 0;
+
+	if (!start && !end) {
+		// return sum of all entries if no start/end provided
+		return entries.reduce(
+			(total, entry) => total + (typeof entry.value === 'number' ? entry.value : 0),
+			0
+		);
+	}
+
+	const startTime = start ?? 0;
+	const endTime = end ?? Date.now();
+
+	// filter entries to those within the specified time range and sum their values
+	return entries.reduce((total, entry) => {
+		if (
+			entry.date >= startTime &&
+			entry.date <= endTime &&
+			typeof entry.value === 'number' &&
+			(!filter || filter(entry.metadata || {}))
+		) {
+			return total + entry.value;
+		}
+
+		return total;
+	}, 0);
 }

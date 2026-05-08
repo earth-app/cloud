@@ -83,7 +83,7 @@ export type Prompt = {
 	updated_at?: Date;
 };
 
-export type EventActivity =
+export type ActivityOrType =
 	| {
 			type: 'activity_type';
 			value: ActivityType;
@@ -100,7 +100,7 @@ export type Event = {
 	date: number;
 	end_date?: number;
 	visibility: Privacy;
-	activities: EventActivity[];
+	activities: ActivityOrType[];
 	host?: {
 		username: string;
 		full_name: string;

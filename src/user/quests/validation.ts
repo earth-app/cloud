@@ -276,6 +276,10 @@ export async function validateStep(
 		case 'article_quiz': {
 			return await validateArticleQuiz(step, response, bindings);
 		}
+		case 'article_read_time':
+		case 'activity_read_time': {
+			return validateReadTimeStep(step, response);
+		}
 		case 'describe_text': {
 			return await validateDescribeText(step, response, bindings);
 		}
@@ -328,6 +332,46 @@ async function validateArticleQuiz(
 	}
 
 	return { success: true };
+}
+
+function validateReadTimeStep(
+	step: QuestStep,
+	response: QuestStepResponse & { type: 'article_read_time' | 'activity_read_time' }
+) {
+	if (step.type !== response.type) {
+		return {
+			success: false,
+			message: `Expected ${step.type} step, got ${response.type}`
+		};
+	}
+
+	const [, requiredSeconds] = step.parameters;
+	if (
+		typeof requiredSeconds !== 'number' ||
+		!Number.isFinite(requiredSeconds) ||
+		requiredSeconds < 0
+	) {
+		return {
+			success: false,
+			message: `${step.type} requires a valid minimum read time threshold.`
+		};
+	}
+
+	if (typeof response.duration !== 'number' || !Number.isFinite(response.duration)) {
+		return {
+			success: false,
+			message: 'No read time duration was provided.'
+		};
+	}
+
+	if (response.duration < requiredSeconds) {
+		return {
+			success: false,
+			message: `Read time ${response.duration.toFixed(1)}s does not meet the required ${requiredSeconds}s.`
+		};
+	}
+
+	return { success: true, score: response.duration };
 }
 
 async function validateStepAudio(

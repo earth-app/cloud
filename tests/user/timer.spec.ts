@@ -1,7 +1,17 @@
+vi.mock('../../src/user/notifications', () => ({
+	sendUserNotification: vi.fn(async () => undefined)
+}));
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { UserTimer } from '../../src/user/timer';
+import { UserTimer, getReadTime } from '../../src/user/timer';
 import { createMockBindings } from '../helpers/mock-bindings';
 import { MockKVNamespace } from '../helpers/mock-kv';
+import { quests } from '../../src/user/quests';
+import {
+	getCompletedQuestProgress,
+	getQuestHistory,
+	startQuest
+} from '../../src/user/quests/tracking';
 
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -230,5 +240,88 @@ describe('UserTimer', () => {
 			'json'
 		);
 		expect(analytics?.articles_clicked?.total).toBe(1);
+	});
+
+	it('preserves metadata on activity_read_time trackers and completes matching read-time quests', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const timer = new UserTimer(createDurableState(), bindings);
+
+		const questId = 'timer_read_time_regression';
+		const quest = {
+			id: questId,
+			title: 'Timer Read Time Regression',
+			description: 'Validates auto-completion for read-time steps.',
+			icon: 'mdi:timer-outline',
+			rarity: 'normal',
+			steps: [
+				{
+					type: 'article_read_time',
+					description: 'Read for at least 5 seconds.',
+					parameters: ['SPORT', 5]
+				}
+			],
+			reward: 10
+		} as any;
+
+		quests.push(quest);
+		try {
+			await startQuest('42', questId, bindings);
+
+			let now = 1_000;
+			vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+			await timer.fetch(
+				new Request('https://do/timer', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						action: 'start',
+						userId: '42',
+						field: 'articles_read_time:article-quest',
+						metadata: {
+							article: {
+								id: 'article-quest',
+								author_id: 'author-1',
+								title: 'Quest Article'
+							}
+						}
+					})
+				})
+			);
+
+			now = 7_500;
+			const stopResponse = await timer.fetch(
+				new Request('https://do/timer', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						action: 'stop',
+						userId: '42',
+						field: 'articles_read_time:article-quest'
+					})
+				})
+			);
+
+			expect(stopResponse.status).toBe(200);
+			const tracker = await kv.get<{ metadata?: Record<string, unknown>; value: number }[]>(
+				'user:badge_tracker:42:articles_read_time',
+				'json'
+			);
+			expect(tracker).toHaveLength(1);
+			expect(tracker?.[0]?.metadata).toBeDefined();
+
+			const totalReadTime = await getReadTime('42', 'articles_read_time', kv as any);
+			expect(totalReadTime).toBeGreaterThanOrEqual(5);
+
+			const questHistory = await getQuestHistory('42', bindings);
+			expect(questHistory).toContain(questId);
+
+			const completedQuest = await getCompletedQuestProgress('42', questId, bindings);
+			expect(completedQuest).not.toBeNull();
+			expect(completedQuest?.questId).toBe(questId);
+		} finally {
+			quests.splice(quests.indexOf(quest), 1);
+		}
 	});
 });

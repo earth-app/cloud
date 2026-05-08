@@ -39,8 +39,9 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 			scoreKey: string; // key to look up the user's quiz score for this article in KV
 			score: number;
 	  }
-	| { type: 'match_terms' | 'order_items' } // validated externally via separate endpoints
+	| { type: 'match_terms' | 'order_items' | 'respond_to_prompt' } // validated externally via separate endpoints
 	| { type: 'describe_text'; text: string }
+	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
 );
 
 // stored in kv - binary data is replaced with an r2 bucket key
@@ -66,8 +67,11 @@ export type QuestStepProgressEntry = {
 	| { type: 'attend_event'; eventId: string; timestamp: number }
 	| { type: 'transcribe_audio'; r2Key: string }
 	| { type: 'article_quiz'; scoreKey: string; score: number }
-	| { type: 'match_terms' | 'order_items' }
 	| { type: 'describe_text'; text: string; score?: number; prompt?: string }
+	| { type: 'respond_to_prompt'; text: string } // text represents the user's response to the prompt
+	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
+	// contains no additional data
+	| { type: 'match_terms' | 'order_items' }
 );
 
 // r2 path for a step's binary payload

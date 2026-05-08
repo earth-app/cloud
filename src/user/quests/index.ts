@@ -1,5 +1,5 @@
 import { ScoringCriterion } from '../../content/ferry';
-import { ActivityType, EventActivity, Rarity } from '../../util/types';
+import { ActivityType, ActivityOrType, Rarity } from '../../util/types';
 import { designActivityQuest, getActivity } from './activity';
 import { CustomQuest, getCustomQuest, getCustomQuests } from './custom';
 
@@ -55,8 +55,20 @@ export type QuestStep = {
 			parameters: [string, number]; // prompt, confidence threshold
 	  }
 	| {
-			type: 'attend_event';
-			parameters: [EventActivity, number]; // event activity, minimum attendees
+			type: 'attend_event'; // handled over mantle2
+			parameters: [ActivityOrType, number]; // activity, minimum attendees
+	  }
+	| {
+			type: 'respond_to_prompt'; // handled over mantle2
+			parameters: [string, number?]; // keyword, optional author id
+	  }
+	| {
+			type: 'article_read_time';
+			parameters: [ActivityType, number]; // article type, minimum read time in seconds
+	  }
+	| {
+			type: 'activity_read_time';
+			parameters: [ActivityOrType, number]; // activity, minimum read time in seconds
 	  }
 	| {
 			type: 'transcribe_audio';
