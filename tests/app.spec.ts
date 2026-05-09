@@ -1367,6 +1367,42 @@ describe('POST /users/badges/:id/track', () => {
 		expect(badArray.status).toBe(400);
 	});
 
+	it('rejects duplicate values for set-based trackers', async () => {
+		const bindings = createMockBindings();
+		const response = await callApp(
+			'/users/badges/123/track',
+			{
+				method: 'POST',
+				body: JSON.stringify({ tracker_id: 'articles_read', value: ['a1', 'a1'] })
+			},
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(400);
+		expect(await bindings.KV.get('user:badge_tracker:123:articles_read')).toBeNull();
+	});
+
+	it('allows duplicate values for duplicate-aware trackers', async () => {
+		const bindings = createMockBindings();
+		const response = await callApp(
+			'/users/badges/123/track',
+			{
+				method: 'POST',
+				body: JSON.stringify({ tracker_id: 'impact_points_earned', value: [10, 10] })
+			},
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+		const tracker = await bindings.KV.get<{ date: number; value: number }[]>(
+			'user:badge_tracker:123:impact_points_earned',
+			'json'
+		);
+		expect(tracker?.[0]?.value).toBe(20);
+	});
+
 	it('returns 400 for invalid user IDs', async () => {
 		const nonNumericUserId = await callApp('/users/badges/abc/track', {
 			method: 'POST',
@@ -1423,6 +1459,34 @@ describe('POST /users/badges/:id/:badge_id/progress', () => {
 			bindings
 		);
 		expect(badValue.status).toBe(400);
+	});
+
+	it('rejects duplicate values for set-based badge progress', async () => {
+		const bindings = createMockBindings();
+		const response = await callApp(
+			'/users/badges/123/article_enthusiast/progress',
+			{ method: 'POST', body: JSON.stringify({ value: ['a1', 'a1'] }) },
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(400);
+		expect(await bindings.KV.get('user:badge_tracker:123:articles_read')).toBeNull();
+	});
+
+	it('allows duplicate values for duplicate-aware badge progress', async () => {
+		const bindings = createMockBindings();
+		const response = await callApp(
+			'/users/badges/123/bookworm/progress',
+			{ method: 'POST', body: JSON.stringify({ value: [1800, 1800] }) },
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+		const payload = await response.json<{ progress: number; granted: boolean }>();
+		expect(payload.progress).toBe(1);
+		expect(payload.granted).toBe(true);
 	});
 
 	it('grants badges when progress meets requirements', async () => {

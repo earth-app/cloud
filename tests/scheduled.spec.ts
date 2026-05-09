@@ -47,6 +47,7 @@ vi.mock('../src/content/boat', () => ({
 
 import scheduled from '../src/scheduled';
 import { createMockBindings } from './helpers/mock-bindings';
+import { addBadgeProgress } from '../src/user/badges';
 
 beforeEach(() => {
 	vi.clearAllMocks();
@@ -142,6 +143,58 @@ describe('scheduled', () => {
 		expect(mocks.createArticle).toHaveBeenCalledTimes(2);
 		expect(mocks.createArticleQuiz).toHaveBeenCalledTimes(2);
 		expect(mocks.postArticle).toHaveBeenCalledTimes(2);
+	});
+
+	it('revokes badges invalidated by duplicate tracker cleanup on hourly cron', async () => {
+		const kv = createMockBindings().KV as any;
+
+		await kv.put(
+			'user:badge_tracker:42:articles_read',
+			JSON.stringify([
+				{ date: 1, value: 'article-1' },
+				{ date: 2, value: 'article-2' },
+				{ date: 3, value: 'article-3' },
+				{ date: 4, value: 'article-4' },
+				{ date: 5, value: 'article-5' },
+				{ date: 6, value: 'article-6' },
+				{ date: 7, value: 'article-7' },
+				{ date: 8, value: 'article-8' },
+				{ date: 9, value: 'article-9' },
+				{ date: 10, value: 'article-1' }
+			])
+		);
+		await kv.put('user:badge:42:article_enthusiast', JSON.stringify({ granted_at: 1000 }));
+
+		await addBadgeProgress('42', 'articles_read_time', 1800, kv as any, {
+			article: { id: 'article-a' }
+		});
+		await addBadgeProgress('42', 'articles_read_time', 1800, kv as any, {
+			article: { id: 'article-b' }
+		});
+		await kv.put('user:badge:42:bookworm', JSON.stringify({ granted_at: 2000 }));
+
+		await scheduled({ cron: '0 * * * *' } as ScheduledController, createMockBindings({ KV: kv }), {
+			waitUntil: () => {}
+		} as any);
+
+		expect(await kv.get('user:badge:42:article_enthusiast')).toBeNull();
+		expect(await kv.get('user:badge:42:bookworm')).not.toBeNull();
+
+		const dedupedTracker = await kv.get('user:badge_tracker:42:articles_read', 'json');
+		expect(dedupedTracker?.map((entry: any) => entry.value)).toEqual([
+			'article-1',
+			'article-2',
+			'article-3',
+			'article-4',
+			'article-5',
+			'article-6',
+			'article-7',
+			'article-8',
+			'article-9'
+		]);
+
+		const readTimeTracker = await kv.get('user:badge_tracker:42:articles_read_time', 'json');
+		expect(readTimeTracker).toHaveLength(2);
 	});
 
 	it('continues creating remaining events when one entry fails', async () => {

@@ -11,6 +11,7 @@ import {
 } from './content/boat';
 import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
 import { Bindings } from './util/types';
+import { repairDuplicateBadgeProgress } from './user/badges';
 
 export default async function scheduled(
 	controller: ScheduledController,
@@ -32,6 +33,8 @@ export default async function scheduled(
 	}
 
 	if (cron === '0 * * * *') {
+		await repairDuplicateBadgeProgress(env.KV);
+
 		console.log('Running scheduled task: Create new articles (top 3 + bottom 2 ranked)');
 		console.log('Started at', new Date().toISOString());
 

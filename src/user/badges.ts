@@ -30,7 +30,9 @@ export type Badge = {
 	rarity: Rarity;
 	// on request, badges are either granted automatically or based on this function; args are passed from the request
 	progress?: (...args: any[]) => Promise<number> | number;
-	tracker_id?: BadgeTracker; // if provided, links to a tracker in KV, an array of { date: number, value: string }
+	tracker_id?: BadgeTracker; // if provided, links to a tracker in KV, stored as TrackerEntry records
+	allows_duplicate_data?: boolean; // if true, allows the same value to be recorded multiple times in the tracker
+	silently_reject_duplicate_data?: boolean; // if true, duplicate tracker data is ignored instead of throwing an error
 };
 
 // use function instead of constant to avoid loading at import time
@@ -51,7 +53,8 @@ export const badges = (
 			icon: 'mdi:account-star',
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 1),
-			tracker_id: 'impact_points_earned'
+			tracker_id: 'impact_points_earned',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'philosopher',
@@ -89,7 +92,8 @@ export const badges = (
 			icon: 'mdi:book',
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 60 * 60),
-			tracker_id: 'articles_read_time'
+			tracker_id: 'articles_read_time',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'social_butterfly',
@@ -98,6 +102,15 @@ export const badges = (
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 5),
 			tracker_id: 'events_attended'
+		},
+		{
+			id: 'mind_explorer',
+			description: 'Read different articles for a combined total of 1 hour',
+			icon: 'mdi:brain',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 60 * 60),
+			tracker_id: 'articles_read_time',
+			silently_reject_duplicate_data: true
 		},
 		{
 			id: 'thinker',
@@ -176,7 +189,8 @@ export const badges = (
 			icon: 'mdi:book-arrow-up',
 			rarity: 'rare',
 			progress: (...args: any[]) => min(args, 60 * 60 * 5),
-			tracker_id: 'articles_read_time'
+			tracker_id: 'articles_read_time',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'networker',
@@ -234,7 +248,8 @@ export const badges = (
 			icon: 'mdi:earth',
 			rarity: 'rare',
 			progress: (...args: any[]) => min(args, 1000),
-			tracker_id: 'impact_points_earned'
+			tracker_id: 'impact_points_earned',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'storyteller',
@@ -355,7 +370,8 @@ export const badges = (
 			icon: 'mdi:compass-rose',
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 24 * 60 * 60),
-			tracker_id: 'activity_read_time'
+			tracker_id: 'activity_read_time',
+			allows_duplicate_data: true
 		},
 		// amazing badges
 		{
@@ -392,7 +408,8 @@ export const badges = (
 			icon: 'mdi:earth-plus',
 			rarity: 'amazing',
 			progress: (...args: any[]) => min(args, 10000),
-			tracker_id: 'impact_points_earned'
+			tracker_id: 'impact_points_earned',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'master_writer',
@@ -470,7 +487,8 @@ export const badges = (
 			icon: 'material-symbols:book-2',
 			rarity: 'amazing',
 			progress: (...args: any[]) => min(args, 60 * 60 * 45),
-			tracker_id: 'articles_read_time'
+			tracker_id: 'articles_read_time',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'super_questioneer',
@@ -478,7 +496,8 @@ export const badges = (
 			icon: 'mdi:format-list-bulleted-triangle',
 			rarity: 'amazing',
 			progress: (...args: any[]) => min(args, 4 * 60),
-			tracker_id: 'prompts_read_time'
+			tracker_id: 'prompts_read_time',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'super_pioneer',
@@ -486,7 +505,8 @@ export const badges = (
 			icon: 'mdi:sun-compass',
 			rarity: 'amazing',
 			progress: (...args: any[]) => min(args, 48 * 60 * 60),
-			tracker_id: 'activity_read_time'
+			tracker_id: 'activity_read_time',
+			allows_duplicate_data: true
 		},
 		// green badges
 		{
@@ -531,7 +551,8 @@ export const badges = (
 			icon: 'mdi:shovel',
 			rarity: 'green',
 			progress: (...args: any[]) => min(args, 100000),
-			tracker_id: 'impact_points_earned'
+			tracker_id: 'impact_points_earned',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'you_know_ball',
@@ -577,7 +598,8 @@ export const badges = (
 			icon: 'material-symbols:book-5',
 			rarity: 'green',
 			progress: (...args: any[]) => min(args, 60 * 60 * 350),
-			tracker_id: 'articles_read_time'
+			tracker_id: 'articles_read_time',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'ultra_questioneer',
@@ -585,7 +607,8 @@ export const badges = (
 			icon: 'mdi:format-list-bulleted-square',
 			rarity: 'green',
 			progress: (...args: any[]) => min(args, 10 * 60),
-			tracker_id: 'prompts_read_time'
+			tracker_id: 'prompts_read_time',
+			allows_duplicate_data: true
 		}
 	] as (Badge & { name?: string })[]
 ).map((badge) => {
@@ -625,13 +648,94 @@ export type TrackerEntry = {
 	metadata?: Record<string, any>;
 };
 
+export class DuplicateBadgeTrackerDataError extends Error {
+	constructor(trackerId: BadgeTracker, value: TrackerEntry['value']) {
+		super(`Duplicate badge tracker data is not allowed for tracker ${trackerId}: ${String(value)}`);
+		this.name = 'DuplicateBadgeTrackerDataError';
+	}
+}
+
 type BadgeMetadata = {
 	granted_at: number;
 };
 
-// Migration helper to flatten legacy compounding array data
-function migrateLegacyTrackerData(tracker: any[]): TrackerEntry[] {
+function getBadgeByTrackerId(trackerId: BadgeTracker): Badge[] {
+	return badges.filter((badge) => badge.tracker_id === trackerId);
+}
+
+function trackerAllowsDuplicateData(trackerId: BadgeTracker): boolean {
+	return getBadgeByTrackerId(trackerId).some((badge) => badge.allows_duplicate_data);
+}
+
+function trackerSilentlyRejectsDuplicateData(trackerId: BadgeTracker): boolean {
+	return getBadgeByTrackerId(trackerId).some((badge) => badge.silently_reject_duplicate_data);
+}
+
+function normalizeTrackerValue(value: TrackerEntry['value']): TrackerEntry['value'] {
+	return typeof value === 'string' ? normalizeId(value) : value;
+}
+
+function trackerValueKey(value: TrackerEntry['value']): string {
+	return `${typeof value}:${String(value)}`;
+}
+
+function dedupeTrackerEntries(tracker: any[]): TrackerEntry[] {
 	if (!tracker || tracker.length === 0) return [];
+
+	const entries: TrackerEntry[] = [];
+	const seen = new Set<string>();
+
+	for (const entry of tracker) {
+		if (!entry || typeof entry !== 'object') continue;
+
+		const { date, value, metadata } = entry;
+		const values = Array.isArray(value) ? value : [value];
+
+		for (const rawValue of values) {
+			if (typeof rawValue !== 'number' && typeof rawValue !== 'string') continue;
+
+			const normalizedValue = normalizeTrackerValue(rawValue);
+			const key = trackerValueKey(normalizedValue);
+			if (seen.has(key)) continue;
+
+			seen.add(key);
+			entries.push({
+				date: typeof date === 'number' ? date : Date.now(),
+				value: normalizedValue,
+				...(metadata ? { metadata: metadata as Record<string, any> } : {})
+			});
+		}
+	}
+
+	return entries;
+}
+
+// Migration helper to flatten legacy compounding array data
+function migrateLegacyTrackerData(tracker: any[], allowDuplicateData: boolean): TrackerEntry[] {
+	if (!tracker || tracker.length === 0) return [];
+
+	if (allowDuplicateData) {
+		const entries: TrackerEntry[] = [];
+
+		for (const entry of tracker) {
+			if (!entry || typeof entry !== 'object') continue;
+
+			const { date, value, metadata } = entry;
+			const values = Array.isArray(value) ? value : [value];
+
+			for (const rawValue of values) {
+				if (typeof rawValue !== 'number' && typeof rawValue !== 'string') continue;
+
+				entries.push({
+					date: typeof date === 'number' ? date : Date.now(),
+					value: normalizeTrackerValue(rawValue),
+					...(metadata ? { metadata: metadata as Record<string, any> } : {})
+				});
+			}
+		}
+
+		return entries;
+	}
 
 	const uniqueStringValues = new Set<string>();
 	const migratedEntries: TrackerEntry[] = [];
@@ -677,6 +781,96 @@ function migrateLegacyTrackerData(tracker: any[]): TrackerEntry[] {
 	return migratedEntries;
 }
 
+async function loadTrackerData(
+	userId: string,
+	badge: Badge,
+	kv: KVNamespace
+): Promise<{ trackerKey: string; tracker: TrackerEntry[]; allowDuplicateData: boolean }> {
+	const normalizedUserId = normalizeId(userId);
+	const trackerKey = `user:badge_tracker:${normalizedUserId}:${badge.tracker_id}`;
+	let trackerData = await kv.get(trackerKey, 'json');
+
+	// Fallback: check for legacy zero-padded key
+	if (!trackerData && isLegacyPaddedId(userId)) {
+		const legacyKey = `user:badge_tracker:${userId}:${badge.tracker_id}`;
+		const legacyData = await kv.get(legacyKey, 'json');
+		if (legacyData) {
+			// Migrate in background
+			await migrateLegacyKey(legacyKey, trackerKey, kv);
+			trackerData = legacyData;
+		}
+	}
+
+	const allowDuplicateData = trackerAllowsDuplicateData(badge.tracker_id as BadgeTracker);
+	const rawTracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
+	const tracker = allowDuplicateData
+		? migrateLegacyTrackerData(rawTracker, true)
+		: dedupeTrackerEntries(rawTracker);
+
+	if (trackerData && JSON.stringify(tracker) !== JSON.stringify(rawTracker)) {
+		await kv.put(trackerKey, JSON.stringify(tracker));
+	}
+
+	return { trackerKey, tracker, allowDuplicateData };
+}
+
+async function getBadgeProgressFromTracker(
+	badge: Badge,
+	tracker: TrackerEntry[],
+	...progressArgs: any[]
+): Promise<number> {
+	const progress = badge.progress;
+	if (!progress) return 0;
+	const trackerId = badge.tracker_id;
+
+	// Deduplicate if tracker doesn't allow duplicates OR if badge silently rejects duplicates
+	if (
+		!trackerId ||
+		!trackerAllowsDuplicateData(trackerId) ||
+		badge.silently_reject_duplicate_data
+	) {
+		const seen = new Set<string>();
+		const uniqueValues = tracker
+			.map((entry) => normalizeTrackerValue(entry.value))
+			.filter((value) => {
+				const key = trackerValueKey(value);
+				if (seen.has(key)) return false;
+				seen.add(key);
+				return true;
+			});
+
+		// For numeric trackers, sum unique values; for string trackers, pass the array
+		if (uniqueValues.length > 0 && typeof uniqueValues[0] === 'number') {
+			const sum = uniqueValues.reduce((acc, val) => Number(acc) + Number(val), 0);
+			return await progress(sum, ...progressArgs);
+		}
+
+		return await progress(uniqueValues, ...progressArgs);
+	}
+
+	const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
+	const hasMetadataEntries = tracker.some((entry) => entry.metadata != null);
+
+	if (lastEntry && typeof lastEntry.value === 'number') {
+		// Trackers that persist metadata keep per-entry values, so sum them.
+		if (hasMetadataEntries) {
+			const total = tracker.reduce(
+				(sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0),
+				0
+			);
+			return await progress(total, ...progressArgs);
+		}
+
+		// For numeric trackers without metadata, pass the latest accumulated value.
+		return await progress(lastEntry.value, ...progressArgs);
+	}
+
+	return await progress(
+		tracker.map((entry) => entry.value),
+		...progressArgs
+	);
+}
+
 export async function getBadgeProgress(
 	userId: string,
 	badgeId: string,
@@ -693,46 +887,8 @@ export async function getBadgeProgress(
 	}
 
 	if (badge.tracker_id) {
-		const trackerKey = `user:badge_tracker:${normalizedUserId}:${badge.tracker_id}`;
-		let trackerData = await kv.get(trackerKey, 'json');
-
-		// Fallback: check for legacy zero-padded key
-		if (!trackerData && isLegacyPaddedId(userId)) {
-			const legacyKey = `user:badge_tracker:${userId}:${badge.tracker_id}`;
-			const legacyData = await kv.get(legacyKey, 'json');
-			if (legacyData) {
-				// Migrate in background
-				await migrateLegacyKey(legacyKey, trackerKey, kv);
-				trackerData = legacyData;
-			}
-		}
-
-		let tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
-
-		// Migrate legacy data if needed
-		tracker = migrateLegacyTrackerData(tracker);
-
-		// Determine if this tracker stores numbers or strings
-		const lastEntry = tracker.length > 0 ? tracker[tracker.length - 1] : null;
-		const hasMetadataEntries = tracker.some((entry) => entry.metadata != null);
-
-		if (lastEntry && typeof lastEntry.value === 'number') {
-			// Trackers that persist metadata keep per-entry values, so sum them.
-			if (hasMetadataEntries) {
-				const total = tracker.reduce(
-					(sum, entry) => sum + (typeof entry.value === 'number' ? entry.value : 0),
-					0
-				);
-				return await badge.progress(total, ...progressArgs);
-			}
-
-			// For numeric trackers without metadata, pass the latest accumulated value.
-			return await badge.progress(lastEntry.value, ...progressArgs);
-		} else {
-			// For string trackers, pass array of unique values (for counting)
-			const uniqueValues = Array.from(new Set(tracker.map((t) => t.value)));
-			return await badge.progress(uniqueValues, ...progressArgs);
-		}
+		const { tracker } = await loadTrackerData(userId, badge, kv);
+		return await getBadgeProgressFromTracker(badge, tracker, ...progressArgs);
 	}
 
 	return await badge.progress(...progressArgs);
@@ -746,13 +902,64 @@ export async function addBadgeProgress(
 	metadata?: Record<string, any>
 ): Promise<void> {
 	const normalizedUserId = normalizeId(userId);
+	const badge = badges.find((b) => b.tracker_id === trackerId);
+	if (!badge) {
+		throw new Error(`Unknown badge tracker: ${trackerId}`);
+	}
+
 	const trackerKey = `user:badge_tracker:${normalizedUserId}:${trackerId}`;
 	const trackerData = await kv.get(trackerKey, 'json');
 	let tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
+	const allowDuplicateData = trackerAllowsDuplicateData(trackerId);
 
-	// Migrate legacy data if needed (flatten arrays)
-	tracker = migrateLegacyTrackerData(tracker);
+	tracker = allowDuplicateData
+		? migrateLegacyTrackerData(tracker, true)
+		: dedupeTrackerEntries(tracker);
+
 	const values = Array.isArray(value) ? value : [value];
+
+	if (!allowDuplicateData) {
+		const numbers = values.filter((v): v is number => typeof v === 'number');
+		const strings = values.filter((v): v is string => typeof v === 'string');
+		const existingType = tracker.length > 0 && tracker[0] ? typeof tracker[0].value : null;
+
+		if (numbers.length > 0 && existingType === 'string') {
+			console.warn(`Attempted to add numbers to string tracker: ${trackerId}`);
+			return;
+		}
+
+		if (strings.length > 0 && existingType === 'number') {
+			console.warn(`Attempted to add strings to number tracker: ${trackerId}`);
+			return;
+		}
+
+		const existingValues = new Set(tracker.map((entry) => trackerValueKey(entry.value)));
+		const seenInBatch = new Set<string>();
+
+		for (const rawValue of values) {
+			if (typeof rawValue !== 'string' && typeof rawValue !== 'number') continue;
+
+			const normalizedValue = normalizeTrackerValue(rawValue);
+			const key = trackerValueKey(normalizedValue);
+
+			if (seenInBatch.has(key) || existingValues.has(key)) {
+				if (trackerSilentlyRejectsDuplicateData(trackerId)) {
+					continue; // Silently skip duplicate
+				}
+				throw new DuplicateBadgeTrackerDataError(trackerId, normalizedValue);
+			}
+
+			seenInBatch.add(key);
+			tracker.push({
+				date: Date.now(),
+				value: normalizedValue,
+				...(metadata ? { metadata } : {})
+			});
+		}
+
+		await kv.put(trackerKey, JSON.stringify(tracker));
+		return;
+	}
 
 	const numbers = values.filter((v): v is number => typeof v === 'number');
 	const strings = values.filter((v): v is string => typeof v === 'string');
@@ -784,7 +991,7 @@ export async function addBadgeProgress(
 		}
 	}
 
-	// Handle strings: add each unique value as separate entry
+	// Handle strings: add each value as a separate entry
 	if (strings.length > 0) {
 		// Validate: don't mix types in a tracker
 		if (existingType === 'number') {
@@ -792,20 +999,12 @@ export async function addBadgeProgress(
 			return;
 		}
 
-		const existingValues = new Set(tracker.map((t) => t.value));
-
 		for (const val of strings) {
-			// Normalize IDs if this looks like an ID (numeric string)
-			const normalizedValue = normalizeId(val);
-
-			// Only add if not already present (prevent duplicates)
-			if (!existingValues.has(normalizedValue)) {
-				tracker.push({
-					date: Date.now(),
-					value: normalizedValue
-				});
-				existingValues.add(normalizedValue); // Update set to prevent duplicates within this batch
-			}
+			tracker.push({
+				date: Date.now(),
+				value: normalizeId(val),
+				...(metadata ? { metadata } : {})
+			});
 		}
 	}
 
@@ -927,6 +1126,64 @@ export async function revokeBadge(userId: string, badgeId: string, kv: KVNamespa
 	const normalizedUserId = normalizeId(userId);
 	const metadataKey = `user:badge:${normalizedUserId}:${badgeId}`;
 	await kv.delete(metadataKey);
+}
+
+export async function repairDuplicateBadgeProgress(kv: KVNamespace): Promise<string[]> {
+	const revokedBadges: string[] = [];
+	let cursor: string | undefined;
+
+	while (true) {
+		const page = await kv.list({ prefix: 'user:badge_tracker:', cursor, limit: 1000 });
+
+		for (const key of page.keys) {
+			const trackerPrefix = 'user:badge_tracker:';
+			if (!key.name.startsWith(trackerPrefix)) continue;
+
+			const remainder = key.name.slice(trackerPrefix.length);
+			const separatorIndex = remainder.indexOf(':');
+			if (separatorIndex < 0) continue;
+
+			const userId = remainder.slice(0, separatorIndex);
+			const trackerId = remainder.slice(separatorIndex + 1) as BadgeTracker;
+			const relevantBadges = getBadgeByTrackerId(trackerId);
+			if (relevantBadges.length === 0) continue;
+
+			const trackerData = await kv.get(key.name, 'json');
+			const tracker = Array.isArray(trackerData) ? (trackerData as TrackerEntry[]) : [];
+			const allowDuplicateData = relevantBadges.some((badge) => badge.allows_duplicate_data);
+			const normalizedTracker = allowDuplicateData
+				? migrateLegacyTrackerData(tracker, true)
+				: dedupeTrackerEntries(tracker);
+
+			if (JSON.stringify(normalizedTracker) !== JSON.stringify(tracker)) {
+				await kv.put(key.name, JSON.stringify(normalizedTracker));
+			}
+
+			if (allowDuplicateData) {
+				continue;
+			}
+
+			for (const badge of relevantBadges) {
+				if (!(await isBadgeGranted(userId, badge.id, kv))) {
+					continue;
+				}
+
+				const progress = await getBadgeProgressFromTracker(badge, normalizedTracker);
+				if (progress < 1) {
+					await revokeBadge(userId, badge.id, kv);
+					revokedBadges.push(badge.id);
+				}
+			}
+		}
+
+		if (page.list_complete || !page.cursor) {
+			break;
+		}
+
+		cursor = page.cursor;
+	}
+
+	return revokedBadges;
 }
 
 export async function resetBadgeProgress(

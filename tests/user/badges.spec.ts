@@ -41,18 +41,24 @@ describe('addBadgeProgress', () => {
 		expect(tracker?.[0]?.value).toBe(25);
 	});
 
-	it('deduplicates string tracker values', async () => {
+	it('throws when duplicate string tracker values are submitted', async () => {
 		const kv = new MockKVNamespace();
-		await addBadgeProgress('2', 'articles_read', ['001', '001', '002'], kv as any);
-		const tracker = (await kv.get<{ date: number; value: string }[]>(
-			'user:badge_tracker:2:articles_read',
-			'json'
-		)) as { date: number; value: string }[] | null;
+		await expect(
+			addBadgeProgress('2', 'articles_read', ['001', '001', '002'], kv as any)
+		).rejects.toThrow('Duplicate badge tracker data is not allowed for tracker articles_read');
+		expect(await kv.get('user:badge_tracker:2:articles_read')).toBeNull();
+	});
 
-		expect((tracker || []).map((t: { date: number; value: string }) => t.value)).toEqual([
-			'1',
-			'2'
-		]);
+	it('keeps duplicate-allowed tracker values on read-time badges', async () => {
+		const kv = new MockKVNamespace();
+		await addBadgeProgress('2', 'articles_read_time', [30, 30], kv as any);
+		const tracker = (await kv.get<{ date: number; value: number }[]>(
+			'user:badge_tracker:2:articles_read_time',
+			'json'
+		)) as { date: number; value: number }[] | null;
+
+		expect(tracker).toHaveLength(1);
+		expect(tracker?.[0]?.value).toBe(60);
 	});
 
 	it('rejects mixed-type writes for existing string trackers', async () => {
@@ -86,6 +92,55 @@ describe('addBadgeProgress', () => {
 			'Attempted to add strings to number tracker: impact_points_earned'
 		);
 	});
+
+	it('silently rejects duplicate values for articles_read_time (mind_explorer tracker)', async () => {
+		const kv = new MockKVNamespace();
+		// Add 3600 seconds once with metadata
+		await addBadgeProgress('11', 'articles_read_time', 3600, kv as any, {
+			article: { id: 'article-1' }
+		});
+
+		const tracker = (await kv.get<{ date: number; value: number }[]>(
+			'user:badge_tracker:11:articles_read_time',
+			'json'
+		)) as { date: number; value: number }[] | null;
+
+		// Should have 1 entry
+		expect(tracker).toHaveLength(1);
+		expect(tracker?.[0]?.value).toBe(3600);
+
+		// Progress for mind_explorer should be 1.0 (met the 1 hour requirement)
+		const mindExplorerProgress = await getBadgeProgress('11', 'mind_explorer', kv as any);
+		expect(mindExplorerProgress).toBe(1);
+	});
+
+	it('silent rejection deduplicates during progress calculation for mind_explorer', async () => {
+		const kv = new MockKVNamespace();
+		// Add 1800 seconds twice with different metadata
+		await addBadgeProgress('12', 'articles_read_time', 1800, kv as any, {
+			article: { id: 'article-a' }
+		});
+		await addBadgeProgress('12', 'articles_read_time', 1800, kv as any, {
+			article: { id: 'article-b' }
+		});
+
+		// The tracker stores both entries (different metadata)
+		const tracker = (await kv.get<{ date: number; value: number }[]>(
+			'user:badge_tracker:12:articles_read_time',
+			'json'
+		)) as { date: number; value: number }[] | null;
+		expect(tracker).toHaveLength(2);
+		expect(tracker?.every((entry) => entry.value === 1800)).toBe(true);
+
+		// For bookworm (allows_duplicate_data), it sums values: 1800 + 1800 = 3600
+		const bookwormProgress = await getBadgeProgress('12', 'bookworm', kv as any);
+		expect(bookwormProgress).toBe(1); // 3600 seconds
+
+		// For mind_explorer (silently_reject_duplicate_data), it dedupes by value before summing
+		// Both entries have value 1800, so after dedup it counts as one unique 1800
+		const mindExplorerProgress = await getBadgeProgress('12', 'mind_explorer', kv as any);
+		expect(mindExplorerProgress).toBe(0.5); // Only 1800 seconds (unique values only)
+	});
 });
 
 describe('getBadgeProgress', () => {
@@ -100,6 +155,27 @@ describe('getBadgeProgress', () => {
 
 		const progress = await getBadgeProgress('3', 'article_enthusiast', kv as any);
 		expect(progress).toBe(1);
+	});
+
+	it('deduplicates stored tracker entries when computing progress', async () => {
+		const kv = new MockKVNamespace();
+		await kv.put(
+			'user:badge_tracker:3:articles_read',
+			JSON.stringify([
+				{ date: 1, value: 'a1' },
+				{ date: 2, value: 'a1' },
+				{ date: 3, value: 'a2' }
+			])
+		);
+
+		const progress = await getBadgeProgress('3', 'article_enthusiast', kv as any);
+		expect(progress).toBe(0.2);
+
+		const tracker = (await kv.get<{ date: number; value: string }[]>(
+			'user:badge_tracker:3:articles_read',
+			'json'
+		)) as { date: number; value: string }[] | null;
+		expect((tracker || []).map((entry) => entry.value)).toEqual(['a1', 'a2']);
 	});
 
 	it('returns 0 for unknown badges and resolves one-time badge progress by grant status', async () => {
