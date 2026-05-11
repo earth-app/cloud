@@ -41,12 +41,19 @@ describe('addBadgeProgress', () => {
 		expect(tracker?.[0]?.value).toBe(25);
 	});
 
-	it('throws when duplicate string tracker values are submitted', async () => {
+	it('silently rejects duplicate string tracker values', async () => {
 		const kv = new MockKVNamespace();
-		await expect(
-			addBadgeProgress('2', 'articles_read', ['001', '001', '002'], kv as any)
-		).rejects.toThrow('Duplicate badge tracker data is not allowed for tracker articles_read');
-		expect(await kv.get('user:badge_tracker:2:articles_read')).toBeNull();
+		await addBadgeProgress('2', 'articles_read', ['001', '001', '002'], kv as any);
+
+		// Should not throw; duplicates are silently rejected
+		const tracker = (await kv.get<{ date: number; value: string }[]>(
+			'user:badge_tracker:2:articles_read',
+			'json'
+		)) as { date: number; value: string }[] | null;
+
+		// Should have only 2 unique values stored (normalizeId converts '001' to '1' and '002' to '2')
+		expect(tracker).toHaveLength(2);
+		expect(tracker?.map((entry) => entry.value).sort()).toEqual(['1', '2']);
 	});
 
 	it('keeps duplicate-allowed tracker values on read-time badges', async () => {
@@ -93,10 +100,13 @@ describe('addBadgeProgress', () => {
 		);
 	});
 
-	it('silently rejects duplicate values for articles_read_time (mind_explorer tracker)', async () => {
+	it('deduplicates by metadata path for mind_explorer (dedupe_by: article.id)', async () => {
 		const kv = new MockKVNamespace();
-		// Add 3600 seconds once with metadata
-		await addBadgeProgress('11', 'articles_read_time', 3600, kv as any, {
+		// Add 1800 seconds twice with same metadata (same article)
+		await addBadgeProgress('11', 'articles_read_time', 1800, kv as any, {
+			article: { id: 'article-1' }
+		});
+		await addBadgeProgress('11', 'articles_read_time', 1800, kv as any, {
 			article: { id: 'article-1' }
 		});
 
@@ -105,18 +115,18 @@ describe('addBadgeProgress', () => {
 			'json'
 		)) as { date: number; value: number }[] | null;
 
-		// Should have 1 entry
+		// Should have only 1 entry (second is deduplicated by article.id)
 		expect(tracker).toHaveLength(1);
-		expect(tracker?.[0]?.value).toBe(3600);
+		expect(tracker?.[0]?.value).toBe(1800);
 
-		// Progress for mind_explorer should be 1.0 (met the 1 hour requirement)
+		// Progress for mind_explorer: 1800 seconds = 0.5 (need 3600 for full progress)
 		const mindExplorerProgress = await getBadgeProgress('11', 'mind_explorer', kv as any);
-		expect(mindExplorerProgress).toBe(1);
+		expect(mindExplorerProgress).toBe(0.5);
 	});
 
-	it('silent rejection deduplicates during progress calculation for mind_explorer', async () => {
+	it('deduplicates correctly for bookworm vs mind_explorer', async () => {
 		const kv = new MockKVNamespace();
-		// Add 1800 seconds twice with different metadata
+		// Add 1800 seconds twice with different metadata (different articles)
 		await addBadgeProgress('12', 'articles_read_time', 1800, kv as any, {
 			article: { id: 'article-a' }
 		});
@@ -132,14 +142,13 @@ describe('addBadgeProgress', () => {
 		expect(tracker).toHaveLength(2);
 		expect(tracker?.every((entry) => entry.value === 1800)).toBe(true);
 
-		// For bookworm (allows_duplicate_data), it sums values: 1800 + 1800 = 3600
+		// For bookworm (allows_duplicate_data, no dedupe_by), it sums all values: 1800 + 1800 = 3600
 		const bookwormProgress = await getBadgeProgress('12', 'bookworm', kv as any);
-		expect(bookwormProgress).toBe(1); // 3600 seconds
+		expect(bookwormProgress).toBe(1); // 3600 seconds = 1 hour
 
-		// For mind_explorer (silently_reject_duplicate_data), it dedupes by value before summing
-		// Both entries have value 1800, so after dedup it counts as one unique 1800
+		// For mind_explorer (dedupe_by: article.id), it counts unique articles: 1800 + 1800 = 3600 (different articles)
 		const mindExplorerProgress = await getBadgeProgress('12', 'mind_explorer', kv as any);
-		expect(mindExplorerProgress).toBe(0.5); // Only 1800 seconds (unique values only)
+		expect(mindExplorerProgress).toBe(1); // 3600 seconds from 2 different articles
 	});
 });
 

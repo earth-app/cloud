@@ -1367,7 +1367,7 @@ describe('POST /users/badges/:id/track', () => {
 		expect(badArray.status).toBe(400);
 	});
 
-	it('rejects duplicate values for set-based trackers', async () => {
+	it('silently rejects duplicate values for set-based trackers', async () => {
 		const bindings = createMockBindings();
 		const response = await callApp(
 			'/users/badges/123/track',
@@ -1379,8 +1379,14 @@ describe('POST /users/badges/:id/track', () => {
 			bindings
 		);
 
-		expect(response.status).toBe(400);
-		expect(await bindings.KV.get('user:badge_tracker:123:articles_read')).toBeNull();
+		expect(response.status).toBe(200);
+		const tracker = await bindings.KV.get<{ date: number; value: string }[]>(
+			'user:badge_tracker:123:articles_read',
+			'json'
+		);
+		// Should store only one entry (duplicate silently rejected)
+		expect(tracker).toHaveLength(1);
+		expect(tracker?.[0]?.value).toBe('a1');
 	});
 
 	it('allows duplicate values for duplicate-aware trackers', async () => {
@@ -1461,7 +1467,7 @@ describe('POST /users/badges/:id/:badge_id/progress', () => {
 		expect(badValue.status).toBe(400);
 	});
 
-	it('rejects duplicate values for set-based badge progress', async () => {
+	it('silently rejects duplicate values for set-based badge progress', async () => {
 		const bindings = createMockBindings();
 		const response = await callApp(
 			'/users/badges/123/article_enthusiast/progress',
@@ -1470,8 +1476,11 @@ describe('POST /users/badges/:id/:badge_id/progress', () => {
 			bindings
 		);
 
-		expect(response.status).toBe(400);
-		expect(await bindings.KV.get('user:badge_tracker:123:articles_read')).toBeNull();
+		expect(response.status).toBe(200);
+		const payload = await response.json<{ progress: number; granted: boolean }>();
+		// Duplicate silently rejected, progress is 0.1 (only 1 unique article, need 10)
+		expect(payload.progress).toBe(0.1);
+		expect(payload.granted).toBe(false);
 	});
 
 	it('allows duplicate values for duplicate-aware badge progress', async () => {

@@ -33,6 +33,7 @@ export type Badge = {
 	tracker_id?: BadgeTracker; // if provided, links to a tracker in KV, stored as TrackerEntry records
 	allows_duplicate_data?: boolean; // if true, allows the same value to be recorded multiple times in the tracker
 	silently_reject_duplicate_data?: boolean; // if true, duplicate tracker data is ignored instead of throwing an error
+	dedupe_by?: string; // if provided, deduplicate by this metadata path (e.g., "article.id" for metadata.article.id) instead of by value
 };
 
 // use function instead of constant to avoid loading at import time
@@ -110,7 +111,8 @@ export const badges = (
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 60 * 60),
 			tracker_id: 'articles_read_time',
-			silently_reject_duplicate_data: true
+			silently_reject_duplicate_data: true,
+			dedupe_by: 'article.id'
 		},
 		{
 			id: 'thinker',
@@ -671,12 +673,40 @@ function trackerSilentlyRejectsDuplicateData(trackerId: BadgeTracker): boolean {
 	return getBadgeByTrackerId(trackerId).some((badge) => badge.silently_reject_duplicate_data);
 }
 
+function trackerDedupeByPath(trackerId: BadgeTracker): string | undefined {
+	// Return the first dedupe_by found for this tracker (all badges sharing a tracker should use the same dedupe_by)
+	return getBadgeByTrackerId(trackerId).find((badge) => badge.dedupe_by)?.dedupe_by;
+}
+
 function normalizeTrackerValue(value: TrackerEntry['value']): TrackerEntry['value'] {
 	return typeof value === 'string' ? normalizeId(value) : value;
 }
 
 function trackerValueKey(value: TrackerEntry['value']): string {
 	return `${typeof value}:${String(value)}`;
+}
+
+function getMetadataPathValue(metadata: Record<string, any> | undefined, path: string): any {
+	if (!metadata) return undefined;
+	const parts = path.split('.');
+	let current = metadata;
+	for (const part of parts) {
+		if (current == null) return undefined;
+		current = current[part];
+	}
+	return current;
+}
+
+function trackerDedupeKey(entry: TrackerEntry, dedupeBy?: string): string {
+	if (dedupeBy) {
+		const metaValue = getMetadataPathValue(entry.metadata, dedupeBy);
+		if (metaValue !== undefined) {
+			return `meta:${dedupeBy}:${String(metaValue)}`;
+		}
+		// Fallback to value-based key if metadata is missing
+		return trackerValueKey(entry.value);
+	}
+	return trackerValueKey(entry.value);
 }
 
 function dedupeTrackerEntries(tracker: any[]): TrackerEntry[] {
@@ -823,21 +853,23 @@ async function getBadgeProgressFromTracker(
 	if (!progress) return 0;
 	const trackerId = badge.tracker_id;
 
-	// Deduplicate if tracker doesn't allow duplicates OR if badge silently rejects duplicates
+	// Deduplicate if tracker doesn't allow duplicates OR if badge silently rejects duplicates or has dedupe_by
+	const dedupeByPath = badge.dedupe_by;
 	if (
 		!trackerId ||
 		!trackerAllowsDuplicateData(trackerId) ||
-		badge.silently_reject_duplicate_data
+		badge.silently_reject_duplicate_data ||
+		dedupeByPath
 	) {
 		const seen = new Set<string>();
 		const uniqueValues = tracker
-			.map((entry) => normalizeTrackerValue(entry.value))
-			.filter((value) => {
-				const key = trackerValueKey(value);
-				if (seen.has(key)) return false;
+			.map((entry) => {
+				const key = trackerDedupeKey(entry, dedupeByPath);
+				if (seen.has(key)) return null;
 				seen.add(key);
-				return true;
-			});
+				return entry.value;
+			})
+			.filter((value) => value !== null);
 
 		// For numeric trackers, sum unique values; for string trackers, pass the array
 		if (uniqueValues.length > 0 && typeof uniqueValues[0] === 'number') {
@@ -911,7 +943,60 @@ export async function addBadgeProgress(
 	const trackerData = await kv.get(trackerKey, 'json');
 	let tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];
 	const allowDuplicateData = trackerAllowsDuplicateData(trackerId);
+	const dedupeByPath = trackerDedupeByPath(trackerId);
 
+	// If metadata is provided and dedupe_by is set, dedupe by metadata path
+	// Otherwise, follow the allows_duplicate_data setting
+	const shouldDedupeByMetadata = metadata && dedupeByPath !== undefined;
+
+	if (shouldDedupeByMetadata) {
+		// For trackers with dedupe_by and metadata provided, deduplicate by metadata path
+		tracker = tracker.filter((e) => e); // ensure array is valid
+
+		const values = Array.isArray(value) ? value : [value];
+		const numbers = values.filter((v): v is number => typeof v === 'number');
+		const strings = values.filter((v): v is string => typeof v === 'string');
+		const existingType = tracker.length > 0 && tracker[0] ? typeof tracker[0].value : null;
+
+		if (numbers.length > 0 && existingType === 'string') {
+			console.warn(`Attempted to add numbers to string tracker: ${trackerId}`);
+			return;
+		}
+
+		if (strings.length > 0 && existingType === 'number') {
+			console.warn(`Attempted to add strings to number tracker: ${trackerId}`);
+			return;
+		}
+
+		// Deduplicate by metadata path
+		const existingKeys = new Set(tracker.map((entry) => trackerDedupeKey(entry, dedupeByPath)));
+		const seenInBatch = new Set<string>();
+
+		for (const rawValue of values) {
+			if (typeof rawValue !== 'string' && typeof rawValue !== 'number') continue;
+
+			const normalizedValue = normalizeTrackerValue(rawValue);
+			const newEntry: TrackerEntry = {
+				date: Date.now(),
+				value: normalizedValue,
+				...(metadata ? { metadata } : {})
+			};
+			const key = trackerDedupeKey(newEntry, dedupeByPath);
+
+			if (seenInBatch.has(key) || existingKeys.has(key)) {
+				// Silently skip duplicate
+				continue;
+			}
+
+			seenInBatch.add(key);
+			tracker.push(newEntry);
+		}
+
+		await kv.put(trackerKey, JSON.stringify(tracker));
+		return;
+	}
+
+	// Original logic for trackers without dedupe_by (or when no metadata is provided)
 	tracker = allowDuplicateData
 		? migrateLegacyTrackerData(tracker, true)
 		: dedupeTrackerEntries(tracker);
@@ -933,7 +1018,7 @@ export async function addBadgeProgress(
 			return;
 		}
 
-		const existingValues = new Set(tracker.map((entry) => trackerValueKey(entry.value)));
+		const existingKeys = new Set(tracker.map((entry) => trackerValueKey(entry.value)));
 		const seenInBatch = new Set<string>();
 
 		for (const rawValue of values) {
@@ -942,11 +1027,9 @@ export async function addBadgeProgress(
 			const normalizedValue = normalizeTrackerValue(rawValue);
 			const key = trackerValueKey(normalizedValue);
 
-			if (seenInBatch.has(key) || existingValues.has(key)) {
-				if (trackerSilentlyRejectsDuplicateData(trackerId)) {
-					continue; // Silently skip duplicate
-				}
-				throw new DuplicateBadgeTrackerDataError(trackerId, normalizedValue);
+			if (seenInBatch.has(key) || existingKeys.has(key)) {
+				// Silently skip duplicate (no longer throw)
+				continue;
 			}
 
 			seenInBatch.add(key);
@@ -1151,9 +1234,25 @@ export async function repairDuplicateBadgeProgress(kv: KVNamespace): Promise<str
 			const trackerData = await kv.get(key.name, 'json');
 			const tracker = Array.isArray(trackerData) ? (trackerData as TrackerEntry[]) : [];
 			const allowDuplicateData = relevantBadges.some((badge) => badge.allows_duplicate_data);
-			const normalizedTracker = allowDuplicateData
-				? migrateLegacyTrackerData(tracker, true)
-				: dedupeTrackerEntries(tracker);
+			const dedupeByPath = trackerDedupeByPath(trackerId);
+
+			let normalizedTracker: TrackerEntry[];
+			if (allowDuplicateData) {
+				normalizedTracker = migrateLegacyTrackerData(tracker, true);
+			} else if (dedupeByPath) {
+				// For dedupe_by trackers, deduplicate based on the metadata path
+				const seen = new Set<string>();
+				normalizedTracker = [];
+				for (const entry of tracker) {
+					const key = trackerDedupeKey(entry, dedupeByPath);
+					if (!seen.has(key)) {
+						seen.add(key);
+						normalizedTracker.push(entry);
+					}
+				}
+			} else {
+				normalizedTracker = dedupeTrackerEntries(tracker);
+			}
 
 			if (JSON.stringify(normalizedTracker) !== JSON.stringify(tracker)) {
 				await kv.put(key.name, JSON.stringify(normalizedTracker));

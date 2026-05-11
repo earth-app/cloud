@@ -54,7 +54,6 @@ import {
 import {
 	BadgeTracker,
 	badges,
-	DuplicateBadgeTrackerDataError,
 	getBadgeProgress,
 	addBadgeProgress,
 	grantBadge,
@@ -1298,9 +1297,6 @@ app.post('/users/badges/:id/track', async (c) => {
 			200
 		);
 	} catch (err) {
-		if (err instanceof DuplicateBadgeTrackerDataError) {
-			return c.text(err.message, 400);
-		}
 		console.error(
 			`Error tracking progress for tracker '${body.tracker_id}' for user '${id}':`,
 			err
@@ -1376,10 +1372,6 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 			200
 		);
 	} catch (err) {
-		if (err instanceof DuplicateBadgeTrackerDataError) {
-			return c.text(err.message, 400);
-		}
-
 		console.error(`Error adding progress to badge '${badgeId}' for user '${id}':`, err);
 		return c.text('Failed to add badge progress', 500);
 	}
