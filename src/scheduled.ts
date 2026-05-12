@@ -20,7 +20,7 @@ export default async function scheduled(
 ) {
 	const cron = (controller.cron || '').trim();
 
-	if (cron === '*/12 * * * *') {
+	if (cron === '0 * * * *') {
 		console.log('Running scheduled task: Create new prompt');
 		console.log('Started at', new Date().toISOString());
 
@@ -32,18 +32,18 @@ export default async function scheduled(
 		return;
 	}
 
-	if (cron === '0 * * * *') {
+	if (cron === '0 */4 * * *') {
 		await repairDuplicateBadgeProgress(env.KV);
 
-		console.log('Running scheduled task: Create new articles (top 3 + bottom 2 ranked)');
+		console.log('Running scheduled task: Create new articles (top + bottom ranked)');
 		console.log('Started at', new Date().toISOString());
 
 		const [oceans, tags] = await findArticle(env);
-		console.log(`Found ${oceans.length} articles (top 3 + bottom 2 ranked) with tags:`, tags);
+		console.log(`Found ${oceans.length} articles (top + bottom ranked) with tags:`, tags);
 
 		for (let i = 0; i < oceans.length; i++) {
 			const ocean = oceans[i];
-			const rankLabel = i < 3 ? `top-${i + 1}-ranked` : `bottom-${i - 2}-ranked`;
+			const rankLabel = i === 0 ? 'top-ranked' : 'bottom-ranked';
 			console.log(`Processing ${rankLabel} article: ${ocean.title}`);
 
 			const article = await createArticle(ocean, env.AI, tags);
@@ -60,11 +60,6 @@ export default async function scheduled(
 			);
 		}
 
-		console.log('Finished at', new Date().toISOString());
-		return;
-	}
-
-	if (cron === '0 */4 * * *') {
 		console.log('Running scheduled task: Cache leaderboards');
 		console.log('Started at', new Date().toISOString());
 
@@ -80,7 +75,7 @@ export default async function scheduled(
 		return;
 	}
 
-	if (cron === '0 0 */2 * *') {
+	if (cron === '0 0 */4 * *') {
 		console.log('Running scheduled task: Event creation from calendar');
 		console.log('Started at', new Date().toISOString());
 

@@ -467,21 +467,6 @@ JSON.stringify(value, (_, val) =>
 JSON.parse(result, (_, val) => (val?.__type === 'Uint8Array' ? new Uint8Array(val.data) : val));
 ```
 
-## Scheduled Tasks
-
-Configured in `wrangler.jsonc`:
-
-```jsonc
-"triggers": {
-  "crons": [
-    "0 * * * *",      // Hourly: cache journey leaderboards
-    "*/12 * * * *",   // Every 12 minutes: create prompt
-    "*/24 * * * *",   // Every 24 minutes: create best+worst ranked articles
-    "0 0 */2 * *"     // Every 2 days: create events from calendar data
-  ]
-}
-```
-
 ### Hourly: Leaderboard Cache
 
 - Refreshes top rankings for `article`, `prompt`, and `event` journeys.

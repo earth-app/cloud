@@ -125,8 +125,8 @@ describe('scheduled', () => {
 		);
 	});
 
-	it('creates and posts a prompt on prompt cron', async () => {
-		await scheduled({ cron: '*/12 * * * *' } as ScheduledController, createMockBindings(), {
+	it('creates and posts a prompt on hourly cron', async () => {
+		await scheduled({ cron: '0 * * * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}
 		} as any);
 
@@ -134,8 +134,8 @@ describe('scheduled', () => {
 		expect(mocks.postPrompt).toHaveBeenCalledWith('Prompt?', expect.anything());
 	});
 
-	it('creates and posts generated articles on hourly cron', async () => {
-		await scheduled({ cron: '0 * * * *' } as ScheduledController, createMockBindings(), {
+	it('creates and posts generated articles on 4-hour cron', async () => {
+		await scheduled({ cron: '0 */4 * * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}
 		} as any);
 
@@ -145,7 +145,7 @@ describe('scheduled', () => {
 		expect(mocks.postArticle).toHaveBeenCalledTimes(2);
 	});
 
-	it('revokes badges invalidated by duplicate tracker cleanup on hourly cron', async () => {
+	it('revokes badges invalidated by duplicate tracker cleanup on article cron', async () => {
 		const kv = createMockBindings().KV as any;
 
 		await kv.put(
@@ -173,9 +173,13 @@ describe('scheduled', () => {
 		});
 		await kv.put('user:badge:42:bookworm', JSON.stringify({ granted_at: 2000 }));
 
-		await scheduled({ cron: '0 * * * *' } as ScheduledController, createMockBindings({ KV: kv }), {
-			waitUntil: () => {}
-		} as any);
+		await scheduled(
+			{ cron: '0 */4 * * *' } as ScheduledController,
+			createMockBindings({ KV: kv }),
+			{
+				waitUntil: () => {}
+			} as any
+		);
 
 		expect(await kv.get('user:badge:42:article_enthusiast')).toBeNull();
 		expect(await kv.get('user:badge:42:bookworm')).not.toBeNull();
@@ -213,7 +217,7 @@ describe('scheduled', () => {
 			fields: {}
 		});
 
-		await scheduled({ cron: '0 0 */2 * *' } as ScheduledController, createMockBindings(), {
+		await scheduled({ cron: '0 0 */4 * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}
 		} as any);
 
@@ -253,7 +257,7 @@ describe('scheduled', () => {
 			description: 'Desc'
 		});
 
-		await scheduled({ cron: '0 0 */2 * *' } as ScheduledController, createMockBindings(), {
+		await scheduled({ cron: '0 0 */4 * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}
 		} as any);
 
@@ -277,7 +281,7 @@ describe('scheduled', () => {
 			fields: {}
 		});
 
-		await scheduled({ cron: '0 0 */2 * *' } as ScheduledController, createMockBindings(), {
+		await scheduled({ cron: '0 0 */4 * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}
 		} as any);
 

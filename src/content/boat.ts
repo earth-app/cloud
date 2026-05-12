@@ -300,11 +300,11 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 		);
 	}
 
-	// select top 3 + bottom 2 for maximum diversity
+	// select top ranked + bottom ranked for maximum diversity
 	const sortedByScore = allRanked.sort((a, b) => b.score - a.score);
-	const top3 = sortedByScore.slice(0, 3);
-	const bottom2 = sortedByScore.slice(-2);
-	const selectedIndices = [...top3.map((r) => r.id), ...bottom2.map((r) => r.id)];
+	const top1 = sortedByScore.slice(0, 1);
+	const bottom1 = sortedByScore.slice(-1);
+	const selectedIndices = [...top1.map((r) => r.id), ...bottom1.map((r) => r.id)];
 	const selectedArticles: OceanArticle[] = [];
 
 	for (const idx of selectedIndices) {
