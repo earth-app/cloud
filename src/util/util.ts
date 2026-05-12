@@ -38,7 +38,14 @@ export function fromDataURL(dataUrl: string): { mimeType: string; data: Uint8Arr
  * Converts to BigInt and back to string to strip leading zeros.
  * Returns the original string if it's not a valid numeric ID.
  */
-export function normalizeId(id: string): string {
+export function normalizeId(id?: unknown): string {
+	if (!id) return '';
+	if (typeof id === 'number' || typeof id === 'bigint') {
+		return BigInt(id).toString();
+	}
+
+	if (typeof id !== 'string') return '';
+
 	if (!/^\d+$/.test(id)) return id;
 	try {
 		return BigInt(id).toString();

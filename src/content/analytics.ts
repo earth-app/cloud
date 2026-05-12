@@ -1,4 +1,5 @@
 import { Bindings } from '../util/types';
+import { normalizeId } from '../util/util';
 
 const ANALYTICS_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 export const ANALYTICS_MAX_EVENTS_PER_CATEGORY = 5000;
@@ -64,43 +65,15 @@ type AnalyticsBatchOptions = {
 };
 
 function buildContentAnalyticsKey(contentId: string) {
-	return `${CONTENT_ANALYTICS_KEY_PREFIX}${normalizeContentId(contentId)}`;
+	return `${CONTENT_ANALYTICS_KEY_PREFIX}${normalizeId(contentId)}`;
 }
 
 function buildOwnerAnalyticsIndexPrefix(ownerHost: string) {
-	return `${OWNER_ANALYTICS_INDEX_PREFIX}${normalizeOwnerHost(ownerHost)}:`;
+	return `${OWNER_ANALYTICS_INDEX_PREFIX}${normalizeId(ownerHost)}:`;
 }
 
 function buildOwnerAnalyticsIndexKey(ownerHost: string, contentId: string) {
-	return `${buildOwnerAnalyticsIndexPrefix(ownerHost)}${normalizeContentId(contentId)}`;
-}
-
-function normalizeContentId(value: unknown) {
-	return typeof value === 'string' ? value.trim() : '';
-}
-
-function normalizeOwnerHost(value: unknown) {
-	if (typeof value !== 'string') {
-		if (typeof value === 'number' && Number.isFinite(value)) {
-			return String(value);
-		}
-		return '';
-	}
-
-	const trimmed = value.trim();
-	if (!trimmed) {
-		return '';
-	}
-
-	if (!/^\d+$/.test(trimmed)) {
-		return trimmed;
-	}
-
-	try {
-		return BigInt(trimmed).toString();
-	} catch {
-		return trimmed;
-	}
+	return `${buildOwnerAnalyticsIndexPrefix(ownerHost)}${normalizeId(contentId)}`;
 }
 
 function extractOwnerHostFromMetadata(metadata?: Record<string, any>) {
@@ -109,7 +82,7 @@ function extractOwnerHostFromMetadata(metadata?: Record<string, any>) {
 	}
 
 	for (const key of ['owner_host', 'owner_id', 'author_id', 'host_id']) {
-		const ownerHost = normalizeOwnerHost(metadata[key]);
+		const ownerHost = normalizeId(metadata[key]);
 		if (ownerHost) {
 			return ownerHost;
 		}
@@ -123,7 +96,7 @@ function resolveOwnerHost(
 	entries: AnalyticsLogEntry[],
 	existingOwnerHost?: string
 ) {
-	const explicit = normalizeOwnerHost(explicitOwnerHost);
+	const explicit = normalizeId(explicitOwnerHost);
 	if (explicit) {
 		return explicit;
 	}
@@ -135,7 +108,7 @@ function resolveOwnerHost(
 		}
 	}
 
-	return normalizeOwnerHost(existingOwnerHost);
+	return normalizeId(existingOwnerHost);
 }
 
 export async function getContentAnalytics(
@@ -342,7 +315,7 @@ async function listIndexedContentIdsForOwner(ownerHost: string, kv: KVNamespace)
 		});
 
 		for (const key of page.keys) {
-			const fromMetadata = normalizeContentId(key.metadata?.content_id);
+			const fromMetadata = normalizeId(key.metadata?.content_id);
 			if (fromMetadata) {
 				ids.add(fromMetadata);
 				continue;
@@ -377,7 +350,7 @@ async function listContentIdsForOwnerFromMetadata(ownerHost: string, kv: KVNames
 		});
 
 		for (const key of page.keys) {
-			const metadataOwner = normalizeOwnerHost(key.metadata?.owner_host);
+			const metadataOwner = normalizeId(key.metadata?.owner_host);
 			if (metadataOwner !== ownerHost) {
 				continue;
 			}
@@ -407,7 +380,7 @@ export async function getContentAnalyticsByOwner(
 	ownerHost: string,
 	bindings: Bindings
 ): Promise<OwnerContentAnalyticsResult> {
-	const normalizedOwnerHost = normalizeOwnerHost(ownerHost);
+	const normalizedOwnerHost = normalizeId(ownerHost);
 	if (!normalizedOwnerHost) {
 		return {
 			owner_host: '',
