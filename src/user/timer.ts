@@ -68,99 +68,103 @@ async function maybeAdvanceReadTimeQuestStep(
 	tracker: 'articles_read_time' | 'activity_read_time',
 	bindings: Bindings
 ) {
-	const questProgress = await getCurrentQuestProgress(userId, bindings);
-	if (!questProgress.quest || questProgress.completed) {
-		return;
-	}
-
-	const readTimeSeconds = await getReadTime(userId, tracker, bindings.KV);
-
-	const currentStepIndex = questProgress.currentStepIndex;
-	const currentStep = questProgress.currentStep;
-	if (!currentStep) {
-		return;
-	}
-
-	const stepType = tracker === 'articles_read_time' ? 'article_read_time' : 'activity_read_time';
-	const currentProgress = questProgress.progress[currentStepIndex];
-
-	let candidateAltIndex: number | undefined;
-	let candidateThreshold: number | undefined;
-
-	if (Array.isArray(currentStep)) {
-		const completedAltIndices = new Set(
-			Array.isArray(currentProgress) ? currentProgress.map((entry) => entry.altIndex ?? 0) : []
-		);
-
-		for (let altIndex = 0; altIndex < currentStep.length; altIndex++) {
-			const step = currentStep[altIndex];
-			if (step.type !== stepType) {
-				continue;
-			}
-
-			if (completedAltIndices.has(altIndex)) {
-				continue;
-			}
-
-			const [, requiredSeconds] = step.parameters;
-			if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
-				continue;
-			}
-
-			candidateAltIndex = altIndex;
-			candidateThreshold = requiredSeconds;
-			break;
-		}
-	} else {
-		if (currentStep.type !== stepType) {
-			return;
-		}
-
-		if (currentProgress) {
-			return;
-		}
-
-		const [, requiredSeconds] = currentStep.parameters;
-		if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
-			return;
-		}
-
-		candidateThreshold = requiredSeconds;
-	}
-
-	if (candidateThreshold == null) {
-		return;
-	}
-
-	const delayStatus = await checkStepDelay(userId, currentStepIndex, candidateAltIndex, bindings);
-	if (!delayStatus.available) {
-		return;
-	}
-
-	const waitUntilPromises: Promise<unknown>[] = [];
 	try {
-		await updateQuestProgress(
-			userId,
-			{
-				type: stepType,
-				index: currentStepIndex,
-				...(candidateAltIndex !== undefined ? { altIndex: candidateAltIndex } : {}),
-				duration: Math.max(readTimeSeconds, candidateThreshold)
-			} as any,
-			{ make: 'unknown', model: 'API', os: 'web' },
-			bindings,
-			{
-				waitUntil(promise) {
-					waitUntilPromises.push(Promise.resolve(promise));
-				}
-			}
-		);
-		await Promise.all(waitUntilPromises);
-	} catch (error) {
-		const status = (error as { status?: number }).status;
-		if (status && status !== 409) {
-			console.warn('Failed to auto-complete read-time quest step:', error);
+		const questProgress = await getCurrentQuestProgress(userId, bindings);
+		if (!questProgress.quest || questProgress.completed) {
+			return;
 		}
+
+		const readTimeSeconds = await getReadTime(userId, tracker, bindings.KV);
+
+		const currentStepIndex = questProgress.currentStepIndex;
+		const currentStep = questProgress.currentStep;
+		if (!currentStep) {
+			return;
+		}
+
+		const stepType = tracker === 'articles_read_time' ? 'article_read_time' : 'activity_read_time';
+		const currentProgress = questProgress.progress[currentStepIndex];
+
+		let candidateAltIndex: number | undefined;
+		let candidateThreshold: number | undefined;
+
+		if (Array.isArray(currentStep)) {
+			const completedAltIndices = new Set(
+				Array.isArray(currentProgress) ? currentProgress.map((entry) => entry.altIndex ?? 0) : []
+			);
+
+			for (let altIndex = 0; altIndex < currentStep.length; altIndex++) {
+				const step = currentStep[altIndex];
+				if (step.type !== stepType) {
+					continue;
+				}
+
+				if (completedAltIndices.has(altIndex)) {
+					continue;
+				}
+
+				const [, requiredSeconds] = step.parameters;
+				if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
+					continue;
+				}
+
+				candidateAltIndex = altIndex;
+				candidateThreshold = requiredSeconds;
+				break;
+			}
+		} else {
+			if (currentStep.type !== stepType) {
+				return;
+			}
+
+			if (currentProgress) {
+				return;
+			}
+
+			const [, requiredSeconds] = currentStep.parameters;
+			if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
+				return;
+			}
+
+			candidateThreshold = requiredSeconds;
+		}
+
+		if (candidateThreshold == null) {
+			return;
+		}
+
+		const delayStatus = await checkStepDelay(userId, currentStepIndex, candidateAltIndex, bindings);
+		if (!delayStatus.available) {
+			return;
+		}
+
+		const waitUntilPromises: Promise<unknown>[] = [];
+		try {
+			await updateQuestProgress(
+				userId,
+				{
+					type: stepType,
+					index: currentStepIndex,
+					...(candidateAltIndex !== undefined ? { altIndex: candidateAltIndex } : {}),
+					duration: Math.max(readTimeSeconds, candidateThreshold)
+				} as any,
+				{ make: 'unknown', model: 'API', os: 'web' },
+				bindings,
+				{
+					waitUntil(promise) {
+						waitUntilPromises.push(Promise.resolve(promise));
+					}
+				}
+			);
+			await Promise.all(waitUntilPromises);
+		} catch (innerError) {
+			const status = (innerError as { status?: number }).status;
+			if (status && status !== 409) {
+				console.warn('Failed to auto-complete read-time quest step:', innerError);
+			}
+		}
+	} catch (error) {
+		console.error('Unexpected error in maybeAdvanceReadTimeQuestStep:', error);
 	}
 }
 
@@ -234,7 +238,11 @@ export class UserTimer {
 			await this.state.storage.delete('timer');
 			this.timer = undefined;
 
-			await applyField(timer.field, timer.userId, durationMs, timer.metadata || {}, this.env);
+			try {
+				await applyField(timer.field, timer.userId, durationMs, timer.metadata || {}, this.env);
+			} catch (error) {
+				console.error('Error applying field:', error);
+			}
 
 			return Response.json({ durationMs });
 		}

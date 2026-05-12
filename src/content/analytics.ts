@@ -64,15 +64,15 @@ type AnalyticsBatchOptions = {
 };
 
 function buildContentAnalyticsKey(contentId: string) {
-	return `${CONTENT_ANALYTICS_KEY_PREFIX}${contentId}`;
+	return `${CONTENT_ANALYTICS_KEY_PREFIX}${normalizeContentId(contentId)}`;
 }
 
 function buildOwnerAnalyticsIndexPrefix(ownerHost: string) {
-	return `${OWNER_ANALYTICS_INDEX_PREFIX}${ownerHost}:`;
+	return `${OWNER_ANALYTICS_INDEX_PREFIX}${normalizeOwnerHost(ownerHost)}:`;
 }
 
 function buildOwnerAnalyticsIndexKey(ownerHost: string, contentId: string) {
-	return `${buildOwnerAnalyticsIndexPrefix(ownerHost)}${contentId}`;
+	return `${buildOwnerAnalyticsIndexPrefix(ownerHost)}${normalizeContentId(contentId)}`;
 }
 
 function normalizeContentId(value: unknown) {
