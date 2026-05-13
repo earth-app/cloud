@@ -12,6 +12,32 @@ const OWNER_ANALYTICS_INDEX_PREFIX = 'content_analytics_owner:';
 const OWNER_INDEX_LIST_LIMIT = 1000;
 const OWNER_ANALYTICS_FETCH_BATCH_SIZE = 25;
 
+export enum AnalyticsCategory {
+	// personal
+	PROFILE_VIEWED = 'profile_viewed',
+	// clicks
+	ARTICLES_CLICKED = 'articles_clicked',
+	PROMPTS_CLICKED = 'prompts_clicked',
+	EVENTS_CLICKED = 'events_clicked',
+	// time
+	PROMPT_READ_TIME = 'prompt_read_time',
+	ARTICLE_READ_TIME = 'article_read_time',
+	// prompts
+	PROMPT_RESPONSE_RECEIVED = 'prompt_response_received',
+	PROMPT_RESPONSE_DELETED = 'prompt_response_deleted',
+	// articles
+	ARTICLE_QUIZ_COMPLETED = 'article_quiz_completed',
+	ARTICLE_RECOMMENDED_CLICKED = 'article_recommended_clicked',
+	// events
+	EVENT_ATTENDED = 'event_attended',
+	EVENT_LEFT = 'event_left',
+	// quests
+	QUESTS_STARTED = 'quests_started',
+	QUESTS_COMPLETED = 'quests_completed'
+}
+
+export type AnalyticsCategoryType = `${AnalyticsCategory}`;
+
 export type ContentAnalyticsEvent = {
 	user_id: string;
 	value: number;
@@ -54,7 +80,7 @@ export type OwnerContentAnalyticsResult = {
 };
 
 type AnalyticsLogEntry = {
-	category: string;
+	category: AnalyticsCategoryType;
 	value: number;
 	metadata?: Record<string, any>;
 	includeTimingStats?: boolean;
@@ -532,7 +558,7 @@ export async function logAnalyticsBatch(
 }
 
 export async function logTime(
-	category: string,
+	category: AnalyticsCategoryType,
 	contentId: string,
 	userId: string,
 	seconds: number,
@@ -557,7 +583,7 @@ export async function logTime(
 }
 
 export async function logEvent(
-	category: string,
+	category: AnalyticsCategoryType,
 	contentId: string,
 	userId: string,
 	metadata: Record<string, any> = {},
@@ -577,4 +603,38 @@ export async function logEvent(
 		bindings,
 		options
 	);
+}
+
+export async function deleteContentAnalytics(contentId: string, bindings: Bindings) {
+	const normalizedContentId = contentId.trim();
+	if (!normalizedContentId) {
+		return;
+	}
+
+	const kv = bindings.KV;
+	const key = buildContentAnalyticsKey(normalizedContentId);
+	const existing = await kv.getWithMetadata<ContentAnalytics, ContentAnalyticsMetadata>(
+		key,
+		'json'
+	);
+
+	if (existing.metadata?.owner_host) {
+		await kv.delete(buildOwnerAnalyticsIndexKey(existing.metadata.owner_host, normalizedContentId));
+	}
+
+	await kv.delete(key);
+}
+
+export async function deleteAnalyticsByOwnerHost(ownerHost: string, bindings: Bindings) {
+	const normalizedOwnerHost = ownerHost.trim();
+	if (!normalizedOwnerHost) {
+		return;
+	}
+
+	const kv = bindings.KV;
+	const contentIds = await listIndexedContentIdsForOwner(normalizedOwnerHost, kv);
+
+	for (const contentId of contentIds) {
+		await deleteContentAnalytics(contentId, bindings);
+	}
 }

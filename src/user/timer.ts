@@ -1,4 +1,4 @@
-import { logAnalyticsBatch } from '../content/analytics';
+import { AnalyticsCategoryType, logAnalyticsBatch } from '../content/analytics';
 import { Activity, Article, Bindings, Prompt } from '../util/types';
 import { normalizeId } from '../util/util';
 import { addBadgeProgress, TrackerEntry } from './badges';
@@ -280,7 +280,7 @@ async function applyField(
 
 			if (contentId) {
 				const entries: {
-					category: string;
+					category: AnalyticsCategoryType;
 					value: number;
 					metadata: Record<string, string>;
 					includeTimingStats?: boolean;
@@ -301,7 +301,7 @@ async function applyField(
 					});
 				}
 
-				await logAnalyticsBatch(contentId, userId, entries, bindings);
+				// await logAnalyticsBatch(contentId, userId, entries, bindings);
 			}
 
 			await maybeAdvanceReadTimeQuestStep(userId, 'articles_read_time', bindings);
@@ -324,7 +324,7 @@ async function applyField(
 
 			if (contentId) {
 				const entries: {
-					category: string;
+					category: AnalyticsCategoryType;
 					value: number;
 					metadata: Record<string, string>;
 					includeTimingStats?: boolean;
@@ -345,7 +345,7 @@ async function applyField(
 					});
 				}
 
-				await logAnalyticsBatch(contentId, userId, entries, bindings);
+				// await logAnalyticsBatch(contentId, userId, entries, bindings);
 			}
 			break;
 		}

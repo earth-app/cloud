@@ -88,7 +88,16 @@ import {
 } from './user/quests/tracking';
 import { QuestDeviceMetadata } from './user/quests/validation';
 import { HTTPException } from 'hono/http-exception';
-import { getContentAnalytics, getContentAnalyticsByOwner } from './content/analytics';
+import {
+	AnalyticsCategory,
+	AnalyticsCategoryType,
+	deleteAnalyticsByOwnerHost,
+	deleteContentAnalytics,
+	getContentAnalytics,
+	getContentAnalyticsByOwner,
+	logEvent,
+	logTime
+} from './content/analytics';
 import {
 	CustomQuestCreateInput,
 	CustomQuestUpdateInput,
@@ -204,6 +213,129 @@ app.get('/content_analytics/user/:id', async (c) => {
 		console.error(`Error getting content analytics for user '${id}':`, err);
 		return c.text('Failed to get content analytics', 500);
 	}
+});
+
+app.post('/content_analytics/log_event', async (c) => {
+	type EventAnalyticsRequest = {
+		category?: AnalyticsCategoryType;
+		contentId?: string;
+		ownerHost?: string;
+		userId?: string;
+		value?: number;
+		metadata?: Record<string, any>;
+	};
+
+	let body: EventAnalyticsRequest;
+
+	try {
+		body = await c.req.json<EventAnalyticsRequest>();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const category = body.category;
+	const contentId = typeof body.contentId === 'string' ? body.contentId.trim() : '';
+	const userId = typeof body.userId === 'string' ? body.userId.trim() : '';
+	const metadata =
+		body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+			? body.metadata
+			: undefined;
+	const ownerHost = typeof body.ownerHost === 'string' ? body.ownerHost.trim() : undefined;
+
+	if (!category) {
+		return c.text('Category is required', 400);
+	}
+
+	if (Object.values(AnalyticsCategory).indexOf(category as AnalyticsCategory) === -1) {
+		return c.text(`Invalid category: ${category}`, 400);
+	}
+
+	if (!contentId) {
+		return c.text('Content ID is required', 400);
+	}
+
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	await logEvent(category, contentId, userId, metadata, c.env, { ownerHost });
+	return c.text('Event logged successfully', 201);
+});
+
+app.post('/content_analytics/log_time', async (c) => {
+	type TimeAnalyticsRequest = {
+		category?: AnalyticsCategoryType;
+		contentId?: string;
+		ownerHost?: string;
+		userId?: string;
+		seconds?: number;
+		metadata?: Record<string, any>;
+	};
+
+	let body: TimeAnalyticsRequest;
+	try {
+		body = await c.req.json<TimeAnalyticsRequest>();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const category = body.category;
+	const contentId = typeof body.contentId === 'string' ? body.contentId.trim() : '';
+	const userId = typeof body.userId === 'string' ? body.userId.trim() : '';
+	const seconds = typeof body.seconds === 'number' ? body.seconds : undefined;
+	const metadata =
+		body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
+			? body.metadata
+			: undefined;
+	const ownerHost = typeof body.ownerHost === 'string' ? body.ownerHost.trim() : undefined;
+
+	if (!category) {
+		return c.text('Category is required', 400);
+	}
+
+	if (Object.values(AnalyticsCategory).indexOf(category as AnalyticsCategory) === -1) {
+		return c.text(`Invalid category: ${category}`, 400);
+	}
+
+	if (!contentId) {
+		return c.text('Content ID is required', 400);
+	}
+
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (seconds === undefined) {
+		return c.text('Seconds is required', 400);
+	}
+
+	await logTime(category, contentId, userId, seconds, metadata, c.env, { ownerHost });
+	return c.text('Time logged successfully', 201);
+});
+
+app.delete('/content_analytics/delete', async (c) => {
+	const contentId = c.req.query('content_id');
+	const ownerHost = c.req.query('owner_host');
+
+	if (contentId) {
+		if (typeof contentId !== 'string') {
+			return c.text('content_id must be a string', 400);
+		}
+
+		await deleteContentAnalytics(contentId, c.env);
+		return c.text(`Content analytics deleted successfully: ID ${contentId}`, 200);
+	}
+
+	if (ownerHost) {
+		if (typeof ownerHost !== 'string') {
+			return c.text('owner_host must be a string', 400);
+		}
+
+		await deleteAnalyticsByOwnerHost(ownerHost, c.env);
+		return c.text(`Content analytics deleted successfully for owner_host: ${ownerHost}`, 200);
+	}
+
+	return c.text('Either content_id or owner_host query parameter is required', 400);
 });
 
 // Activities
