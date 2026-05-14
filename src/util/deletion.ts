@@ -148,7 +148,7 @@ export async function deleteUserDataVariant(
 
 	await Promise.allSettled(
 		JOURNEY_TYPES.map(async (type) => {
-			await resetJourney(userId, type, env.KV);
+			await resetJourney(userId, type, env.KV, env.CACHE);
 		})
 	);
 

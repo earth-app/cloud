@@ -1179,7 +1179,7 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 	}
 
 	try {
-		const newCount = await incrementJourney(id, type, c.env.KV, c.executionCtx);
+		const newCount = await incrementJourney(id, type, c.env.KV, c.executionCtx, c.env.CACHE);
 		return c.json({ count: newCount }, 201);
 	} catch (err) {
 		console.error(`Error incrementing journey '${type}' for ID '${id}':`, err);
@@ -1211,7 +1211,7 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 	}
 
 	try {
-		await resetJourney(id, type, c.env.KV);
+		await resetJourney(id, type, c.env.KV, c.env.CACHE);
 		return c.body(null, 204);
 	} catch (err) {
 		console.error(`Error resetting journey '${type}' for ID '${id}':`, err);

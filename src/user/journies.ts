@@ -1,9 +1,13 @@
-import { tryCache } from '../util/cache';
+import { clearCache, tryCache } from '../util/cache';
 import { normalizeId, isLegacyPaddedId, migrateLegacyKey, capitalizeFully } from '../util/util';
 import { ExecutionCtxLike } from '../util/types';
 import { addImpactPoints } from './points';
 
 export const JOURNEY_TYPES = ['article', 'prompt', 'event'];
+
+function getLeaderboardCacheKey(type: string) {
+	return `leaderboard:${type}`;
+}
 
 export async function getJourney(
 	id: string,
@@ -34,7 +38,8 @@ export async function incrementJourney(
 	id: string,
 	type: string,
 	kv: KVNamespace,
-	ctx: ExecutionCtxLike
+	ctx: ExecutionCtxLike,
+	cacheKv?: KVNamespace
 ): Promise<number> {
 	if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
 
@@ -59,13 +64,17 @@ export async function incrementJourney(
 		metadata: { lastWrite: Date.now(), streak: newValue }
 	});
 
+	if (cacheKv) {
+		await clearCache(getLeaderboardCacheKey(type), cacheKv);
+	}
+
 	// add impact points for journey increment + incrementing while in top leaderboard
 	ctx.waitUntil(
 		(async () => {
 			try {
 				await addImpactPoints(normalizedId, 5, `${capitalizeFully(type)} Journey`, kv);
 
-				const rank = await retrieveLeaderboardRank(normalizedId, type, kv, kv);
+				const rank = await retrieveLeaderboardRank(normalizedId, type, kv, cacheKv || kv);
 				if (rank > 0 && rank <= TOP_LEADERBOARD_COUNT) {
 					// bonus points for being in the leaderboard, scaled by rank (1st gets 260, 250th gets 10)
 					const bonusPoints = Math.min(260, Math.max(10, 260 - rank)); // ensure at least 10 points for being in the leaderboard
@@ -153,16 +162,21 @@ export async function retrieveLeaderboardRank(
 	const [userStreak] = await getJourney(normalizedId, type, kv);
 	if (userStreak === 0) return 0;
 
-	const leaderboard = await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, kv, cacheKv);
-	const rank = leaderboard.findIndex((entry) => entry.id === normalizedId);
+	let leaderboard = await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, kv, cacheKv);
+	let rank = leaderboard.findIndex((entry) => entry.id === normalizedId);
 	if (rank >= 0) return rank + 1; // retrieve is 0-based
 
 	// not found in top leaderboard
 	if (leaderboard.length === TOP_LEADERBOARD_COUNT) {
 		const lowestInTop = leaderboard[TOP_LEADERBOARD_COUNT - 1].streak;
 
-		// cache is stale, return 0 for now
-		if (userStreak >= lowestInTop) return 0;
+		// cache is stale, clear it once and retry against fresh KV state
+		if (userStreak >= lowestInTop) {
+			await clearCache(getLeaderboardCacheKey(type), cacheKv);
+			leaderboard = await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, kv, cacheKv);
+			rank = leaderboard.findIndex((entry) => entry.id === normalizedId);
+			if (rank >= 0) return rank + 1;
+		}
 	}
 
 	// outside top
@@ -203,10 +217,19 @@ export async function getActivityJourney(id: string, kv: KVNamespace): Promise<s
 	return value ? JSON.parse(value as string) : [];
 }
 
-export async function resetJourney(id: string, type: string, kv: KVNamespace): Promise<void> {
+export async function resetJourney(
+	id: string,
+	type: string,
+	kv: KVNamespace,
+	cacheKv?: KVNamespace
+): Promise<void> {
 	if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
 
 	const normalizedId = normalizeId(id);
 	const key = `journey:${type}:${normalizedId}`;
 	await kv.delete(key);
+
+	if (cacheKv) {
+		await clearCache(getLeaderboardCacheKey(type), cacheKv);
+	}
 }

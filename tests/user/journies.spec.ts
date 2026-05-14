@@ -52,6 +52,27 @@ describe('incrementJourney', () => {
 		expect(lastWrite).toBeGreaterThan(0);
 	});
 
+	it('clears leaderboard cache when incrementing', async () => {
+		const kv = new MockKVNamespace();
+		const cache = new MockKVNamespace();
+		const ctx = { waitUntil: vi.fn((promise: Promise<unknown>) => void promise) };
+
+		await kv.put('journey:article:42', '3', {
+			metadata: { streak: 3, lastWrite: 1 }
+		});
+		await cache.put(
+			'leaderboard:article',
+			JSON.stringify([
+				{ id: '1', streak: 999 },
+				{ id: '2', streak: 998 }
+			])
+		);
+
+		const value = await incrementJourney('42', 'article', kv as any, ctx as any, cache as any);
+		expect(value).toBe(4);
+		expect(await cache.get('leaderboard:article')).toBeNull();
+	});
+
 	it('deletes legacy key and continues when impact-point side effects fail', async () => {
 		const kv = new MockKVNamespace();
 		await kv.put('journey:article:00000444', '3', {
@@ -118,7 +139,7 @@ describe('retrieveLeaderboardRank', () => {
 		expect(rank).toBe(0);
 	});
 
-	it('returns 0 when cached leaderboard is stale and user should be in top list', async () => {
+	it('rebuilds a stale cached leaderboard and returns the fresh rank', async () => {
 		const kv = new MockKVNamespace();
 		const cache = new MockKVNamespace();
 
@@ -133,7 +154,8 @@ describe('retrieveLeaderboardRank', () => {
 		await cache.put('leaderboard:article', JSON.stringify(staleLeaderboard));
 
 		const rank = await retrieveLeaderboardRank('999', 'article', kv as any, cache as any);
-		expect(rank).toBe(0);
+		expect(rank).toBe(1);
+		expect(await cache.get('leaderboard:article')).toBeTruthy();
 	});
 });
 
@@ -154,6 +176,17 @@ describe('activity journey helpers', () => {
 
 		const [count] = await getJourney('77', 'event', kv as any);
 		expect(count).toBe(0);
+	});
+
+	it('clears leaderboard cache when resetting', async () => {
+		const kv = new MockKVNamespace();
+		const cache = new MockKVNamespace();
+		await kv.put('journey:event:77', '2', { metadata: { streak: 2, lastWrite: Date.now() } });
+		await cache.put('leaderboard:event', JSON.stringify([{ id: '77', streak: 2 }]));
+
+		await resetJourney('77', 'event', kv as any, cache as any);
+
+		expect(await cache.get('leaderboard:event')).toBeNull();
 	});
 
 	it('reads and migrates legacy padded activity journeys', async () => {
