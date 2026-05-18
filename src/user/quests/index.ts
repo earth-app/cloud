@@ -1,6 +1,7 @@
 import { ScoringCriterion } from '../../content/ferry';
-import { ActivityType, ActivityOrType, Rarity } from '../../util/types';
-import { designActivityQuest, getActivity } from './activity';
+import { ActivityType, ActivityOrType, Rarity, Bindings } from '../../util/types';
+import { designActivityQuest } from './activity';
+import { getActivity } from '../../util/mantle2';
 import { CustomQuest, getCustomQuest, getCustomQuests } from './custom';
 
 export type Quest = {
@@ -85,6 +86,10 @@ export type QuestStep = {
 	| {
 			type: 'describe_text';
 			parameters: [ScoringCriterion[], number, number?]; // rubric criteria, score threshold, min length
+	  }
+	| {
+			type: 'submit_event_image';
+			parameters: [ActivityOrType, number]; // activity, score
 	  }
 );
 
@@ -1309,7 +1314,10 @@ export async function getAllQuests(kv: KVNamespace): Promise<(CustomQuest | Ques
 	return [...quests0, ...(await Promise.all(customQuests))].filter((q) => q != null);
 }
 
-export async function getQuest(id: string, kv: KVNamespace): Promise<CustomQuest | Quest | null> {
+export async function getQuest(
+	id: string,
+	bindings: Bindings
+): Promise<CustomQuest | Quest | null> {
 	const quest = quests.find((q) => q.id === id);
 	if (quest) {
 		return quest;
@@ -1317,11 +1325,11 @@ export async function getQuest(id: string, kv: KVNamespace): Promise<CustomQuest
 
 	if (id.startsWith('activity_quest_')) {
 		const activityId = id.replace('activity_quest_', '');
-		const activity = await getActivity(activityId);
+		const activity = await getActivity(activityId, bindings);
 		if (!activity) return null;
 
 		return designActivityQuest(activity);
 	}
 
-	return await getCustomQuest(id, kv);
+	return await getCustomQuest(id, bindings.KV);
 }

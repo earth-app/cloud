@@ -72,7 +72,7 @@ import {
 } from './user/points';
 import { scoreImage, ScoreResult, scoreText } from './content/ferry';
 import { sendUserNotification } from './user/notifications';
-import { getAllQuests, getQuest } from './user/quests';
+import { getAllQuests, getQuest, QuestStep } from './user/quests';
 import {
 	getCurrentQuestProgress,
 	getCompletedQuestProgress,
@@ -86,7 +86,7 @@ import {
 	maybeArchiveCompletedQuest,
 	checkStepDelay
 } from './user/quests/tracking';
-import { QuestDeviceMetadata } from './user/quests/validation';
+import { API_DEVICE_METADATA, QuestDeviceMetadata } from './user/quests/validation';
 import { HTTPException } from 'hono/http-exception';
 import {
 	AnalyticsCategory,
@@ -1738,7 +1738,7 @@ app.get('/users/quests/:id', async (c) => {
 	}
 
 	try {
-		const quest = await getQuest(id, c.env.KV);
+		const quest = await getQuest(id, c.env);
 		if (!quest) {
 			return c.text('Quest not found', 404);
 		}
@@ -1786,7 +1786,7 @@ app.post('/users/quests/progress/:user_id/start', async (c) => {
 	}
 
 	const questId = body.quest_id.toLowerCase();
-	const quest = await getQuest(questId, c.env.KV);
+	const quest = await getQuest(questId, c.env);
 	if (!quest) {
 		return c.text('Quest not found', 404);
 	}
@@ -2118,7 +2118,7 @@ app.get('/users/quests/history/:user_id', async (c) => {
 					: null;
 				return {
 					questId,
-					quest: await getQuest(questId, c.env.KV),
+					quest: await getQuest(questId, c.env),
 					...(completed ? { completedAt: completed.completedAt, progress: enrichedProgress } : {})
 				};
 			})
@@ -2154,7 +2154,7 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 		return c.text('Quest ID must be alphanumeric with optional dashes or underscores', 400);
 	}
 
-	const quest = await getQuest(questId, c.env.KV);
+	const quest = await getQuest(questId, c.env);
 	if (!quest) {
 		return c.text('Quest not found', 404);
 	}
@@ -2691,34 +2691,15 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Invalid User ID', 400);
 	}
 
-	// limit to 3 per user - check using lightweight index instead of full data fetch
+	// limit to 3 per user
 	const indexKey = `event:${id}:user:${userId}:submission_ids`;
-	let userEventSubmissions = await c.env.KV.get<string[]>(indexKey, 'json');
-	if (!userEventSubmissions) {
-		// fallback: check user's global submission index filtered by event
-		const userIndexKey = `user:${userId}:submission_ids`;
-		const allUserSubmissions = await c.env.KV.get<string[]>(userIndexKey, 'json');
-		if (allUserSubmissions) {
-			const eventSubmissionChecks = await Promise.all(
-				allUserSubmissions.map(async (sid) => {
-					const meta = await c.env.KV.getWithMetadata<{ eventId: string }>(
-						`event:submission:${sid}`
-					);
-					return meta.metadata?.eventId === id.toString() ? sid : null;
-				})
-			);
-			userEventSubmissions = eventSubmissionChecks.filter((s): s is string => s !== null);
-		} else {
-			userEventSubmissions = [];
-		}
-	}
+	const userEventSubmissions = (await c.env.KV.get<string[]>(indexKey, 'json')) ?? [];
 	if (userEventSubmissions.length >= 3) {
 		return c.text('Submission limit reached for this event', 400);
 	}
 
 	const res = await submitEventImage(id, userId, imageData, c.env, c.executionCtx);
 
-	// create submission grade
 	c.executionCtx.waitUntil(
 		(async () => {
 			const [caption, score] = await scoreImage(
@@ -2736,13 +2717,79 @@ app.post('/events/submit_image', async (c) => {
 			});
 
 			console.log(`Scored image submission ${res.id} for event ${id} with score:`, score);
+
+			await addBadgeProgress(userIdParam, 'event_images_submitted', '1', c.env.KV);
+
+			if (score.score >= 90) {
+				await addBadgeProgress(userIdParam, 'event_images_submitted_good', '1', c.env.KV);
+			}
+
+			return Promise.allSettled([
+				(async () => {
+					const quest = await getCurrentQuestProgress(userId.toString(), c.env);
+					if (!quest) return;
+
+					async function checkStep(
+						step: QuestStep,
+						score: number,
+						index: number,
+						altIndex?: number
+					) {
+						if (step.type !== 'submit_event_image') return;
+
+						const [activity, threshold] = step.parameters;
+						if (!body.event.activities.includes(activity)) return;
+						if (!score || score < threshold) return;
+
+						await updateQuestProgress(
+							userId.toString(),
+							{
+								type: 'submit_event_image',
+								index,
+								altIndex,
+								eventId: id.toString(),
+								score,
+								timestamp: Date.now()
+							},
+							API_DEVICE_METADATA,
+							c.env,
+							c.executionCtx
+						);
+					}
+
+					const currentStep = quest.currentStep;
+					if (Array.isArray(currentStep)) {
+						await Promise.allSettled(
+							currentStep.map((altStep, altIndex) =>
+								checkStep(altStep, score.score, quest.currentStepIndex, altIndex).catch((err) => {
+									console.error(
+										'Error updating quest progress in event image submission for alt step:',
+										{
+											userId: userId.toString(),
+											eventId: id.toString(),
+											stepIndex: quest.currentStepIndex,
+											altIndex,
+											err
+										}
+									);
+								})
+							)
+						);
+					} else if (currentStep?.type === 'submit_event_image') {
+						await checkStep(currentStep, score.score, quest.currentStepIndex).catch((err) => {
+							console.error('Error updating quest progress in event image submission for step:', {
+								userId: userId.toString(),
+								eventId: id.toString(),
+								stepIndex: quest.currentStepIndex,
+								err
+							});
+						});
+					}
+				})()
+			]);
 		})()
 	);
 
-	// track progress for badges
-	c.executionCtx.waitUntil(addBadgeProgress(userIdParam, 'event_images_submitted', '1', c.env.KV));
-
-	// return submission ID
 	return c.json({ submission_id: res.id, success: true }, 201);
 });
 

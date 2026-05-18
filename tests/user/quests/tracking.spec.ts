@@ -21,6 +21,7 @@ import { quests } from '../../../src/user/quests';
 import { createMockBindings } from '../../helpers/mock-bindings';
 import { MockKVNamespace } from '../../helpers/mock-kv';
 import { deflate, encrypt } from '../../../src/util/util';
+import { API_DEVICE_METADATA } from '../../../src/user/quests/validation';
 
 async function putEncryptedObject(
 	bindings: ReturnType<typeof createMockBindings>,
@@ -233,7 +234,7 @@ describe('updateQuestProgress', () => {
 			updateQuestProgress(
 				'1',
 				{ type: 'article_quiz', index: 0, scoreKey: 'k', score: 100 },
-				{ make: 'unknown', model: 'API', os: 'web' },
+				API_DEVICE_METADATA,
 				bindings,
 				{ waitUntil: () => {} } as any
 			)
@@ -246,7 +247,7 @@ describe('updateQuestProgress', () => {
 			updateQuestProgress(
 				'2',
 				{ type: 'article_quiz', index: 0, scoreKey: 'k', score: 100 },
-				{ make: 'unknown', model: 'API', os: 'web' },
+				API_DEVICE_METADATA,
 				bindings,
 				{ waitUntil: () => {} } as any
 			)
@@ -259,13 +260,9 @@ describe('updateQuestProgress', () => {
 
 		await startQuest('3', 'fun_facts', bindings);
 		await expect(
-			updateQuestProgress(
-				'3',
-				{ type: 'order_items', index: 2 },
-				{ make: 'unknown', model: 'API', os: 'web' },
-				bindings,
-				{ waitUntil: () => {} } as any
-			)
+			updateQuestProgress('3', { type: 'order_items', index: 2 }, API_DEVICE_METADATA, bindings, {
+				waitUntil: () => {}
+			} as any)
 		).rejects.toMatchObject({ status: 400 });
 
 		const now = Date.now();
@@ -287,13 +284,9 @@ describe('updateQuestProgress', () => {
 		});
 
 		await expect(
-			updateQuestProgress(
-				'4',
-				{ type: 'order_items', index: 4 },
-				{ make: 'unknown', model: 'API', os: 'web' },
-				bindings,
-				{ waitUntil: () => {} } as any
-			)
+			updateQuestProgress('4', { type: 'order_items', index: 4 }, API_DEVICE_METADATA, bindings, {
+				waitUntil: () => {}
+			} as any)
 		).rejects.toMatchObject({ status: 425 });
 	});
 
@@ -314,7 +307,7 @@ describe('updateQuestProgress', () => {
 			updateQuestProgress(
 				'5',
 				{ type: 'take_photo_classification', index: 5, altIndex: 99, data: new Uint8Array([1]) },
-				{ make: 'unknown', model: 'API', os: 'web' },
+				API_DEVICE_METADATA,
 				bindings,
 				{ waitUntil: () => {} } as any
 			)
@@ -352,7 +345,7 @@ describe('updateQuestProgress', () => {
 			updateQuestProgress(
 				'6',
 				{ type: 'take_photo_classification', index: 5, altIndex: 0, data: new Uint8Array([2]) },
-				{ make: 'unknown', model: 'API', os: 'web' },
+				API_DEVICE_METADATA,
 				bindings,
 				{ waitUntil: () => {} } as any
 			)
@@ -389,7 +382,7 @@ describe('updateQuestProgress', () => {
 			updateQuestProgress(
 				'7',
 				{ type: 'article_quiz', index: 1, scoreKey: 'new:key', score: 100 },
-				{ make: 'unknown', model: 'API', os: 'web' },
+				API_DEVICE_METADATA,
 				bindings,
 				{ waitUntil: () => {} } as any
 			)
@@ -405,13 +398,9 @@ describe('updateQuestProgress', () => {
 		});
 
 		await expect(
-			updateQuestProgress(
-				'8',
-				{ type: 'order_items', index: 0 },
-				{ make: 'unknown', model: 'API', os: 'web' },
-				bindings,
-				{ waitUntil: () => {} } as any
-			)
+			updateQuestProgress('8', { type: 'order_items', index: 0 }, API_DEVICE_METADATA, bindings, {
+				waitUntil: () => {}
+			} as any)
 		).rejects.toMatchObject({ status: 400 });
 	});
 
@@ -435,7 +424,7 @@ describe('updateQuestProgress', () => {
 		const result = await updateQuestProgress(
 			'9',
 			{ type: 'article_quiz', index: 0, scoreKey: 'article:quiz_score:9:100', score: 100 },
-			{ make: 'unknown', model: 'API', os: 'web' },
+			API_DEVICE_METADATA,
 			bindings,
 			{ waitUntil: () => {} } as any
 		);
@@ -473,7 +462,7 @@ describe('updateQuestProgress', () => {
 		const firstResult = await updateQuestProgress(
 			'77',
 			{ type: 'article_quiz', index: 0, scoreKey: 'article:quiz_score:77:100', score: 90 },
-			{ make: 'unknown', model: 'API', os: 'web' },
+			API_DEVICE_METADATA,
 			bindings,
 			first.ctx as any
 		);
@@ -535,7 +524,7 @@ describe('updateQuestProgress', () => {
 		const completionResult = await updateQuestProgress(
 			'77',
 			{ type: 'article_quiz', index: 5, scoreKey: 'article:quiz_score:77:200', score: 100 },
-			{ make: 'unknown', model: 'API', os: 'web' },
+			API_DEVICE_METADATA,
 			bindings,
 			completion.ctx as any
 		);

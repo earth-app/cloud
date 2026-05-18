@@ -3,6 +3,7 @@ import { Activity, Article, Bindings, Prompt } from '../util/types';
 import { normalizeId } from '../util/util';
 import { addBadgeProgress, TrackerEntry } from './badges';
 import { checkStepDelay, getCurrentQuestProgress, updateQuestProgress } from './quests/tracking';
+import { API_DEVICE_METADATA } from './quests/validation';
 
 type TimerState = {
 	startedAt: number;
@@ -148,7 +149,7 @@ async function maybeAdvanceReadTimeQuestStep(
 					...(candidateAltIndex !== undefined ? { altIndex: candidateAltIndex } : {}),
 					duration: Math.max(readTimeSeconds, candidateThreshold)
 				} as any,
-				{ make: 'unknown', model: 'API', os: 'web' },
+				API_DEVICE_METADATA,
 				bindings,
 				{
 					waitUntil(promise) {

@@ -8,20 +8,20 @@ import {
 	createPrompt,
 	findArticle,
 	findArticles,
-	postActivity,
-	postArticle,
 	postEvent,
-	postPrompt,
 	rankActivitiesForEvent,
 	rankerModel,
 	recommendArticles,
 	recommendEvents,
 	recommendSimilarArticles,
 	recommendSimilarEvents,
-	retrieveActivities,
 	retrieveEvents,
 	type ArticleQuizQuestion
 } from '../../src/content/boat';
+import { postArticle } from '../../src/util/mantle2';
+import { postPrompt } from '../../src/util/mantle2';
+import { postActivity } from '../../src/util/mantle2';
+import { retrieveActivities } from '../../src/util/mantle2';
 import { ExactDateWithYearEntry } from '@earth-app/moho';
 import { env } from 'cloudflare:workers';
 import { MockKVNamespace } from '../helpers/mock-kv';

@@ -6,6 +6,7 @@ import { createMockBindings } from './helpers/mock-bindings';
 import { createMockAiRun } from './helpers/mock-ai';
 import { Quest } from '../src/user/quests';
 import { CustomQuest } from '../src/user/quests/custom';
+import { API_DEVICE_METADATA } from '../src/user/quests/validation';
 
 function appRequest(path: string, init: RequestInit = {}, authenticated: boolean = true) {
 	const headers = new Headers(init.headers);
@@ -2016,7 +2017,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
-					device: { make: 'unknown', model: 'API', os: 'web' },
+					device: API_DEVICE_METADATA,
 					response: {
 						type: 'article_quiz',
 						index: 0,
@@ -2043,7 +2044,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 		const missingDataUrl = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
-				device: { make: 'unknown', model: 'API', os: 'web' },
+				device: API_DEVICE_METADATA,
 				response: { type: 'take_photo_caption', index: 0 }
 			})
 		});
@@ -2052,7 +2053,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 		const invalidDataUrl = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
-				device: { make: 'unknown', model: 'API', os: 'web' },
+				device: API_DEVICE_METADATA,
 				response: { type: 'take_photo_caption', index: 0, dataUrl: 'not-a-data-url' }
 			})
 		});
@@ -2061,7 +2062,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 		const unsupportedAudio = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
-				device: { make: 'unknown', model: 'API', os: 'web' },
+				device: API_DEVICE_METADATA,
 				response: {
 					type: 'transcribe_audio',
 					index: 0,
@@ -2079,7 +2080,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 
 		const missingResponse = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
-			body: JSON.stringify({ device: { make: 'unknown', model: 'API', os: 'web' } })
+			body: JSON.stringify({ device: API_DEVICE_METADATA })
 		});
 		expect(missingResponse.status).toBe(400);
 
@@ -2097,7 +2098,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
-					device: { make: 'unknown', model: 'API', os: 'web' },
+					device: API_DEVICE_METADATA,
 					response: { type: 'order_items', index: 4 }
 				})
 			},
@@ -2111,7 +2112,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 		const response = await callApp('/users/quests/progress/123/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
-				device: { make: 'unknown', model: 'API', os: 'web' },
+				device: API_DEVICE_METADATA,
 				response: {
 					type: 'article_quiz',
 					index: 0,
@@ -2127,7 +2128,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 		const response = await callApp('/users/quests/progress/abc/update', {
 			method: 'PATCH',
 			body: JSON.stringify({
-				device: { make: 'unknown', model: 'API', os: 'web' },
+				device: API_DEVICE_METADATA,
 				response: {
 					type: 'article_quiz',
 					index: 0,
@@ -2155,7 +2156,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
-					device: { make: 'unknown', model: 'API', os: 'web' },
+					device: API_DEVICE_METADATA,
 					response: {
 						type: 'take_photo_location',
 						index: 0,
@@ -2174,7 +2175,7 @@ describe('PATCH /users/quests/progress/:user_id/update', () => {
 				method: 'PATCH',
 				body: JSON.stringify({
 					rank: 'free',
-					device: { make: 'unknown', model: 'API', os: 'web' },
+					device: API_DEVICE_METADATA,
 					response: {
 						type: 'take_photo_location',
 						index: 0,
@@ -2232,7 +2233,7 @@ describe('GET /users/quests/progress/:user_id/step/:step_index', () => {
 			{
 				method: 'PATCH',
 				body: JSON.stringify({
-					device: { make: 'unknown', model: 'API', os: 'web' },
+					device: API_DEVICE_METADATA,
 					response: {
 						type: 'article_quiz',
 						index: 0,

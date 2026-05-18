@@ -29,9 +29,10 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 			data: Uint8Array;
 	  }
 	| {
-			type: 'attend_event';
+			type: 'attend_event' | 'submit_event_image';
 			eventId: string;
 			timestamp: number; // unix ms when the event was attended
+			score?: number; // from submit_event_image
 	  }
 	| { type: 'transcribe_audio'; data: Uint8Array }
 	| {
@@ -70,6 +71,7 @@ export type QuestStepProgressEntry = {
 	| { type: 'describe_text'; text: string; score?: number; prompt?: string }
 	| { type: 'respond_to_prompt'; text: string } // text represents the user's response to the prompt
 	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
+	| { type: 'submit_event_image'; eventId: string; score: number }
 	// contains no additional data
 	| { type: 'match_terms' | 'order_items' }
 );

@@ -12,6 +12,12 @@ import { isInsideLocation } from '../../util/util';
 import { Bindings } from '../../util/types';
 import { QuestStepResponse } from './tracking';
 
+export const API_DEVICE_METADATA: QuestDeviceMetadata = {
+	make: 'unknown',
+	model: 'API',
+	os: 'web'
+};
+
 export type QuestDeviceMetadata = {
 	latitude?: number;
 	longitude?: number;
@@ -31,7 +37,7 @@ export type QuestDeviceMetadata = {
 		| 'android'
 		| 'unknown'
 		| string;
-	model: 'iPhone' | 'iPad' | 'Mac' | 'Android' | 'PC' | 'Desktop' | 'unknown' | string;
+	model: 'iPhone' | 'iPad' | 'Mac' | 'Android' | 'PC' | 'Desktop' | 'API' | 'unknown' | string;
 	os: 'ios' | 'android' | 'windows' | 'macos' | 'linux' | 'unknown' | string;
 	version?: string;
 	[other: string]: any; // allow for additional metadata fields as needed
@@ -285,7 +291,7 @@ export async function validateStep(
 		}
 	}
 
-	return { success: true }; // attend_event, match_terms, order_items are validated externally
+	return { success: true }; // attend_event, match_terms, order_items, respond_to_prompt, submit_event_image are validated externally
 }
 
 // validation functions

@@ -4,11 +4,11 @@ import {
 	createEvent,
 	createPrompt,
 	findArticle,
-	postArticle,
 	postEvent,
-	postPrompt,
 	retrieveEvents
 } from './content/boat';
+import { postArticle } from './util/mantle2';
+import { postPrompt } from './util/mantle2';
 import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
 import { Bindings } from './util/types';
 import { repairDuplicateBadgeProgress } from './user/badges';
