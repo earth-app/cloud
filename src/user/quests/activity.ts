@@ -374,19 +374,6 @@ function middleSteps(activity: Activity): (QuestStep | QuestStep[])[] {
 	return middleSteps;
 }
 
-export async function getActivity(id: string): Promise<Activity | null> {
-	const url = `https://api.earth-app.com/v2/activities/${id}`;
-
-	const response = await fetch(url);
-	const activity = await response.json<Activity>();
-
-	if (!activity || !activity.id) {
-		return null;
-	}
-
-	return activity;
-}
-
 export function designActivityQuest(activity: Activity): Quest {
 	const steps: (QuestStep | QuestStep[])[] = [];
 
