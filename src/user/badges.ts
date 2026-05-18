@@ -15,6 +15,7 @@ export type BadgeTracker =
 	| 'events_attended' // handled over mantle2
 	| 'prompts_created' // handled over mantle2
 	| 'event_images_submitted'
+	| 'event_images_submitted_good'
 	| 'friends_added' // handled over mantle2
 	| 'article_quizzes_completed'
 	| 'event_types_attended' // handled over mantle2
@@ -374,6 +375,14 @@ export const badges = (
 			progress: (...args: any[]) => min(args, 24 * 60 * 60),
 			tracker_id: 'activity_read_time',
 			allows_duplicate_data: true
+		},
+		{
+			id: 'professional_photographer',
+			description: 'Submit 20 event images with an A or higher',
+			icon: 'mdi:camera-plus',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 20),
+			tracker_id: 'event_images_submitted_good'
 		},
 		// amazing badges
 		{
