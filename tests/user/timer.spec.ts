@@ -95,7 +95,6 @@ describe('UserTimer', () => {
 	it('stops a running timer and applies badge tracker updates', async () => {
 		const kv = new MockKVNamespace();
 		const bindings = createMockBindings({ KV: kv as any });
-		const kvPutSpy = vi.spyOn(kv, 'put');
 		const timer = new UserTimer(createDurableState(), bindings);
 
 		let now = 1_000;
@@ -143,18 +142,7 @@ describe('UserTimer', () => {
 		const timeTracker = await kv.get('user:badge_tracker:42:articles_read_time', 'json');
 		expect(Array.isArray(readTracker)).toBe(true);
 		expect(Array.isArray(timeTracker)).toBe(true);
-
-		const analytics = await kv.get<{
-			article_read_time?: { total: number };
-			articles_clicked?: { total: number };
-		}>('content_analytics:article-1', 'json');
-		expect(analytics?.article_read_time?.total).toBeGreaterThan(0);
-		expect(analytics?.articles_clicked?.total).toBe(1);
-
-		const contentAnalyticsWrites = kvPutSpy.mock.calls.filter(
-			([key]) => key === 'content_analytics:article-1'
-		);
-		expect(contentAnalyticsWrites).toHaveLength(1);
+		expect((timeTracker as Array<{ value: number }>)?.[0]?.value).toBeGreaterThan(0);
 	});
 
 	it('allows starting again after a successful stop', async () => {
@@ -231,11 +219,13 @@ describe('UserTimer', () => {
 		);
 
 		expect(stopResponse.status).toBe(200);
-		const analytics = await kv.get<{ articles_clicked?: { total: number } }>(
-			'content_analytics:article-fallback',
+
+		const timeTracker = await kv.get<Array<{ value: number; metadata?: Record<string, unknown> }>>(
+			'user:badge_tracker:50:articles_read_time',
 			'json'
 		);
-		expect(analytics?.articles_clicked?.total).toBe(1);
+		expect(timeTracker).toHaveLength(1);
+		expect(timeTracker?.[0]?.value).toBeGreaterThan(0);
 	});
 
 	it('preserves metadata on activity_read_time trackers and completes matching read-time quests', async () => {

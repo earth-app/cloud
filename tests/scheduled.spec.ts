@@ -35,14 +35,17 @@ vi.mock('../src/user/journies', () => ({
 
 vi.mock('../src/content/boat', () => ({
 	createPrompt: (mocks ??= createMocks()).createPrompt,
-	postPrompt: (mocks ??= createMocks()).postPrompt,
 	findArticle: (mocks ??= createMocks()).findArticle,
 	createArticle: (mocks ??= createMocks()).createArticle,
 	createArticleQuiz: (mocks ??= createMocks()).createArticleQuiz,
-	postArticle: (mocks ??= createMocks()).postArticle,
 	retrieveEvents: (mocks ??= createMocks()).retrieveEvents,
 	createEvent: (mocks ??= createMocks()).createEvent,
 	postEvent: (mocks ??= createMocks()).postEvent
+}));
+
+vi.mock('../src/util/mantle2', () => ({
+	postArticle: (mocks ??= createMocks()).postArticle,
+	postPrompt: (mocks ??= createMocks()).postPrompt
 }));
 
 import scheduled from '../src/scheduled';
