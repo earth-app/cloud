@@ -43,6 +43,52 @@ async function embedText(env: Bindings, text: string): Promise<number[]> {
 	});
 }
 
+async function embedTexts(env: Bindings, texts: string[]): Promise<number[][]> {
+	const result = new Array<number[] | null>(texts.length).fill(null);
+	const missingIndices: number[] = [];
+	const missingTexts: string[] = [];
+
+	await Promise.all(
+		texts.map(async (text, i) => {
+			const cached = await env.CACHE.get<number[]>(`embedding:text:${hashText(text)}`, 'json');
+			if (cached) {
+				result[i] = cached;
+			} else {
+				missingIndices.push(i);
+				missingTexts.push(text);
+			}
+		})
+	);
+
+	if (missingTexts.length === 0) {
+		return result as number[][];
+	}
+
+	const response = (await env.AI.run(embedModel, {
+		text: missingTexts,
+		pooling: 'cls'
+	})) as Ai_Cf_Baai_Bge_M3_Output_Embedding;
+
+	const data = response?.data;
+	if (!data || data.length !== missingTexts.length) {
+		throw new Error('Batch embedding failed');
+	}
+
+	await Promise.all(
+		missingTexts.map((text, i) => {
+			const embedding = data[i];
+			result[missingIndices[i]] = embedding;
+			return env.CACHE.put(`embedding:text:${hashText(text)}`, JSON.stringify(embedding), {
+				expirationTtl: 60 * 60 * 12
+			}).catch((err) => {
+				console.error('Failed to cache batched embedding:', err);
+			});
+		})
+	);
+
+	return result as number[][];
+}
+
 // use a smooth mapping from cosine similarity [-1, 1] -> [0, 1] to avoid
 // hard clipping artifacts that can create left/right score skew
 function normalizeSimilarity(sim: number): number {
@@ -88,13 +134,11 @@ export async function scoreText(
 		throw new Error('Rubric weights must sum to 1.0');
 	}
 
-	// Generate embedding for user text
-	const embedding = await embedText(env, text);
-
-	// Pre-compute all ideal embeddings in parallel for efficiency
-	const idealEmbeddings = await Promise.all(
-		rubric.map((criterion) => embedText(env, criterion.ideal))
-	);
+	// Embed the user text and every rubric ideal in a single batched AI call.
+	// bge-m3 accepts an array input, so this is one network round-trip per scoring instead of N+1.
+	const allEmbeddings = await embedTexts(env, [text, ...rubric.map((c) => c.ideal)]);
+	const embedding = allEmbeddings[0];
+	const idealEmbeddings = allEmbeddings.slice(1);
 
 	let score = 0;
 	const breakdown: CriterionResult[] = [];
@@ -131,7 +175,8 @@ export async function scoreImage(
 	const caption = await env.AI.run(imageCaptionModel, {
 		image: [...new Uint8Array(image)],
 		prompt,
-		max_tokens: 2048
+		// Caption prompts cap output at ~150 words; 2048 was ~10× excess and billed accordingly.
+		max_tokens: 512
 	});
 
 	const text = caption?.description?.trim();
@@ -152,7 +197,11 @@ export async function scoreAudio(
 
 	// transcript, score
 	const transcript = await env.AI.run(audioTranscriptionModel, {
-		audio: base64
+		audio: base64,
+		// Pin English so Whisper skips language auto-detect and uses VAD to skip silence,
+		// both reduce billed neurons for the same accuracy on quest audio.
+		language: 'en',
+		vad_filter: true
 	});
 
 	const text = transcript?.text?.trim();
