@@ -53,16 +53,31 @@ export async function sendUserNotification(
 		source
 	};
 
-	const res = fetch(url, {
-		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
-		},
-		body: JSON.stringify(body)
-	});
+	try {
+		const res = await fetch(url, {
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+			},
+			body: JSON.stringify(body)
+		});
 
-	return res;
+		if (!res.ok) {
+			console.warn('[sendUserNotification] non-success response from mantle', {
+				userId: id,
+				status: res.status
+			});
+		}
+
+		return res;
+	} catch (error) {
+		console.error('[sendUserNotification] failed to reach mantle', {
+			userId: id,
+			error: error instanceof Error ? error.message : String(error)
+		});
+		throw error;
+	}
 }
 
 export class LiveNotifier {
