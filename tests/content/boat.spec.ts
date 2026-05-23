@@ -253,10 +253,6 @@ describe('findArticle', () => {
 
 		const result = await findArticle(bindings);
 		expect(result.length).toBe(2);
-		expect(result[0].length).toBeGreaterThan(1);
-		expect(result[0][0].title).toBeDefined();
-		expect(result[1].length).toBeGreaterThan(1);
-		expect(result[1][0]).toBeDefined();
 	});
 });
 

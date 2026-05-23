@@ -6,6 +6,7 @@
   "scripts": {
     "test": "bunx vitest run",
     "test:coverage": "bunx vitest run --coverage",
+    "test:report": "bunx vitest --reporter=junit --outputFile=test-report.junit.xml",
     "dev": "bunx wrangler dev --port 9898 --test-scheduled",
     "deploy": "bunx wrangler deploy --minify",
     "prettier": "bunx prettier --write .",
