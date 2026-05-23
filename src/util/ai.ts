@@ -315,14 +315,17 @@ export function validateActivityDescription(
 		const sanitized = sanitizeForContentType(description, 'description');
 
 		const cleaned = sanitized.trim();
-		const wordCount = cleaned.split(/\s+/).length;
+		const wordCount = cleaned.split(/\s+/).filter(Boolean).length;
 
-		if (cleaned.length < 200) {
+		// Enforce both a char floor (catches blank/very short replies) and a word floor
+		// (catches output that hit max_tokens mid-stream but happens to clear 200 chars).
+		// 50 words ≈ 2-3 sentences — anything shorter is not a usable description.
+		if (cleaned.length < 200 || wordCount < 50) {
 			logAIFailure(
 				'ActivityDescription',
 				activityName,
 				cleaned,
-				`Description too short: ${cleaned.length} chars`
+				`Description too short: ${wordCount} words / ${cleaned.length} chars`
 			);
 			throw new Error(`Generated description too short for activity: ${activityName}`);
 		}
@@ -574,13 +577,16 @@ export function validatePromptQuestion(questionResponse: string): string {
 			throw new Error('Generated prompt question too long');
 		}
 
-		// Check for prohibited phrases
-		const prohibited = ['what if', 'imagine', 'you', 'your', 'i ', 'my ', 'we ', 'our '];
+		// Check for prohibited phrases. Use word boundaries so short tokens like 'i'/'my'
+		// do not match incidental substrings inside other words. 'what if' is allowed because
+		// it appears in the `prefixes` pool below; the system prompt also still discourages it.
+		const prohibitedWords = ['imagine', 'you', 'your', 'i', 'my', 'we', 'our'];
 		const lowerQuestion = question.toLowerCase();
 
-		for (const phrase of prohibited) {
-			if (lowerQuestion.includes(phrase)) {
-				logAIFailure('PromptQuestion', 'N/A', question, `Contains prohibited phrase: ${phrase}`);
+		for (const word of prohibitedWords) {
+			const pattern = new RegExp(`\\b${word}\\b`);
+			if (pattern.test(lowerQuestion)) {
+				logAIFailure('PromptQuestion', 'N/A', question, `Contains prohibited word: ${word}`);
 				throw new Error('Generated prompt question contains prohibited phrase');
 			}
 		}
@@ -808,7 +814,6 @@ const topicExamples = [
 	'computer art',
 	'historical science',
 	'social studies',
-	'education',
 	'public health',
 	'epidemiology',
 	'quantum mechanics',
@@ -1536,7 +1541,7 @@ export const userProfilePhotoPrompt = (data: UserProfilePromptData) => {
 		If any field says "None Provided" or "Unknown," disregard that element as apart of the profile picture, as the user has omitted said details.
 		`.trim(),
 		negative_prompt: `Avoid elements of toys, scary elements, political or sensitive statements, words, or any branding.`,
-		guidance: 35
+		guidance: 7.5
 	} satisfies AiTextToImageInput;
 };
 
