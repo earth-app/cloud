@@ -26,7 +26,11 @@ export function createMockAiRun(overrides: MockAiOverrides = {}) {
 		}
 
 		if (modelName.includes('bge-m3')) {
-			return { data: [DEFAULT_EMBEDDING] };
+			// scoreText batches all texts into a single bge-m3 call with `text: string[]`;
+			// return one embedding per input so length checks pass.
+			const text = (input as { text?: string | string[] })?.text;
+			const count = Array.isArray(text) ? text.length : 1;
+			return { data: Array.from({ length: count }, () => DEFAULT_EMBEDDING) };
 		}
 
 		if (modelName.includes('bge-reranker-base')) {

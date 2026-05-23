@@ -41,14 +41,16 @@ describe('scoreText', () => {
 	});
 
 	it('returns score and criterion breakdown for valid embeddings', async () => {
-		const aiRun = vi.fn(async (_model: string, input: { text: string }) => {
-			if (input.text.includes('relevant')) {
-				return { data: [[0.9, 0.1, 0.1]] };
-			}
-			if (input.text.includes('clear')) {
-				return { data: [[0.8, 0.2, 0.1]] };
-			}
-			return { data: [[1, 0, 0]] };
+		// scoreText now batches the user text and every rubric `ideal` into a single bge-m3
+		// call with `text: string[]`. The mock returns one embedding per input.
+		const embedOne = (text: string): number[] => {
+			if (text.includes('relevant')) return [0.9, 0.1, 0.1];
+			if (text.includes('clear')) return [0.8, 0.2, 0.1];
+			return [1, 0, 0];
+		};
+		const aiRun = vi.fn(async (_model: string, input: { text: string | string[] }) => {
+			const texts = Array.isArray(input.text) ? input.text : [input.text];
+			return { data: texts.map(embedOne) };
 		});
 		const bindings = createBindings(aiRun);
 

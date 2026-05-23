@@ -36,7 +36,7 @@ ws.post(
 	'/notify',
 	async (c, next) => {
 		const token = c.env.ADMIN_API_KEY;
-		return bearerAuth({
+		return bearerAuth<{ Bindings: Bindings }>({
 			token,
 			invalidAuthenticationHeaderMessage: 'Invalid Administrator API Key'
 		})(c, next);
