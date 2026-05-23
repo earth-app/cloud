@@ -94,7 +94,8 @@ const VISION_LABEL_ALIASES: Record<string, string[]> = {
 	cell_phone: ['mobile_phone', 'smartphone', 'phone'],
 	tv: ['television', 'monitor', 'screen'],
 	bell_pepper: ['pepper'],
-	spider_web: ['spiderweb']
+	spider_web: ['spiderweb'],
+	corn: ['ear', 'ear_of_corn', 'corncob']
 };
 
 const COCO_OBJECT_LABELS = new Set<string>([
@@ -289,9 +290,22 @@ export async function validateStep(
 		case 'describe_text': {
 			return await validateDescribeText(step, response, bindings);
 		}
+		// Types validated outside the worker (Mantle2). Listed explicitly so adding a new step
+		// type forces an intentional decision rather than silently passing.
+		case 'attend_event':
+		case 'match_terms':
+		case 'order_items':
+		case 'respond_to_prompt':
+		case 'submit_event_image':
+			return { success: true };
+		default: {
+			const exhaustive: never = response;
+			return {
+				success: false,
+				message: `Unknown quest step type: ${(exhaustive as { type?: string }).type ?? 'undefined'}`
+			};
+		}
 	}
-
-	return { success: true }; // attend_event, match_terms, order_items, respond_to_prompt, submit_event_image are validated externally
 }
 
 // validation functions
@@ -434,7 +448,8 @@ async function validateStepAudio(
 				allSignals
 			);
 
-		const os = data.os?.toLowerCase()?.trim() ?? '';
+		const osRaw = data.os?.toLowerCase()?.trim() ?? '';
+		const os = osRaw === 'ipados' ? 'ios' : osRaw;
 		const makeIsApple = data.make?.toLowerCase()?.trim() === 'apple';
 
 		if (os === 'ios' || makeIsApple) {
@@ -696,8 +711,12 @@ async function validateStepPhoto(
 		}
 	}
 
-	// OS cross-validation
-	const os = data.os?.toLowerCase()?.trim() ?? '';
+	// OS cross-validation. UA-CH on iPad sometimes reports `ipados`; treat it as `ios`
+	// since they share the same Apple-hardware constraint.
+	const os = (() => {
+		const raw = data.os?.toLowerCase()?.trim() ?? '';
+		return raw === 'ipados' ? 'ios' : raw;
+	})();
 	if (os && os !== 'unknown' && makeRaw) {
 		const makeNorm = make.toLowerCase().trim();
 
