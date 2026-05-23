@@ -105,7 +105,9 @@ export const quests = [
 			{
 				type: 'take_photo_classification',
 				description: 'Take a photo of broccoli.',
-				parameters: ['broccoli', 0.8]
+				// ResNet-50 commonly confuses brassicas (head_cabbage vs cauliflower vs broccoli),
+				// so 0.6 keeps the step meaningful but reliably passable on a clear photo.
+				parameters: ['broccoli', 0.6]
 			},
 			{
 				type: 'draw_picture',
@@ -115,12 +117,12 @@ export const quests = [
 			{
 				type: 'take_photo_classification',
 				description: 'Take a photo of a cucumber.',
-				parameters: ['cucumber', 0.8]
+				parameters: ['cucumber', 0.6]
 			},
 			{
 				type: 'take_photo_classification',
 				description: 'Take a photo of cauliflower.',
-				parameters: ['cauliflower', 0.8],
+				parameters: ['cauliflower', 0.6],
 				reward: 50
 			},
 			{
@@ -133,12 +135,16 @@ export const quests = [
 				{
 					type: 'take_photo_classification',
 					description: 'Take a photo of a bell pepper.',
-					parameters: ['bell_pepper', 0.8]
+					parameters: ['bell_pepper', 0.6]
 				},
 				{
 					type: 'take_photo_classification',
 					description: 'Take a photo of corn.',
-					parameters: ['corn', 0.8]
+					// ImageNet's only "corn" class is `ear, spike, capitulum` (998); the model emits
+					// the primary token "ear". VISION_LABEL_ALIASES maps `corn -> ear` in validation.ts
+					// so leaving the user-facing label as "corn" while requiring 0.6 keeps both UX
+					// and pass-rate sane.
+					parameters: ['corn', 0.6]
 				}
 			],
 			{
@@ -277,7 +283,9 @@ export const quests = [
 			{
 				type: 'take_photo_location',
 				description: 'Take a photo of the Cloud Gate sculpture (aka "The Bean").',
-				parameters: [41.8827, -87.6233, 50]
+				// 50 m is tighter than typical urban-canyon GPS error (~30-50 m downtown); 100 m
+				// still keeps the photo inside Millennium Park.
+				parameters: [41.8827, -87.6233, 100]
 			},
 			{
 				type: 'take_photo_location',
@@ -288,20 +296,26 @@ export const quests = [
 			{
 				type: 'take_photo_location',
 				description: 'Take a photo of the Navy Pier.',
-				parameters: [41.8917, -87.6091, 100],
+				// Navy Pier extends ~1 km east of the centroid; 100 m only covers the entrance.
+				parameters: [41.8917, -87.6091, 400],
 				delay: 600
 			},
 			[
 				{
 					type: 'draw_picture',
-					description: 'Draw the outline of the state of Illinois.',
-					parameters: ['outline of Illinois', 0.7],
+					description: 'Draw a map of Illinois.',
+					// LLaVA captions an irregular polygon as "a black shape on a white background";
+					// 0.7 vs that caption is unreachable. 0.55 still gates against blank or unrelated
+					// drawings since BGE normalizes near 0.5 floor for anything off-topic.
+					parameters: ['a map of Illinois', 0.55],
 					reward: 25
 				},
 				{
 					type: 'draw_picture',
-					description: 'Draw the outline of Cook County.',
-					parameters: ['outline of Cook County', 0.7],
+					description: 'Draw a map of the Chicago city limits.',
+					// LLaVA cannot identify a Cook County outline; rewriting to "Chicago city limits"
+					// gives the captioner a recognizable concept.
+					parameters: ['a map of Chicago', 0.55],
 					reward: 50
 				}
 			],
@@ -398,9 +412,11 @@ export const quests = [
 				{
 					type: 'take_photo_objects',
 					description: 'Take a photo with a snowboard and skis in it.',
+					// Both items in the same frame at 0.7 each is uncommon outside a ski shop;
+					// DETR scores them 0.55-0.70 in mixed scenes.
 					parameters: [
-						['snowboard', 0.7],
-						['skis', 0.7]
+						['snowboard', 0.5],
+						['skis', 0.5]
 					],
 					reward: 75
 				},
@@ -428,10 +444,11 @@ export const quests = [
 				{
 					type: 'take_photo_objects',
 					description: 'Take a photo with a fork, knife, and spoon in it.',
+					// DETR detects place-setting cutlery in the 0.5-0.75 range each; 3× 0.7 is brittle.
 					parameters: [
-						['fork', 0.7],
-						['knife', 0.7],
-						['spoon', 0.7]
+						['fork', 0.55],
+						['knife', 0.55],
+						['spoon', 0.55]
 					],
 					reward: 50
 				}
@@ -811,7 +828,9 @@ export const quests = [
 				{
 					type: 'draw_picture',
 					description: 'Draw a robot.',
-					parameters: ['robot', 0.8]
+					// LLaVA often captions a hand-drawn robot as "cartoon character" or "android";
+					// 0.8 is unreliable.
+					parameters: ['robot', 0.7]
 				},
 				{
 					type: 'article_quiz',
@@ -1114,7 +1133,9 @@ export const quests = [
 				{
 					type: 'take_photo_location',
 					description: 'Take a photo at Yellowstone National Park.',
-					parameters: [44.428, -110.5885, 5000],
+					// Yellowstone is ~80 × 60 km; 5 km only covers the Old Faithful basin and
+					// rejects visitors to Mammoth/Lamar/Norris. 30 km includes the major attractions.
+					parameters: [44.428, -110.5885, 30000],
 					delay: 1200,
 					reward: 250
 				},
