@@ -38,10 +38,10 @@ export const promptModel = '@cf/openai/gpt-oss-120b';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
-		// Generate description with retry logic (3 attempts)
 		let desc: string | null = null;
 		let lastError: Error | null = null;
-		const maxRetries = 5;
+		const maxRetries = 3;
+		const temperatureRamp = [0.2, 0.5, 0.8];
 
 		for (let attempt = 1; attempt <= maxRetries; attempt++) {
 			try {
@@ -53,7 +53,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 						{ role: 'user', content: prompts.activityDescriptionPrompt(activity).trim() }
 					],
 					max_tokens: 512,
-					temperature: 0.1 + (attempt - 1) * 0.05 // gentler temperature increase for faster convergence
+					temperature: temperatureRamp[attempt - 1]
 				});
 
 				const rawDesc = description?.response || '';
@@ -366,7 +366,8 @@ export async function createArticle(
 					{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
 					{ role: 'user', content: ocean.title.trim() }
 				],
-				max_tokens: 48,
+				// 48 tokens can truncate a 10-word title once leading whitespace/quotes are accounted for.
+				max_tokens: 80,
 				temperature: 0.2 // lower temperature for focused titles
 			});
 		} catch (aiError) {
@@ -481,7 +482,7 @@ export async function createArticleQuiz(
 		const content = article.ocean.content || article.ocean.abstract || '';
 		const firstPart = content.substring(0, QUIZ_CUTOFF);
 		const lastPart = content.substring(content.length - QUIZ_CUTOFF);
-		const quizResult = await ai.run(quizModel, {
+		const quizResult = (await ai.run(quizModel, {
 			messages: [
 				{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
 				{
@@ -493,13 +494,10 @@ export async function createArticleQuiz(
 				},
 				{ role: 'user', content: prompts.articleQuizPrompt.trim() }
 			],
-			max_tokens: 512,
+			max_tokens: 1280,
 			temperature: 0.3,
-			response_format: {
-				type: 'json_schema',
-				json_schema: articleQuizAiSchema
-			}
-		});
+			guided_json: articleQuizAiSchema
+		} as any)) as { response?: string };
 
 		const responseText = stripMarkdownCodeFence(quizResult.response || '{"questions":[]}');
 		const parsedResult = JSON.parse(responseText);
