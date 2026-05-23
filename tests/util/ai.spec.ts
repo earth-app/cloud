@@ -141,6 +141,41 @@ describe('event entry classification', () => {
 			})
 		).toBe('historical_anniversary');
 	});
+
+	it('flags all place CSV subpaths as place birthdays', () => {
+		const placeSources = [
+			'birthdays/countries.csv',
+			'birthdays/us/cities.csv',
+			'birthdays/us/counties.csv',
+			'birthdays/us/territories.csv',
+			'birthdays/ca/cities.csv',
+			'birthdays/ca/provinces.csv'
+		];
+		for (const source of placeSources) {
+			expect(isPlaceBirthdaySource(source)).toBe(true);
+		}
+	});
+
+	it('rejects non-place birthday sources', () => {
+		const nonPlaceSources = [
+			'birthdays/companies.csv',
+			'birthdays/international_orgs.csv',
+			'birthdays/us/colleges.csv',
+			'anniversaries/computers.csv',
+			'events.csv',
+			'events_d.csv',
+			''
+		];
+		for (const source of nonPlaceSources) {
+			expect(isPlaceBirthdaySource(source)).toBe(false);
+		}
+	});
+
+	it('is case- and separator-insensitive', () => {
+		expect(isPlaceBirthdaySource('Birthdays/US/Cities.csv')).toBe(true);
+		expect(isPlaceBirthdaySource('birthdays\\us\\cities.csv')).toBe(true);
+		expect(isPlaceBirthdaySource('./birthdays/countries.csv')).toBe(true);
+	});
 });
 
 describe('activityDescriptionSystemMessage', () => {

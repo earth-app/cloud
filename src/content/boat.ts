@@ -12,6 +12,7 @@ import {
 	OceanArticle
 } from '../util/types';
 import * as prompts from '../util/ai';
+import { isPlaceBirthdaySource } from '../util/ai';
 import { chunkArray, batchProcess } from '../util/util';
 import { toOrdinal, splitContent, stripMarkdownCodeFence, getSynonyms } from '../util/lang';
 import {
@@ -1208,23 +1209,30 @@ export async function postEvent(
 
 	const eventId = BigInt(eventIdRaw);
 
-	// event thumbnail generation for birthday events based on location name extracted
 	const persistedName = typeof data.name === 'string' ? data.name : '';
 	const sourceName = event.name || '';
-	const locationName =
-		extractLocationFromEventName(persistedName) || extractLocationFromEventName(sourceName);
-	const shouldGeneratePlaceThumbnail = Boolean(locationName);
+	const mohoKind = event.fields?.moho_kind;
+	const mohoSource = event.fields?.moho_source;
+	const isPlaceBirthday =
+		mohoKind === 'place_birthday' || (!mohoKind && isPlaceBirthdaySource(mohoSource));
 
-	if (shouldGeneratePlaceThumbnail && locationName) {
-		console.log(`Generating thumbnail for birthday event: ${locationName} (event ${eventIdRaw})`);
+	const locationName = isPlaceBirthday
+		? extractLocationFromEventName(persistedName) || extractLocationFromEventName(sourceName)
+		: null;
+
+	if (isPlaceBirthday && locationName) {
+		console.log(
+			`Generating thumbnail for place birthday event: ${locationName} (event ${eventIdRaw})`
+		);
 		try {
 			const [image] = await uploadPlaceThumbnail(locationName, eventId, bindings, ctx);
 			if (!image || image.length === 0) {
-				console.warn('No thumbnail was generated for birthday event', {
+				console.warn('No thumbnail was generated for place birthday event', {
 					eventId: eventIdRaw,
 					locationName,
 					persistedName,
-					sourceName
+					sourceName,
+					mohoSource
 				});
 			}
 		} catch (thumbnailErr) {
@@ -1233,11 +1241,21 @@ export async function postEvent(
 				locationName,
 				persistedName,
 				sourceName,
+				mohoSource,
 				err: thumbnailErr
 			});
 		}
+	} else if (isPlaceBirthday) {
+		console.warn('Could not extract location from place birthday event name; skipping thumbnail', {
+			eventId: eventIdRaw,
+			persistedName,
+			sourceName,
+			mohoSource
+		});
 	} else {
-		console.log(`Skipping thumbnail generation for non-birthday event: ${sourceName}`);
+		console.log(
+			`Skipping thumbnail generation for non-place event: ${sourceName} (kind=${mohoKind || 'unknown'}, source=${mohoSource || 'unknown'})`
+		);
 	}
 
 	return data;

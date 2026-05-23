@@ -1186,16 +1186,134 @@ describe('postEvent', () => {
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 
-	it('continues successfully when birthday thumbnail lookup fails', async () => {
+	it('continues successfully when place-birthday thumbnail lookup fails', async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, 'fetch')
 			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ id: '44', name: "Bahamas' Birthday" }), {
+				new Response(JSON.stringify({ id: '44', name: "Bahamas' 53rd Birthday" }), {
 					status: 200,
 					headers: { 'Content-Type': 'application/json' }
 				})
 			)
 			.mockResolvedValueOnce(new Response('maps-down', { status: 500 }));
+
+		const data = await postEvent(
+			{
+				name: "Bahamas' 53rd Birthday",
+				description: 'A valid description.',
+				activities: [],
+				fields: {
+					moho_kind: 'place_birthday',
+					moho_source: 'birthdays/countries.csv'
+				},
+				type: 'ONLINE',
+				date: Date.now(),
+				visibility: 'PUBLIC'
+			} as any,
+			createBindings({ MAPS_API_KEY: 'test-maps-key' } as Partial<Bindings>),
+			{ waitUntil: () => {} }
+		);
+
+		expect(data.id).toBe('44');
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it('falls back to moho_source when moho_kind is absent for a place entry', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ id: '47', name: "Atlanta's 179th Birthday" }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(new Response('maps-down', { status: 500 }));
+
+		const data = await postEvent(
+			{
+				name: "Atlanta's 179th Birthday",
+				description: 'A valid description.',
+				activities: [],
+				fields: {
+					moho_source: 'birthdays/us/cities.csv'
+				},
+				type: 'ONLINE',
+				date: Date.now(),
+				visibility: 'PUBLIC'
+			} as any,
+			createBindings({ MAPS_API_KEY: 'test-maps-key' } as Partial<Bindings>),
+			{ waitUntil: () => {} }
+		);
+
+		expect(data.id).toBe('47');
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it('skips place-thumbnail lookup for organization birthdays (companies)', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: '46', name: "Apple Inc's 50th Birthday" }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		const data = await postEvent(
+			{
+				name: "Apple Inc's 50th Birthday",
+				description: 'A valid description.',
+				activities: [],
+				fields: {
+					moho_kind: 'organization_birthday',
+					moho_source: 'birthdays/companies.csv'
+				},
+				type: 'ONLINE',
+				date: Date.now(),
+				visibility: 'PUBLIC'
+			} as any,
+			createBindings({ MAPS_API_KEY: 'test-maps-key' } as Partial<Bindings>),
+			{ waitUntil: () => {} }
+		);
+
+		expect(data.id).toBe('46');
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('skips place-thumbnail lookup for college birthdays', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: '48', name: "Adelphi University's 130th Birthday" }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+
+		const data = await postEvent(
+			{
+				name: "Adelphi University's 130th Birthday",
+				description: 'A valid description.',
+				activities: [],
+				fields: {
+					moho_kind: 'organization_birthday',
+					moho_source: 'birthdays/us/colleges.csv'
+				},
+				type: 'ONLINE',
+				date: Date.now(),
+				visibility: 'PUBLIC'
+			} as any,
+			createBindings({ MAPS_API_KEY: 'test-maps-key' } as Partial<Bindings>),
+			{ waitUntil: () => {} }
+		);
+
+		expect(data.id).toBe('48');
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it('skips place-thumbnail lookup when neither moho_kind nor moho_source are set', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: '49', name: "Bahamas' Birthday" }), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
 
 		const data = await postEvent(
 			{
@@ -1211,39 +1329,8 @@ describe('postEvent', () => {
 			{ waitUntil: () => {} }
 		);
 
-		expect(data.id).toBe('44');
-		expect(fetchSpy).toHaveBeenCalledTimes(2);
-	});
-
-	it('attempts place-thumbnail lookup for parseable birthday names regardless of moho source', async () => {
-		const fetchSpy = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ id: '46', name: "Apple Inc's Birthday" }), {
-					status: 200,
-					headers: { 'Content-Type': 'application/json' }
-				})
-			)
-			.mockResolvedValueOnce(new Response('maps-down', { status: 500 }));
-
-		const data = await postEvent(
-			{
-				name: "Apple Inc's Birthday",
-				description: 'A valid description.',
-				activities: [],
-				fields: {
-					moho_source: 'birthdays/companies.csv'
-				},
-				type: 'ONLINE',
-				date: Date.now(),
-				visibility: 'PUBLIC'
-			} as any,
-			createBindings({ MAPS_API_KEY: 'test-maps-key' } as Partial<Bindings>),
-			{ waitUntil: () => {} }
-		);
-
-		expect(data.id).toBe('46');
-		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(data.id).toBe('49');
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it('skips thumbnail generation for non-birthday events with numeric ids', async () => {
