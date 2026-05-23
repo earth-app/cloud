@@ -6,7 +6,7 @@ export async function cache(
 	kv: KVNamespace,
 	ttl: number = CACHE_TTL
 ): Promise<void> {
-	if (!value) return;
+	if (value === null || value === undefined) return;
 
 	try {
 		// Handle Uint8Array serialization properly
@@ -57,16 +57,16 @@ export async function tryCache<T>(
 	if (!kv) throw new Error('KV Namespace is undefined');
 
 	const result = await getCache<T>(id, kv);
-	if (result) {
+	if (result !== null && result !== undefined) {
 		return result;
-	} else {
-		// Cache miss, call fallback
-		const obj = await fallback();
-		await cache(id, obj, kv, ttl).catch((err) => {
-			console.error(`Failed to cache data for ${id}:`, err);
-		});
-		return obj;
 	}
+
+	// Cache miss, call fallback
+	const obj = await fallback();
+	await cache(id, obj, kv, ttl).catch((err) => {
+		console.error(`Failed to cache data for ${id}:`, err);
+	});
+	return obj;
 }
 
 export async function clearCache(id: string, kv: KVNamespace): Promise<void> {
