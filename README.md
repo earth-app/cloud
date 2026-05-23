@@ -65,6 +65,14 @@ scheduled automation.
 4. **Business logic** -> AI invocation, ranking, validation, KV/R2 reads+writes
 5. **Response** -> JSON or binary response with custom headers
 
+### Mantle2 Integration
+
+This worker is the Cloudflare backend that the Drupal 11 `earth-app/mantle2` module calls through `CloudHelper::sendRequest(...)`. The PHP side depends on the shape and status codes of the worker's `/v1` endpoints for quest progress, impact points, events, thumbnails, quizzes, profile photos, and notifications.
+
+- Quest progress is shared across both systems through `QuestStep`, `QuestProgressEntry`, and `QuestData`-style payloads, so validation changes should be checked against the Mantle2 quest helpers before they land.
+- Event and article flows are also coupled to Mantle2's data model. If you adjust event creation, quiz persistence, or submission payloads, verify the corresponding consumer helpers and schema expectations in the Drupal module.
+- WebSocket tickets, timers, and image moderation stay worker-owned, but Mantle2 still relies on their request and response contracts when it proxies or displays those features.
+
 ## Technology Stack
 
 ### Core Dependencies
