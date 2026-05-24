@@ -219,6 +219,61 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 				}
 			];
 		}
+		case 'ART': {
+			return [
+				{
+					type: 'submit_event_image',
+					description: 'Submit an image at an event related to Art with at least a C+ grade.',
+					parameters: [{ type: 'activity_type', value: 'ART' }, 0.78]
+				},
+				{
+					type: 'activity_read_time',
+					description: 'Read an activity about art for at least 10 minutes',
+					parameters: [{ type: 'activity_type', value: 'ART' }, 10 * 60]
+				},
+				{
+					type: 'describe_text',
+					description: 'Describe your experience with art.',
+					parameters: [
+						[
+							{
+								id: 'creativity',
+								weight: 0.5,
+								ideal: 'The description should be creative and expressive in length and depth'
+							},
+							{
+								id: 'depth',
+								weight: 0.3,
+								ideal:
+									'The description should be deep, meaningful, and effective about why the activity is important to the user'
+							},
+							{
+								id: 'originality',
+								weight: 0.2,
+								ideal:
+									"The description should be the user's own voice and effectively detail why the activity is special, unique to themselves"
+							}
+						],
+						0.3,
+						350
+					]
+				}
+			];
+		}
+		case 'CREATIVE': {
+			return [
+				{
+					type: 'take_photo_validation',
+					description: 'Take a photo that is creative and unique.',
+					parameters: ['creative and intuitive, unique and vibrant', 0.7]
+				},
+				{
+					type: 'submit_event_image',
+					description: 'Submit an image at an event related to Creative with at least a C+ grade.',
+					parameters: [{ type: 'activity_type', value: 'CREATIVE' }, 0.78]
+				}
+			];
+		}
 		default: {
 			return [
 				{
@@ -344,31 +399,41 @@ function middleSteps(activity: Activity): (QuestStep | QuestStep[])[] {
 	}
 
 	// step 7 - if the description contains more than 100 words, add a describe_text step asking the user to summarize the description in their own words with a score threshold of 0.5
+	// OR submit_event_image of the activity itself with at least a B
 	if (activity.description.split(' ').length > 100) {
-		middleSteps.push({
-			type: 'describe_text',
-			description: `Summarize the following description of ${activity.name} in your own words: ${activity.description}`,
-			parameters: [
-				[
-					{
-						id: 'accuracy',
-						weight: 0.7,
-						ideal:
-							'The summary should accurately capture the main points of the original description while being concise.'
-					},
-					{
-						id: 'originality',
-						weight: 0.3,
-						ideal:
-							"The summary should be written in the user's own words and not copy phrases directly from the original description."
-					}
+		middleSteps.push([
+			{
+				type: 'describe_text',
+				description: `Summarize the following description of ${activity.name} in your own words: ${activity.description}`,
+				parameters: [
+					[
+						{
+							id: 'accuracy',
+							weight: 0.7,
+							ideal:
+								'The summary should accurately capture the main points of the original description while being concise.'
+						},
+						{
+							id: 'originality',
+							weight: 0.3,
+							ideal:
+								"The summary should be written in the user's own words and not copy phrases directly from the original description."
+						}
+					],
+					0.5,
+					50
 				],
-				0.5,
-				50
-			],
-			reward: 50,
-			delay: 24 * 60 * 60 // 24 hour delay before this step unlocks after completing the previous step
-		});
+				reward: 50,
+				delay: 24 * 60 * 60 // 24 hour delay before this step unlocks after completing the previous step
+			},
+			{
+				type: 'submit_event_image',
+				description: 'Submit an image at an event related to your activity with at least a B grade',
+				parameters: [{ type: 'activity', ...activity }, 0.8],
+				reward: 50,
+				delay: 24 * 60 * 60 // 24 hour delay before this step unlocks after completing the previous step
+			}
+		]);
 	}
 
 	return middleSteps;

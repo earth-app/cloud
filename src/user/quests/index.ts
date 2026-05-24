@@ -89,7 +89,7 @@ export type QuestStep = {
 	  }
 	| {
 			type: 'submit_event_image';
-			parameters: [ActivityOrType, number]; // activity, score
+			parameters: [ActivityOrType, number]; // activity, score (0.0 - 1.0)
 	  }
 );
 
@@ -1022,6 +1022,95 @@ export const quests = [
 		],
 		reward: 550,
 		permissions: ['camera']
+	},
+	{
+		id: 'nature_lover',
+		title: 'Nature Lover',
+		description: 'Learn about the nature around you and how to take care of it!',
+		icon: 'mdi:tree-outline',
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'order_items',
+				description: 'Order these types of trees from tallest to shortest.',
+				parameters: [
+					['Redwood', 'Oak', 'Birch', 'Maple', 'Pine', 'Cedar', 'Willow', 'Spruce', 'Aspen']
+				]
+			},
+			[
+				{
+					type: 'take_photo_classification',
+					description: 'Take a photo of a tree.',
+					parameters: ['tree', 0.7],
+					delay: 1200
+				},
+				{
+					type: 'submit_event_image',
+					description: 'Submit a photo at a Nature event with at least a C grade.',
+					parameters: [{ type: 'activity_type', value: 'NATURE' }, 0.7]
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 80% accuracy.',
+				parameters: ['NATURE', 0.8],
+				delay: 1800,
+				reward: 75
+			},
+			{
+				type: 'activity_read_time',
+				description: 'Read for at least 10 minutes on an Activity about Nature.',
+				parameters: [{ type: 'activity_type', value: 'NATURE' }, 10],
+				delay: 3600
+			},
+			[
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt with the word "nature" in it.',
+					parameters: ['nature'],
+					reward: 100
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe how nature makes you feel.',
+					reward: 100
+				}
+			],
+			{
+				type: 'match_terms',
+				description: 'Match the type of tree to its characteristics.',
+				parameters: [
+					'Match the plant with its native country or region.',
+					[
+						['Wheat', 'Middle East'],
+						['Rice', 'Asia'],
+						['Corn', 'North America'],
+						['Barley', 'Europe'],
+						['Rye', 'Europe'],
+						['Oak', 'North America'],
+						['Basil', 'Mediterranean'],
+						['Ivy', 'Temperate Forests'],
+						['Fern', 'Temperate Forests'],
+						['Redwood', 'North America'],
+						['Pine', 'North America'],
+						['Spruce', 'North America'],
+						['Aspen', 'North America'],
+						['Birch', 'North America']
+					]
+				],
+				reward: 125
+			},
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 100% accuracy.',
+				parameters: ['NATURE', 1.0],
+				delay: 1800
+			}
+		],
+		reward: 1300,
+		permissions: ['camera', 'location']
 	},
 	// green quests
 	{
