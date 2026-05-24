@@ -1335,23 +1335,25 @@ export async function checkAndGrantBadges(
 	}
 
 	// send notification
-	ctx.waitUntil(
-		sendUserNotification(
-			bindings,
-			normalizedUserId,
-			newlyGranted.length > 1 ? 'New Badges Unlocked!' : 'New Badge Unlocked!',
-			newlyGranted.length > 1
-				? `You've unlocked the following badges: ${newlyGranted
-						.map((id) => {
-							const badge = badges.find((b) => b.id === id);
-							return badge ? badge.name : id;
-						})
-						.join(', ')}.`
-				: `You've unlocked the "${badges.find((b) => b.id === newlyGranted[0])?.name}" badge!`,
-			undefined,
-			'success'
-		)
-	);
+	if (newlyGranted.length > 0) {
+		ctx.waitUntil(
+			sendUserNotification(
+				bindings,
+				normalizedUserId,
+				newlyGranted.length > 1 ? 'New Badges Unlocked!' : 'New Badge Unlocked!',
+				newlyGranted.length > 1
+					? `You've unlocked the following badges: ${newlyGranted
+							.map((id) => {
+								const badge = badges.find((b) => b.id === id);
+								return badge ? badge.name : id;
+							})
+							.join(', ')}.`
+					: `You've unlocked the "${badges.find((b) => b.id === newlyGranted[0])?.name}" badge!`,
+				undefined,
+				'success'
+			)
+		);
+	}
 
 	return newlyGranted;
 }

@@ -316,7 +316,32 @@ describe('checkAndGrantBadges', () => {
 			ctx as any
 		);
 		expect(granted).toEqual([]);
-		expect(ctx.waitUntil).toHaveBeenCalledOnce();
+		// no notification should fire when nothing was granted (would otherwise send "undefined" badge)
+		expect(ctx.waitUntil).not.toHaveBeenCalled();
+	});
+
+	it('does not send a notification when no badges are newly granted', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response('ok', { status: 200 }));
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const ctx = { waitUntil: vi.fn((promise: Promise<unknown>) => void promise) };
+
+		// tracker has progress but not enough to grant any badge
+		await addBadgeProgress('9', 'articles_read', ['a1'], kv as any);
+
+		const granted = await checkAndGrantBadges('9', 'articles_read', bindings, ctx as any);
+		expect(granted).toEqual([]);
+		expect(ctx.waitUntil).not.toHaveBeenCalled();
+
+		// also verify no notification fetch was made with an "undefined" body
+		for (const call of fetchSpy.mock.calls) {
+			const body = call[1]?.body;
+			if (typeof body === 'string') {
+				expect(body).not.toContain('"undefined"');
+			}
+		}
 	});
 
 	it('formats plural grant notifications when multiple badges unlock at once', async () => {
