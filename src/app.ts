@@ -69,6 +69,7 @@ import {
 	getMasteredMetadata,
 	getMasteryQuest,
 	isBadgeMastered,
+	isMasteryExempt,
 	isMasteryLocked,
 	lockActiveMasteryIfApplicable
 } from './user/badges/mastery';
@@ -1231,7 +1232,10 @@ app.delete('/users/journey/:type/:id/delete', async (c) => {
 
 app.get('/users/badges', async (c) => {
 	return c.json(
-		badges.map(({ progress, ...badge }) => badge),
+		badges.map(({ progress, ...badge }) => ({
+			...badge,
+			mastery_exempt: isMasteryExempt(badge.id)
+		})),
 		200
 	);
 });
@@ -1276,7 +1280,8 @@ app.get('/users/badges/:id', async (c) => {
 					granted_at,
 					progress,
 					mastered: mastered_at !== null,
-					mastered_at
+					mastered_at,
+					mastery_exempt: isMasteryExempt(badge.id)
 				};
 			})
 		);
@@ -1330,7 +1335,8 @@ app.get('/users/badges/:id/:badge_id', async (c) => {
 				granted_at,
 				progress,
 				mastered: mastered_at !== null,
-				mastered_at
+				mastered_at,
+				mastery_exempt: isMasteryExempt(badgeId)
 			},
 			200
 		);
@@ -1607,6 +1613,22 @@ app.get('/users/badges/:id/:badge_id/mastery', async (c) => {
 		return c.text('Badge not found', 404);
 	}
 
+	if (isMasteryExempt(badgeId)) {
+		return c.json(
+			{
+				user_id: id,
+				badge_id: badgeId,
+				exempt: true,
+				generated: false,
+				locked: false,
+				mastered: false,
+				mastered_at: null,
+				quest: null
+			},
+			200
+		);
+	}
+
 	try {
 		const [locked, masteredMeta, quest] = await Promise.all([
 			isMasteryLocked(id, badgeId, c.env.KV),
@@ -1618,6 +1640,7 @@ app.get('/users/badges/:id/:badge_id/mastery', async (c) => {
 			{
 				user_id: id,
 				badge_id: badgeId,
+				exempt: false,
 				generated: quest !== null,
 				locked,
 				mastered: masteredMeta !== null,
@@ -1650,6 +1673,10 @@ app.post('/users/badges/:id/:badge_id/mastery/generate', async (c) => {
 	const badge = badges.find((b) => b.id === badgeId);
 	if (!badge) {
 		return c.text('Badge not found', 404);
+	}
+
+	if (isMasteryExempt(badgeId)) {
+		return c.text('This badge does not support mastery quests', 400);
 	}
 
 	let body: prompts.UserProfilePromptData;

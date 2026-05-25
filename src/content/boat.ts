@@ -30,7 +30,7 @@ import {
 import { retrieveActivities } from '../util/mantle2';
 import type { QuestStep } from '../user/quests';
 import type { Badge } from '../user/badges';
-import { activityTypeNames, labelsForBadge, masterySpec } from '../user/badges/mastery';
+import { activityTypeNames, badgeTier, labelsForBadge, masterySpec } from '../user/badges/mastery';
 
 export const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 export const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -1165,6 +1165,19 @@ export async function generateBadgeMasterySteps(
 	bindings: Bindings
 ): Promise<QuestStep[]> {
 	const spec = masterySpec(badge.rarity);
+	const tier = badgeTier(badge);
+	const tierForCtx = tier
+		? {
+				tierIndex: tier.tierIndex,
+				totalTiers: tier.totalTiers,
+				easier: tier.siblings
+					.slice(0, tier.tierIndex)
+					.map((b) => ({ name: b.name, description: b.description })),
+				harder: tier.siblings
+					.slice(tier.tierIndex + 1)
+					.map((b) => ({ name: b.name, description: b.description }))
+			}
+		: null;
 	const ctx: prompts.MasteryValidationContext = {
 		badge: {
 			id: badge.id,
@@ -1176,7 +1189,8 @@ export async function generateBadgeMasterySteps(
 		stepCount: spec.stepCount,
 		stepRewardCap: spec.stepRewardCap,
 		allowedLabels: labelsForBadge(badge),
-		allowedActivityTypes: activityTypeNames()
+		allowedActivityTypes: activityTypeNames(),
+		tier: tierForCtx
 	};
 
 	const ai = bindings.AI;

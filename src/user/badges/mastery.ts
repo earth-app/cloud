@@ -6,6 +6,24 @@ import { Badge, BadgeTracker, badges } from '.';
 import { generateBadgeMasterySteps } from '../../content/boat';
 import type { UserProfilePromptData } from '../../util/ai';
 
+// badges with no meaningful theme to anchor an AI-generated mastery quest
+export const MASTERY_EXEMPT_BADGE_IDS: ReadonlySet<string> = new Set([
+	'verified',
+	'close_friends',
+	'night_owl',
+	'early_bird',
+	'you_know_ball',
+	'early_adopter',
+	'old_account',
+	'old_account_2',
+	'journey_master',
+	'ultimate_adventurer'
+]);
+
+export function isMasteryExempt(badgeId: string): boolean {
+	return MASTERY_EXEMPT_BADGE_IDS.has(badgeId);
+}
+
 // step types the AI may emit; anything outside this list is dropped during clamping
 export const MASTERY_STEP_TYPES = [
 	'draw_picture',
@@ -76,6 +94,50 @@ export function labelsForBadge(badge: Badge): string[] {
 
 export function activityTypeNames(): ActivityType[] {
 	return com.earthapp.activity.ActivityType.values().map((t) => t.name as ActivityType);
+}
+
+// Tier ordering across rarities. Badges that share a tracker form a tier group
+// (e.g. bookworm → super_bookworm → master_bookworm → immortal_bookworm) and the
+// mastery prompt uses this so higher-tier masteries are noticeably harder.
+const RARITY_ORDER: Record<Rarity, number> = { normal: 0, rare: 1, amazing: 2, green: 3 };
+
+export type BadgeTier = {
+	tierIndex: number;
+	totalTiers: number;
+	siblings: { id: string; name: string; rarity: Rarity; description: string }[];
+};
+
+// Null when the badge has no tracker or is the only badge in its tracker group.
+// Exempt badges are excluded from sibling lists so they don't distort tier counts.
+export function badgeTier(badge: Badge): BadgeTier | null {
+	if (!badge.tracker_id) return null;
+	if (isMasteryExempt(badge.id)) return null;
+
+	const tracker = badge.tracker_id;
+	const siblings = badges
+		.filter((b) => b.tracker_id === tracker && !isMasteryExempt(b.id))
+		.slice()
+		.sort((a, b) => {
+			const ra = RARITY_ORDER[a.rarity] - RARITY_ORDER[b.rarity];
+			if (ra !== 0) return ra;
+			return a.id.localeCompare(b.id);
+		});
+
+	if (siblings.length <= 1) return null;
+
+	const tierIndex = siblings.findIndex((b) => b.id === badge.id);
+	if (tierIndex < 0) return null;
+
+	return {
+		tierIndex,
+		totalTiers: siblings.length,
+		siblings: siblings.map((b) => ({
+			id: b.id,
+			name: b.name,
+			rarity: b.rarity,
+			description: b.description
+		}))
+	};
 }
 
 const MASTERY_QUEST_PREFIX = 'user:badge_mastery';

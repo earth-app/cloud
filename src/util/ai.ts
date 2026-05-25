@@ -1617,6 +1617,14 @@ export type MasteryValidationContext = {
 	stepRewardCap: number;
 	allowedLabels: string[];
 	allowedActivityTypes: ActivityType[];
+	// Tier info when this badge shares a tracker with other badges. Null for solo badges
+	// (e.g. `networker`, `going_outside`) where there's no harder/easier sibling to scale against.
+	tier?: {
+		tierIndex: number;
+		totalTiers: number;
+		easier: { name: string; description: string }[];
+		harder: { name: string; description: string }[];
+	} | null;
 };
 
 export function badgeMasteryAiSchema(stepCount: number) {
@@ -1740,6 +1748,13 @@ CONSTRAINTS:
 - Do not fabricate activity_type values or classification labels — pick from the provided allowlists.
 - Do not include real geographic coordinates, real people's names, or links.
 - Steps must be completable solo, in any order indicated, without third-party services.
+
+TIER SCALING (only when "Tier context" is provided in the user message):
+Some badges belong to a tier group of progressively harder badges that share the same progress tracker (for example, an entry-level reading badge, a mid-tier one, and a long-haul one). When tier context is provided:
+- The current badge's tier index (0 = easiest) determines difficulty.
+- For LOWER tiers: lean toward the gentler end of every allowed threshold range, use shorter minutes for *_read_time, shorter min_length for describe_text, smaller pair/item counts (4-5) for match_terms/order_items, and friendlier prompts. Bias step types toward draw_picture / order_items / match_terms / shorter describe_text.
+- For HIGHER tiers: lean toward the demanding end of allowed thresholds, more minutes, longer min_length, larger pair/item counts (6-8), and tougher prompts. Bias step types toward transcribe_audio / longer describe_text / article_quiz at higher accuracy.
+- A mastery for tier 3 of 4 must be clearly harder than a mastery for tier 1 of 4 within the same group. Reuse subject themes across tiers — only difficulty changes.
 `;
 
 export function badgeMasteryUserPrompt(
@@ -1759,11 +1774,25 @@ export function badgeMasteryUserPrompt(
 					.join('\n')
 			: '- (no activities provided)';
 
+	const tierSection = (() => {
+		if (!ctx.tier) return '';
+		const fmt = (b: { name: string; description: string }) => `  - ${b.name}: ${b.description}`;
+		const easierBlock =
+			ctx.tier.easier.length > 0
+				? `Easier sibling badges (already considered "less hard" — keep this mastery harder than these):\n${ctx.tier.easier.map(fmt).join('\n')}`
+				: 'Easier sibling badges: none (this is the easiest tier in its group).';
+		const harderBlock =
+			ctx.tier.harder.length > 0
+				? `Harder sibling badges (their masteries should feel HARDER than this one — leave headroom):\n${ctx.tier.harder.map(fmt).join('\n')}`
+				: 'Harder sibling badges: none (this is the hardest tier in its group).';
+		return `\n\nTier context\n- This badge is tier ${ctx.tier.tierIndex + 1} of ${ctx.tier.totalTiers} within its tracker group. Apply TIER SCALING from the system message.\n- ${easierBlock}\n- ${harderBlock}`;
+	})();
+
 	return `Badge being mastered
 - Name: ${ctx.badge.name}
 - Description: ${ctx.badge.description}
 - Rarity: ${ctx.badge.rarity}
-- Earned by: ${badgeEarnedByPhrase(ctx.badge)}
+- Earned by: ${badgeEarnedByPhrase(ctx.badge)}${tierSection}
 
 User profile
 - Username: ${user.username || 'unknown'}
