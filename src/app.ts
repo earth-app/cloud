@@ -65,6 +65,14 @@ import {
 	checkAndGrantBadges
 } from './user/badges';
 import {
+	generateAndStoreMasteryQuest,
+	getMasteredMetadata,
+	getMasteryQuest,
+	isBadgeMastered,
+	isMasteryLocked,
+	lockActiveMasteryIfApplicable
+} from './user/badges/mastery';
+import {
 	getImpactPoints,
 	addImpactPoints,
 	removeImpactPoints,
@@ -1257,13 +1265,18 @@ app.get('/users/badges/:id', async (c) => {
 					granted_at = new Date(metadata.granted_at);
 				}
 
+				const masteredMeta = granted ? await getMasteredMetadata(id, badge.id, c.env.KV) : null;
+				const mastered_at = masteredMeta?.mastered_at ? new Date(masteredMeta.mastered_at) : null;
+
 				const { progress: _, ...badgeData } = badge;
 				return {
 					...badgeData,
 					user_id: id,
 					granted,
 					granted_at,
-					progress
+					progress,
+					mastered: mastered_at !== null,
+					mastered_at
 				};
 			})
 		);
@@ -1306,13 +1319,18 @@ app.get('/users/badges/:id/:badge_id', async (c) => {
 			granted_at = new Date(metadata.granted_at);
 		}
 
+		const masteredMeta = granted ? await getMasteredMetadata(id, badgeId, c.env.KV) : null;
+		const mastered_at = masteredMeta?.mastered_at ? new Date(masteredMeta.mastered_at) : null;
+
 		return c.json(
 			{
 				...badge,
 				user_id: id,
 				granted,
 				granted_at,
-				progress
+				progress,
+				mastered: mastered_at !== null,
+				mastered_at
 			},
 			200
 		);
@@ -1567,6 +1585,117 @@ app.delete('/users/badges/:id/:badge_id/reset', async (c) => {
 	}
 });
 
+/// Badge Mastery
+
+app.get('/users/badges/:id/:badge_id/mastery', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) {
+		return c.text('Badge not found', 404);
+	}
+
+	try {
+		const [locked, masteredMeta, quest] = await Promise.all([
+			isMasteryLocked(id, badgeId, c.env.KV),
+			getMasteredMetadata(id, badgeId, c.env.KV),
+			getMasteryQuest(id, badgeId, c.env.KV)
+		]);
+
+		return c.json(
+			{
+				user_id: id,
+				badge_id: badgeId,
+				generated: quest !== null,
+				locked,
+				mastered: masteredMeta !== null,
+				mastered_at: masteredMeta?.mastered_at ? new Date(masteredMeta.mastered_at) : null,
+				quest
+			},
+			200
+		);
+	} catch (err) {
+		console.error(`Error getting mastery status for badge '${badgeId}' user '${id}':`, err);
+		return c.text('Failed to get mastery status', 500);
+	}
+});
+
+app.post('/users/badges/:id/:badge_id/mastery/generate', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	const badgeId = c.req.param('badge_id')?.toLowerCase();
+	if (!id || !badgeId) {
+		return c.text('User ID and Badge ID are required', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	const badge = badges.find((b) => b.id === badgeId);
+	if (!badge) {
+		return c.text('Badge not found', 404);
+	}
+
+	let body: prompts.UserProfilePromptData;
+	try {
+		body = await c.req.json<prompts.UserProfilePromptData>();
+	} catch {
+		return c.text('Request body must be valid JSON matching UserProfilePromptData', 400);
+	}
+
+	if (!body || typeof body.username !== 'string' || !Array.isArray(body.activities)) {
+		return c.text('Request body must include username and activities[]', 400);
+	}
+
+	// Preconditions: badge must be granted, not already locked, and not already mastered.
+	const [granted, locked, alreadyMastered, existing] = await Promise.all([
+		isBadgeGranted(id, badgeId, c.env.KV),
+		isMasteryLocked(id, badgeId, c.env.KV),
+		isBadgeMastered(id, badgeId, c.env.KV),
+		getMasteryQuest(id, badgeId, c.env.KV)
+	]);
+
+	if (!granted) {
+		return c.text('Badge must be granted before mastery can be generated', 409);
+	}
+	if (locked) {
+		return c.text('Mastery for this badge has been permanently locked', 410);
+	}
+	if (alreadyMastered) {
+		return c.text('Badge has already been mastered', 409);
+	}
+	if (existing) {
+		return c.text(
+			'Mastery quest has already been generated; start it instead of regenerating',
+			409
+		);
+	}
+
+	try {
+		const quest = await generateAndStoreMasteryQuest(id, badge, body, c.env);
+		return c.json(quest, 201);
+	} catch (err) {
+		console.error(`Error generating mastery quest for badge '${badgeId}' user '${id}':`, err);
+		return c.text('Failed to generate mastery quest', 500);
+	}
+});
+
 /// User Impact Points
 
 app.get('/users/impact_points/:id', async (c) => {
@@ -1786,7 +1915,7 @@ app.post('/users/quests/progress/:user_id/start', async (c) => {
 	}
 
 	const questId = body.quest_id.toLowerCase();
-	const quest = await getQuest(questId, c.env);
+	const quest = await getQuest(questId, c.env, userId);
 	if (!quest) {
 		return c.text('Quest not found', 404);
 	}
@@ -1799,6 +1928,31 @@ app.post('/users/quests/progress/:user_id/start', async (c) => {
 
 		if (rank === 'free') {
 			return c.text('Premium quests require a non-free rank', 403);
+		}
+	}
+
+	// block restarts of permanently-locked mastery quests
+	const startingMasteryBadgeId = questId.startsWith('badge_mastery_')
+		? questId.replace('badge_mastery_', '')
+		: null;
+	if (startingMasteryBadgeId) {
+		const locked = await isMasteryLocked(userId, startingMasteryBadgeId, c.env.KV);
+		if (locked) {
+			return c.text('Mastery for this badge has been permanently locked', 410);
+		}
+	}
+
+	const activeProgress = await getCurrentQuestProgress(userId, c.env);
+	if (activeProgress.questId && !activeProgress.completed && activeProgress.questId !== questId) {
+		const lockResult = await lockActiveMasteryIfApplicable(
+			userId,
+			activeProgress.questId,
+			c.env.KV
+		);
+		if (lockResult.locked) {
+			console.log(
+				`User ${userId} abandoned mastery quest for badge '${lockResult.badgeId}' by starting '${questId}'`
+			);
 		}
 	}
 
@@ -1987,6 +2141,21 @@ app.delete('/users/quests/progress/:user_id/reset', async (c) => {
 	}
 
 	try {
+		// If the active quest is a mastery quest, resetting permanently locks it.
+		const activeProgress = await getCurrentQuestProgress(userId, c.env);
+		if (activeProgress.questId && !activeProgress.completed) {
+			const lockResult = await lockActiveMasteryIfApplicable(
+				userId,
+				activeProgress.questId,
+				c.env.KV
+			);
+			if (lockResult.locked) {
+				console.log(
+					`User ${userId} reset mastery quest for badge '${lockResult.badgeId}'; locking permanently.`
+				);
+			}
+		}
+
 		await resetQuestProgress(userId, c.env);
 		return c.body(null, 204);
 	} catch (err) {

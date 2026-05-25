@@ -1,12 +1,13 @@
 import { Buffer } from 'node:buffer';
 import { HTTPException } from 'hono/http-exception';
-import { quests, QuestStep } from '.';
+import { getQuest, QuestStep } from '.';
 import { ActivityType, Bindings, ExecutionCtxLike } from '../../util/types';
 import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util';
 import { addImpactPoints } from '../points';
 import { sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
 import { normalizeThreshold, QuestDeviceMetadata, validateStep } from './validation';
+import { markBadgeMastered, masteryBadgeIdFromQuestId } from '../badges/mastery';
 
 export type QuestProgress = {
 	questId: string;
@@ -325,7 +326,7 @@ export async function checkStepDelay(
 	// No active quest or step is not current — delay does not apply
 	if (!metadata || stepIndex !== metadata.currentStep) return { available: true };
 
-	const quest = quests.find((q) => q.id === metadata.questId);
+	const quest = await getQuest(metadata.questId, bindings, userId0);
 	if (!quest) return { available: true };
 
 	const targetStepDef = quest.steps[stepIndex];
@@ -380,7 +381,7 @@ export async function maybeArchiveCompletedQuest(
 
 	if (!res.metadata?.completed || !res.metadata?.questId) return;
 
-	const quest = quests.find((q) => q.id === res.metadata!.questId) || null;
+	const quest = await getQuest(res.metadata.questId, bindings, userId0);
 	const progress = res.value || [];
 
 	const doArchive = async () => {
@@ -414,7 +415,7 @@ export async function getCurrentQuestProgress(userId: string, bindings: Bindings
 	>(`user:quest_progress:${userId0}`, 'json');
 
 	const quest = res.metadata?.questId
-		? quests.find((q) => q.id === res.metadata?.questId) || null
+		? await getQuest(res.metadata.questId, bindings, userId0)
 		: null;
 
 	return {
@@ -468,7 +469,7 @@ export async function getCompletedQuestProgress(
 				| QuestStepProgressEntry
 				| QuestStepProgressEntry[]
 			)[];
-			const quest = quests.find((q) => q.id === questId) || null;
+			const quest = await getQuest(questId, bindings, userId0);
 			return { progress, quest, questId, completedAt };
 		},
 		60 * 60
@@ -549,7 +550,7 @@ export async function updateQuestProgress(
 		throw new HTTPException(409, { message: 'Quest already completed' });
 	}
 
-	const quest = quests.find((q) => q.id === metadata.questId);
+	const quest = metadata.questId ? await getQuest(metadata.questId, bindings, userId0) : null;
 	if (!quest) {
 		throw new HTTPException(404, { message: 'No active quest found' });
 	}
@@ -676,6 +677,14 @@ export async function updateQuestProgress(
 						`Quest "${quest.title}" Completion`,
 						bindings.KV
 					);
+
+					// If this is a badge mastery quest, set the mastered marker before notifying
+					// so the notification and any subsequent badge lookups see the new state.
+					const masteredBadgeId = masteryBadgeIdFromQuestId(quest.id);
+					if (masteredBadgeId) {
+						await markBadgeMastered(userId0, masteredBadgeId, bindings.KV);
+					}
+
 					await sendUserNotification(
 						bindings,
 						userId0,

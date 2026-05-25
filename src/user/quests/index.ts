@@ -3,6 +3,11 @@ import { ActivityType, ActivityOrType, Rarity, Bindings } from '../../util/types
 import { designActivityQuest } from './activity';
 import { getActivity } from '../../util/mantle2';
 import { CustomQuest, getCustomQuest, getCustomQuests } from './custom';
+import {
+	getMasteryQuest,
+	masteryBadgeIdFromQuestId,
+	MASTERY_QUEST_ID_PREFIX
+} from '../badges/mastery';
 
 export type Quest = {
 	id: string;
@@ -1426,7 +1431,8 @@ export async function getAllQuests(kv: KVNamespace): Promise<(CustomQuest | Ques
 
 export async function getQuest(
 	id: string,
-	bindings: Bindings
+	bindings: Bindings,
+	userId?: string
 ): Promise<CustomQuest | Quest | null> {
 	const quest = quests.find((q) => q.id === id);
 	if (quest) {
@@ -1439,6 +1445,13 @@ export async function getQuest(
 		if (!activity) return null;
 
 		return designActivityQuest(activity);
+	}
+
+	if (id.startsWith(MASTERY_QUEST_ID_PREFIX)) {
+		if (!userId) return null;
+		const badgeId = masteryBadgeIdFromQuestId(id);
+		if (!badgeId) return null;
+		return await getMasteryQuest(userId, badgeId, bindings.KV);
 	}
 
 	return await getCustomQuest(id, bindings.KV);

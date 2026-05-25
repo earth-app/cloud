@@ -9,6 +9,9 @@ import {
 } from './types';
 import { Entry, RelativeDateEntry } from '@earth-app/moho';
 import { ScoringCriterion } from '../content/ferry';
+import type { QuestStep } from '../user/quests';
+import type { Badge } from '../user/badges';
+import { clampInt, clampNumber } from './util';
 
 // Validation and sanitation functions for AI outputs
 
@@ -1572,4 +1575,444 @@ export async function generateProfilePhoto(
 	}
 
 	return imageBytes;
+}
+
+// Badge Mastery
+
+// step types the badge-mastery AI is allowed to emit; mirrors `MASTERY_STEP_TYPES` in
+// `src/user/badges/mastery.ts`; kept as a local string[] so we avoid a circular import
+const MASTERY_AI_STEP_TYPES = [
+	'draw_picture',
+	'article_quiz',
+	'take_photo_validation',
+	'take_photo_classification',
+	'transcribe_audio',
+	'describe_text',
+	'match_terms',
+	'order_items',
+	'article_read_time',
+	'activity_read_time'
+] as const;
+
+type AIMasteryStepType = (typeof MASTERY_AI_STEP_TYPES)[number];
+
+// raw shape emitted by the AI: a flat object with a `type` discriminator and type-specific optional fields
+export type AIMasteryStep = {
+	type: AIMasteryStepType;
+	description: string;
+	reward?: number;
+	prompt?: string;
+	threshold?: number;
+	label?: string;
+	activity_type?: string;
+	min_length?: number;
+	minutes?: number;
+	items?: string[];
+	pairs?: [string, string][];
+};
+
+export type MasteryValidationContext = {
+	badge: Pick<Badge, 'id' | 'name' | 'description' | 'rarity' | 'tracker_id'>;
+	stepCount: number;
+	stepRewardCap: number;
+	allowedLabels: string[];
+	allowedActivityTypes: ActivityType[];
+};
+
+export function badgeMasteryAiSchema(stepCount: number) {
+	return {
+		type: 'object',
+		required: ['steps'],
+		properties: {
+			steps: {
+				type: 'array',
+				minItems: stepCount,
+				maxItems: stepCount,
+				items: {
+					type: 'object',
+					required: ['type', 'description'],
+					properties: {
+						type: { type: 'string', enum: [...MASTERY_AI_STEP_TYPES] },
+						description: { type: 'string', maxLength: 240 },
+						reward: { type: 'number' },
+						prompt: { type: 'string', maxLength: 260 },
+						threshold: { type: 'number' },
+						label: { type: 'string', maxLength: 50 },
+						activity_type: { type: 'string', maxLength: 50 },
+						min_length: { type: 'number' },
+						minutes: { type: 'number' },
+						items: {
+							type: 'array',
+							maxItems: 12,
+							items: { type: 'string', maxLength: 80 }
+						},
+						pairs: {
+							type: 'array',
+							maxItems: 12,
+							items: {
+								type: 'array',
+								minItems: 2,
+								maxItems: 2,
+								items: { type: 'string', maxLength: 80 }
+							}
+						}
+					}
+				}
+			}
+		}
+	};
+}
+
+function badgeEarnedByPhrase(badge: MasteryValidationContext['badge']): string {
+	const tracker = badge.tracker_id;
+	if (!tracker) {
+		return `${badge.description}.`;
+	}
+	switch (tracker) {
+		case 'activities_added':
+			return 'adding activities to your profile';
+		case 'impact_points_earned':
+			return 'earning impact points across the app';
+		case 'prompts_responded':
+			return 'responding to community prompts';
+		case 'events_created':
+			return 'creating events';
+		case 'articles_read':
+			return 'reading articles';
+		case 'articles_read_time':
+			return 'spending time reading articles';
+		case 'prompts_read':
+			return 'reading community prompts';
+		case 'prompts_read_time':
+			return 'spending time with community prompts';
+		case 'events_attended':
+			return 'attending events';
+		case 'prompts_created':
+			return 'creating community prompts';
+		case 'event_images_submitted':
+			return 'submitting photos to events';
+		case 'event_images_submitted_good':
+			return 'submitting high-quality event photos';
+		case 'friends_added':
+			return 'building your friends network';
+		case 'article_quizzes_completed':
+			return 'completing article quizzes';
+		case 'article_quizzes_completed_perfect_score':
+			return 'acing article quizzes';
+		case 'event_types_attended':
+			return 'attending events of multiple kinds';
+		case 'event_countries_photographed':
+			return 'photographing events around the world';
+		case 'activity_read_time':
+			return 'spending time exploring activities';
+		default:
+			// Defensive fallback if a new BadgeTracker is added without a case above.
+			return `the ${String(tracker).replace(/_/g, ' ')} milestone`;
+	}
+}
+
+export const badgeMasterySystemMessage = `
+You design personalised "Badge Mastery" challenges — a short follow-up quest a user undertakes after earning a specific badge.
+
+TASK: Generate exactly N step objects in JSON that reinforce the activity that earned the badge AND draw on the user's interests.
+
+REQUIREMENTS:
+- Output VALID JSON only matching the provided schema: { "steps": [ ... ] }
+- Each step is a flat object with a "type" field and additional type-specific fields.
+- Do NOT include alternative-step arrays — emit a flat list of single steps.
+- description (<= 220 chars): clear, instructional, written in the second person. Do NOT reference the badge by name.
+- reward (integer, optional): per-step bonus impact points; will be clamped server-side.
+- Vary the step types — repeating the same type more than twice in a row is forbidden.
+
+TYPE-SPECIFIC FIELDS:
+- draw_picture: prompt (subject to draw, 1-12 words), threshold (0.55-0.7).
+- article_quiz: activity_type (one of the allowed values), threshold (0.6-1.0 — required quiz percentage).
+- article_read_time: activity_type (allowed value), minutes (5-30 integer).
+- activity_read_time: activity_type (allowed value), minutes (5-30 integer).
+- take_photo_classification: label (one of the allowed values), threshold (0.5-0.8).
+- take_photo_validation: prompt (1-2 sentences describing what the photo should show), threshold (0.5-0.75).
+- transcribe_audio: prompt (1-2 sentences describing what the user should say aloud), threshold (0.55-0.8).
+- describe_text: prompt (1-2 sentences asking for written reflection), threshold (0.5-0.75), min_length (50-300 integer characters).
+- match_terms: prompt (1 sentence instruction), pairs (array of 4-8 [term, description] pairs related to the badge theme).
+- order_items: items (array of 4-8 short labels in the correct order, e.g. chronological, size, intensity).
+
+CONSTRAINTS:
+- Do not fabricate activity_type values or classification labels — pick from the provided allowlists.
+- Do not include real geographic coordinates, real people's names, or links.
+- Steps must be completable solo, in any order indicated, without third-party services.
+`;
+
+export function badgeMasteryUserPrompt(
+	user: UserProfilePromptData,
+	ctx: MasteryValidationContext
+): string {
+	const activitiesSummary =
+		user.activities.length > 0
+			? user.activities
+					.slice(0, 6)
+					.map(
+						(a) =>
+							`- ${a.name}${a.aliases?.length ? ` (aka ${a.aliases.slice(0, 3).join(', ')})` : ''}: ${
+								a.description ? a.description.substring(0, 120) : 'No description.'
+							}`
+					)
+					.join('\n')
+			: '- (no activities provided)';
+
+	return `Badge being mastered
+- Name: ${ctx.badge.name}
+- Description: ${ctx.badge.description}
+- Rarity: ${ctx.badge.rarity}
+- Earned by: ${badgeEarnedByPhrase(ctx.badge)}
+
+User profile
+- Username: ${user.username || 'unknown'}
+- Country: ${user.country || 'unknown'}
+- Bio: ${user.bio ? user.bio.substring(0, 280) : '(none)'}
+- Account visibility: ${user.visibility}
+- Activities they like:
+${activitiesSummary}
+
+Allowlists
+- Allowed activity_type values: ${ctx.allowedActivityTypes.join(', ')}
+- Allowed labels for take_photo_classification: ${ctx.allowedLabels.join(', ')}
+
+Generate exactly ${ctx.stepCount} steps that personalise the mastery challenge for this user.
+Anchor each step to BOTH the badge's theme (${badgeEarnedByPhrase(ctx.badge)}) and at least one of the user's listed activities or interests.
+Per-step reward cap: ${ctx.stepRewardCap} impact points.
+
+Return JSON only.`;
+}
+
+// Convert a clamped AI step into a fully-formed QuestStep. Returns null if the step's
+// type-specific fields are too malformed to produce a usable QuestStep.
+function clampMasteryStep(step: AIMasteryStep, ctx: MasteryValidationContext): QuestStep | null {
+	if (typeof step !== 'object' || step === null) return null;
+	if (
+		typeof step.type !== 'string' ||
+		!MASTERY_AI_STEP_TYPES.includes(step.type as AIMasteryStepType)
+	) {
+		return null;
+	}
+
+	const description =
+		typeof step.description === 'string' && step.description.trim().length > 0
+			? step.description.trim().slice(0, 240)
+			: null;
+	if (!description) return null;
+
+	const cappedReward =
+		typeof step.reward === 'number' && Number.isFinite(step.reward)
+			? Math.max(0, Math.min(Math.round(step.reward), ctx.stepRewardCap))
+			: undefined;
+
+	const allowedActivityTypeSet = new Set(ctx.allowedActivityTypes as string[]);
+	const allowedLabelSet = new Set(ctx.allowedLabels);
+
+	switch (step.type) {
+		case 'draw_picture': {
+			const prompt =
+				typeof step.prompt === 'string' && step.prompt.trim().length > 0
+					? step.prompt.trim().slice(0, 120)
+					: null;
+			if (!prompt) return null;
+			const threshold = clampNumber(step.threshold, 0.55, 0.7, 0.6);
+			return {
+				type: 'draw_picture',
+				description,
+				parameters: [prompt, threshold],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'article_quiz': {
+			const at =
+				typeof step.activity_type === 'string' ? step.activity_type.trim().toUpperCase() : '';
+			if (!allowedActivityTypeSet.has(at)) return null;
+			const threshold = clampNumber(step.threshold, 0.6, 1.0, 0.8);
+			return {
+				type: 'article_quiz',
+				description,
+				parameters: [at as ActivityType, threshold],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'article_read_time': {
+			const at =
+				typeof step.activity_type === 'string' ? step.activity_type.trim().toUpperCase() : '';
+			if (!allowedActivityTypeSet.has(at)) return null;
+			const minutes = clampInt(step.minutes, 5, 30, 10);
+			return {
+				type: 'article_read_time',
+				description,
+				parameters: [at as ActivityType, minutes * 60],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'activity_read_time': {
+			const at =
+				typeof step.activity_type === 'string' ? step.activity_type.trim().toUpperCase() : '';
+			if (!allowedActivityTypeSet.has(at)) return null;
+			const minutes = clampInt(step.minutes, 5, 30, 10);
+			return {
+				type: 'activity_read_time',
+				description,
+				parameters: [{ type: 'activity_type', value: at as ActivityType }, minutes * 60],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'take_photo_classification': {
+			const label =
+				typeof step.label === 'string' ? step.label.trim().toLowerCase().replace(/\s+/g, '_') : '';
+			if (!allowedLabelSet.has(label)) return null;
+			const threshold = clampNumber(step.threshold, 0.5, 0.8, 0.6);
+			return {
+				type: 'take_photo_classification',
+				description,
+				parameters: [label, threshold],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'take_photo_validation': {
+			const prompt =
+				typeof step.prompt === 'string' && step.prompt.trim().length > 0
+					? step.prompt.trim().slice(0, 200)
+					: null;
+			if (!prompt) return null;
+			const threshold = clampNumber(step.threshold, 0.5, 0.75, 0.6);
+			return {
+				type: 'take_photo_validation',
+				description,
+				parameters: [prompt, threshold],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'transcribe_audio': {
+			const prompt =
+				typeof step.prompt === 'string' && step.prompt.trim().length > 0
+					? step.prompt.trim().slice(0, 240)
+					: null;
+			if (!prompt) return null;
+			const threshold = clampNumber(step.threshold, 0.55, 0.8, 0.7);
+			return {
+				type: 'transcribe_audio',
+				description,
+				parameters: [prompt, threshold],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'describe_text': {
+			const prompt =
+				typeof step.prompt === 'string' && step.prompt.trim().length > 0
+					? step.prompt.trim().slice(0, 240)
+					: null;
+			if (!prompt) return null;
+			const threshold = clampNumber(step.threshold, 0.5, 0.75, 0.6);
+			const minLength = clampInt(step.min_length, 50, 300, 100);
+			// Server-built criteria — AI-emitted criteria are never trusted because the
+			// shape is intricate (weights must sum to 1) and mis-shaped input crashes the
+			// scorer in `src/content/ferry.ts`.
+			const criteria: ScoringCriterion[] = [
+				{
+					id: 'relevance',
+					weight: 0.5,
+					ideal: `The response directly addresses: ${prompt}`
+				},
+				{
+					id: 'depth',
+					weight: 0.3,
+					ideal:
+						'The response is thoughtful and shows substantive detail rather than a one-line answer.'
+				},
+				{
+					id: 'originality',
+					weight: 0.2,
+					ideal: "The response is in the user's own voice and includes specific examples."
+				}
+			];
+			return {
+				type: 'describe_text',
+				description,
+				parameters: [criteria, threshold, minLength],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'match_terms': {
+			const prompt =
+				typeof step.prompt === 'string' && step.prompt.trim().length > 0
+					? step.prompt.trim().slice(0, 200)
+					: 'Match each item to its description.';
+			const pairsRaw = Array.isArray(step.pairs) ? step.pairs : [];
+			const pairs: [string, string][] = [];
+			for (const p of pairsRaw) {
+				if (!Array.isArray(p) || p.length !== 2) continue;
+				const [a, b] = p;
+				if (typeof a !== 'string' || typeof b !== 'string') continue;
+				const a2 = a.trim().slice(0, 80);
+				const b2 = b.trim().slice(0, 80);
+				if (a2 && b2) pairs.push([a2, b2]);
+				if (pairs.length >= 8) break;
+			}
+			if (pairs.length < 4) return null;
+			return {
+				type: 'match_terms',
+				description,
+				parameters: [prompt, pairs],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'order_items': {
+			const itemsRaw = Array.isArray(step.items) ? step.items : [];
+			const items: string[] = [];
+			for (const it of itemsRaw) {
+				if (typeof it !== 'string') continue;
+				const it2 = it.trim().slice(0, 80);
+				if (it2) items.push(it2);
+				if (items.length >= 8) break;
+			}
+			if (items.length < 4) return null;
+			return {
+				type: 'order_items',
+				description,
+				parameters: [items],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		default:
+			return null;
+	}
+}
+
+function injectMasteryDelays(steps: QuestStep[]): QuestStep[] {
+	if (steps.length === 0) return steps;
+	const cutover = Math.ceil(steps.length / 2);
+	return steps.map((step, idx) => (idx >= cutover ? { ...step, delay: 24 * 60 * 60 } : step));
+}
+
+export function validateBadgeMasterySteps(
+	raw: unknown,
+	ctx: MasteryValidationContext
+): QuestStep[] {
+	if (typeof raw !== 'object' || raw === null) {
+		throw new Error('Badge mastery generation returned a non-object payload.');
+	}
+
+	const stepsRaw = (raw as { steps?: unknown }).steps;
+	if (!Array.isArray(stepsRaw)) {
+		throw new Error('Badge mastery generation payload is missing a `steps` array.');
+	}
+
+	const clamped: QuestStep[] = [];
+	for (const candidate of stepsRaw) {
+		if (clamped.length >= ctx.stepCount) break;
+		const clean = clampMasteryStep(candidate as AIMasteryStep, ctx);
+		if (clean) clamped.push(clean);
+	}
+
+	if (clamped.length < ctx.stepCount) {
+		throw new Error(
+			`Badge mastery generation produced ${clamped.length} valid steps; ${ctx.stepCount} required.`
+		);
+	}
+
+	return injectMasteryDelays(clamped);
 }

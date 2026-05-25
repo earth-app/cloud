@@ -28,6 +28,9 @@ import {
 	uploadPlaceThumbnail
 } from './thumbnails';
 import { retrieveActivities } from '../util/mantle2';
+import type { QuestStep } from '../user/quests';
+import type { Badge } from '../user/badges';
+import { activityTypeNames, labelsForBadge, masterySpec } from '../user/badges/mastery';
 
 export const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 export const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
@@ -36,6 +39,7 @@ export const rankerModel = '@cf/baai/bge-reranker-base';
 export const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 export const quizModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 export const promptModel = '@cf/openai/gpt-oss-120b';
+export const badgeMasteryModel = '@cf/google/gemma-4-26b-a4b-it';
 
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
@@ -1152,6 +1156,73 @@ export async function recommendSimilarEvents(event: Event, pool: Event[], limit:
 		console.error('Error in recommendSimilarEvents:', error);
 		return getRandomEvents();
 	}
+}
+
+// Badge Mastery - on-demand AI generation of a personalised quest after a badge is earned.
+export async function generateBadgeMasterySteps(
+	badge: Badge,
+	user: prompts.UserProfilePromptData,
+	bindings: Bindings
+): Promise<QuestStep[]> {
+	const spec = masterySpec(badge.rarity);
+	const ctx: prompts.MasteryValidationContext = {
+		badge: {
+			id: badge.id,
+			name: badge.name,
+			description: badge.description,
+			rarity: badge.rarity,
+			tracker_id: badge.tracker_id
+		},
+		stepCount: spec.stepCount,
+		stepRewardCap: spec.stepRewardCap,
+		allowedLabels: labelsForBadge(badge),
+		allowedActivityTypes: activityTypeNames()
+	};
+
+	const ai = bindings.AI;
+	let result: { response?: string };
+	try {
+		result = (await ai.run(
+			badgeMasteryModel as any,
+			{
+				messages: [
+					{ role: 'system', content: prompts.badgeMasterySystemMessage.trim() },
+					{ role: 'user', content: prompts.badgeMasteryUserPrompt(user, ctx).trim() }
+				],
+				max_tokens: 2048,
+				temperature: 0.45,
+				guided_json: prompts.badgeMasteryAiSchema(spec.stepCount)
+			} as any
+		)) as { response?: string };
+	} catch (aiError) {
+		console.error('AI model failed for badge mastery generation', {
+			badgeId: badge.id,
+			error: aiError
+		});
+		throw new Error('Failed to generate badge mastery quest using AI model', { cause: aiError });
+	}
+
+	if (!result || typeof result.response !== 'string' || result.response.trim().length === 0) {
+		throw new Error('Badge mastery generation returned an empty response.');
+	}
+
+	const cleaned = stripMarkdownCodeFence(result.response);
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(cleaned);
+	} catch (parseErr) {
+		console.error('Badge mastery JSON parse failed', {
+			badgeId: badge.id,
+			snippet: cleaned.substring(0, 200),
+			error: parseErr
+		});
+		throw new Error('Badge mastery generation returned invalid JSON.');
+	}
+
+	// validateBadgeMasterySteps throws if not enough steps survive clamping; the endpoint
+	// surfaces this as a 500 so the user can call generate again.
+	return prompts.validateBadgeMasterySteps(parsed, ctx);
 }
 
 export async function postEvent(

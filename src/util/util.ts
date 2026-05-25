@@ -372,3 +372,18 @@ export function detectAudioFormat(data: Uint8Array): 'mp3' | 'flac' | 'aac' | nu
 	if (data[0] === 0xff && (data[1] & 0xe0) === 0xe0 && (data[1] & 0x06) !== 0x02) return 'aac';
 	return null;
 }
+
+// Clamp a finite number into [min, max] with a fallback when the value is missing/invalid.
+export function clampNumber(raw: unknown, min: number, max: number, fallback: number): number {
+	if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+		return fallback;
+	}
+	if (raw < min) return min;
+	if (raw > max) return max;
+	return raw;
+}
+
+export function clampInt(raw: unknown, min: number, max: number, fallback: number): number {
+	const v = clampNumber(raw, min, max, fallback);
+	return Math.round(v);
+}

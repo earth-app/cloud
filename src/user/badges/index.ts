@@ -1,7 +1,7 @@
-import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../util/util';
-import { sendUserNotification } from './notifications';
-import { Bindings, ExecutionCtxLike, Rarity } from '../util/types';
-import { addImpactPoints } from './points';
+import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../../util/util';
+import { sendUserNotification } from '../notifications';
+import { Bindings, ExecutionCtxLike, Rarity } from '../../util/types';
+import { addImpactPoints } from '../points';
 
 export type BadgeTracker =
 	| 'activities_added' // handled over mantle2
