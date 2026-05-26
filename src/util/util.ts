@@ -360,6 +360,9 @@ export function isInsideLocation(
 	return distance <= radius;
 }
 
+// ISO BMFF major brands that wrap AAC audio and are produced by mobile recorders.
+const M4A_BRANDS = new Set(['M4A ', 'M4B ', 'mp42', 'mp41', 'isom', 'iso2']);
+
 export function detectAudioFormat(data: Uint8Array): 'mp3' | 'flac' | 'aac' | 'm4a' | null {
 	if (data.length < 4) return null;
 	// ID3 tag header (mp3)
@@ -368,19 +371,19 @@ export function detectAudioFormat(data: Uint8Array): 'mp3' | 'flac' | 'aac' | 'm
 	if (data[0] === 0xff && (data[1] & 0xe0) === 0xe0 && (data[1] & 0x06) === 0x02) return 'mp3';
 	// fLaC magic (flac)
 	if (data[0] === 0x66 && data[1] === 0x4c && data[2] === 0x61 && data[3] === 0x43) return 'flac';
-	// ISO BMFF ftyp box with M4A/M4B major brand — produced by iOS Voice Memos and most mobile AAC recorders
+	// ISO BMFF ftyp box (bytes 4-7 = 'ftyp') with an AAC-capable major brand.
+	// iOS AVAudioRecorder emits 'M4A '/'M4B '; Android MediaRecorder(MPEG_4) emits
+	// a 'mp42' major brand with 'isom'/'mp42' compatible brands — both carry AAC.
 	if (
 		data.length >= 12 &&
 		data[4] === 0x66 &&
 		data[5] === 0x74 &&
 		data[6] === 0x79 &&
-		data[7] === 0x70 &&
-		data[8] === 0x4d &&
-		data[9] === 0x34 &&
-		(data[10] === 0x41 || data[10] === 0x42) &&
-		data[11] === 0x20
-	)
-		return 'm4a';
+		data[7] === 0x70
+	) {
+		const brand = String.fromCharCode(data[8]!, data[9]!, data[10]!, data[11]!);
+		if (M4A_BRANDS.has(brand)) return 'm4a';
+	}
 	// AAC ADTS sync: 0xFF + top 3 bits set + Layer bits != 01
 	if (data[0] === 0xff && (data[1] & 0xe0) === 0xe0 && (data[1] & 0x06) !== 0x02) return 'aac';
 	return null;

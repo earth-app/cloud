@@ -307,6 +307,29 @@ describe('detectAudioFormat', () => {
 		expect(detectAudioFormat(m4b)).toBe('m4a');
 	});
 
+	it('detects m4a from Android MediaRecorder ftyp box with mp42 brand', () => {
+		// Android MediaRecorder(MPEG_4) stamps 'mp42' as the major brand.
+		const mp42 = new Uint8Array([
+			0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32
+		]);
+		expect(detectAudioFormat(mp42)).toBe('m4a');
+	});
+
+	it('detects m4a from ftyp box with isom brand', () => {
+		const isom = new Uint8Array([
+			0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d
+		]);
+		expect(detectAudioFormat(isom)).toBe('m4a');
+	});
+
+	it('returns null for an ftyp box with an unrecognized brand', () => {
+		// 'qt  ' (QuickTime) is an ISO BMFF brand we do not accept as AAC audio.
+		const qt = new Uint8Array([
+			0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x71, 0x74, 0x20, 0x20
+		]);
+		expect(detectAudioFormat(qt)).toBeNull();
+	});
+
 	it('returns null for unsupported/short data', () => {
 		expect(detectAudioFormat(new Uint8Array([1, 2, 3]))).toBeNull();
 	});
