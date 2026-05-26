@@ -274,6 +274,42 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 				}
 			];
 		}
+		case 'SPORT': {
+			return [
+				{
+					type: 'distance_covered',
+					description: 'Run or walk a 1km.',
+					parameters: [1000], // 1000 meters
+					mobile_only: true
+				},
+				{
+					type: 'draw_picture',
+					description: 'Draw a picture of a sport you like.',
+					parameters: ['Draw a picture of a sport you like.', 0.5]
+				}
+			];
+		}
+		case 'ENTERTAINMENT': {
+			return [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a barcode for a music item',
+					parameters: ['music'],
+					mobile_only: true
+				},
+				{
+					type: 'activity_read_time',
+					description: 'Read this activity for at least 15 minutes',
+					parameters: [{ type: 'activity', ...activity }, 15 * 60],
+					reward: 25
+				},
+				{
+					type: 'activity_read_time',
+					description: 'Read an activity about entertainment for at least 10 minutes',
+					parameters: [{ type: 'activity_type', value: 'ENTERTAINMENT' }, 10 * 60]
+				}
+			];
+		}
 		default: {
 			return [
 				{
