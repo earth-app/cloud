@@ -2,7 +2,7 @@ import { Quest, QuestStep } from '.';
 import { Activity, ActivityType } from '../../util/types';
 import { capitalizeFully } from '../../util/util';
 
-const matchTermDescriptions: Record<ActivityType, string> = {
+export const MATCH_TERM_DEFINITIONS: Record<ActivityType, string> = {
 	ART: 'Works that are primarily focused on expression, creativity, and aesthetics',
 	COMMUNITY_SERVICE: 'Activities that involve helping or engaging with the community',
 	CREATIVE: 'Something that involves creating something new or fresh',
@@ -36,7 +36,7 @@ const matchTermDescriptions: Record<ActivityType, string> = {
 function createMatchTerms(types: ActivityType[]): [string, string][] {
 	const pairs: [string, string][] = [];
 	for (const type of types) {
-		const description = matchTermDescriptions[type] || type;
+		const description = MATCH_TERM_DEFINITIONS[type] || type;
 		pairs.push([type, description]);
 	}
 
@@ -46,7 +46,7 @@ function createMatchTerms(types: ActivityType[]): [string, string][] {
 function createOrderItems(activity: Activity): string[] {
 	const types = activity.types;
 	const items = types.map(
-		(type) => `${capitalizeFully(type.replace(/_/g, ' '))}: ${matchTermDescriptions[type] || type}`
+		(type) => `${capitalizeFully(type.replace(/_/g, ' '))}: ${MATCH_TERM_DEFINITIONS[type] || type}`
 	);
 	return items;
 }
