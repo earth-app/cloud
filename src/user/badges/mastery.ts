@@ -24,7 +24,9 @@ export function isMasteryExempt(badgeId: string): boolean {
 	return MASTERY_EXEMPT_BADGE_IDS.has(badgeId);
 }
 
-// step types the AI may emit; anything outside this list is dropped during clamping
+// step types the AI may emit; anything outside this list is dropped during clamping.
+// Mobile-only variants (distance_covered, scan_barcode) are server-wrapped with a
+// non-mobile describe_text fallback alt before being returned in the final quest.
 export const MASTERY_STEP_TYPES = [
 	'draw_picture',
 	'article_quiz',
@@ -35,7 +37,9 @@ export const MASTERY_STEP_TYPES = [
 	'match_terms',
 	'order_items',
 	'article_read_time',
-	'activity_read_time'
+	'activity_read_time',
+	'distance_covered',
+	'scan_barcode'
 ] as const;
 export type MasteryStepType = (typeof MASTERY_STEP_TYPES)[number];
 

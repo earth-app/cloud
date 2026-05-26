@@ -1591,7 +1591,10 @@ const MASTERY_AI_STEP_TYPES = [
 	'match_terms',
 	'order_items',
 	'article_read_time',
-	'activity_read_time'
+	'activity_read_time',
+	// mobile_only
+	'distance_covered',
+	'scan_barcode'
 ] as const;
 
 type AIMasteryStepType = (typeof MASTERY_AI_STEP_TYPES)[number];
@@ -1609,6 +1612,11 @@ export type AIMasteryStep = {
 	minutes?: number;
 	items?: string[];
 	pairs?: [string, string][];
+	// distance_covered (mobile-only): minimum meters covered on foot/bike.
+	meters?: number;
+	// scan_barcode (mobile-only): the barcode kind + optional thematic keyword the resolved title must contain.
+	scan_kind?: string;
+	scan_keyword?: string;
 };
 
 export type MasteryValidationContext = {
@@ -1663,7 +1671,10 @@ export function badgeMasteryAiSchema(stepCount: number) {
 								maxItems: 2,
 								items: { type: 'string', maxLength: 80 }
 							}
-						}
+						},
+						meters: { type: 'number' },
+						scan_kind: { type: 'string', enum: ['food', 'music', 'book'] },
+						scan_keyword: { type: 'string', maxLength: 30 }
 					}
 				}
 			}
@@ -1743,6 +1754,19 @@ TYPE-SPECIFIC FIELDS:
 - describe_text: prompt (1-2 sentences asking for written reflection), threshold (0.5-0.75), min_length (50-300 integer characters).
 - match_terms: prompt (1 sentence instruction), pairs (array of 4-8 [term, description] pairs related to the badge theme).
 - order_items: items (array of 4-8 short labels in the correct order, e.g. chronological, size, intensity).
+- distance_covered (MOBILE-ONLY): meters (200-5000 integer — minimum distance the user covers on foot, run, or bike; vehicular travel does NOT count). Frame the description as a walk/run/ride that ties to the badge's theme.
+- scan_barcode (MOBILE-ONLY): scan_kind ("food" | "music" | "book"), scan_keyword (optional single lowercase word, only emit for higher tiers — it gates the scan to a specific subject by requiring that word in the resolved product title).
+
+MOBILE-ONLY STEPS:
+- distance_covered and scan_barcode require a phone. The server will automatically wrap them with a non-mobile describe_text fallback so desktop users still have a completion path — you should emit them as FLAT single steps, NEVER as alternative arrays.
+- Use AT MOST ONE distance_covered step per quest.
+- Use AT MOST ONE scan_barcode step per quest.
+- Eligibility — only emit when the badge theme genuinely fits:
+  - distance_covered: badges about attending events, photographing places, outdoor activity, exploration, or physical engagement. Skip for purely contemplative, screen-based, or social-only badges.
+  - scan_barcode kind="book": badges about reading or article-related learning.
+  - scan_barcode kind="music": badges about events, entertainment, or audio engagement.
+  - scan_barcode kind="food": badges about community, wellness, or in-person gatherings.
+  - Skip both for abstract milestones (activities_added, impact_points_earned, prompts_responded, friends_added).
 
 CONSTRAINTS:
 - Do not fabricate activity_type values or classification labels — pick from the provided allowlists.
@@ -2006,21 +2030,106 @@ function clampMasteryStep(step: AIMasteryStep, ctx: MasteryValidationContext): Q
 				...(cappedReward !== undefined ? { reward: cappedReward } : {})
 			};
 		}
+		case 'distance_covered': {
+			// tier-aware default: 200m for the bottom tier, ~3km for the top tier;
+			// hard clamp range is [200, 5000] regardless of tier
+			const tierFactor = ctx.tier ? ctx.tier.tierIndex / Math.max(1, ctx.tier.totalTiers - 1) : 0.4;
+			const tierDefault = Math.round(200 + tierFactor * 2800);
+			const meters = clampInt(step.meters, 200, 5000, tierDefault);
+			return {
+				type: 'distance_covered',
+				description,
+				parameters: [meters],
+				mobile_only: true,
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'scan_barcode': {
+			const kindRaw = typeof step.scan_kind === 'string' ? step.scan_kind.trim().toLowerCase() : '';
+			if (kindRaw !== 'food' && kindRaw !== 'music' && kindRaw !== 'book') return null;
+			const kind = kindRaw as 'food' | 'music' | 'book';
+
+			const keywordRaw =
+				typeof step.scan_keyword === 'string' ? step.scan_keyword.trim().toLowerCase() : '';
+			const keyword = /^[a-z0-9]{1,30}$/.test(keywordRaw) ? keywordRaw : undefined;
+
+			const parameters: ['food' | 'music' | 'book', string?] = keyword ? [kind, keyword] : [kind];
+			return {
+				type: 'scan_barcode',
+				description,
+				parameters,
+				mobile_only: true,
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
 		default:
 			return null;
 	}
 }
 
-function injectMasteryDelays(steps: QuestStep[]): QuestStep[] {
+// Type guard for the mobile-only step variants without leaking the entire QuestStep union.
+function isMobileOnlyStep(step: QuestStep): step is QuestStep & { mobile_only: true } {
+	return (step as { mobile_only?: unknown }).mobile_only === true;
+}
+
+// Deterministic non-mobile fallback for each mobile-only step type. Same theme, same
+// approximate effort, but completable on a desktop browser via describe_text. The reward
+// (if any) is mirrored from the mobile step so completing either alt awards the same points.
+function buildFallbackForMobileOnly(step: QuestStep & { mobile_only: true }): QuestStep {
+	const reward = (step as { reward?: number }).reward;
+	const criteria: ScoringCriterion[] = [
+		{
+			id: 'relevance',
+			weight: 0.6,
+			ideal: 'The response directly addresses the prompt with concrete, specific detail.'
+		},
+		{
+			id: 'depth',
+			weight: 0.4,
+			ideal: "The response is thoughtful and shows the user's perspective, not a generic answer."
+		}
+	];
+
+	if (step.type === 'distance_covered') {
+		const meters = step.parameters[0];
+		const km = meters >= 1000 ? `${(meters / 1000).toFixed(1)} km` : `${meters} m`;
+		return {
+			type: 'describe_text',
+			description: `Describe a route, place, or walk roughly ${km} long that fits this challenge — what would you see, where would you go, and why does it matter to you?`,
+			parameters: [criteria, 0.55, 120],
+			...(reward !== undefined ? { reward } : {})
+		};
+	}
+
+	// scan_barcode
+	const [kind, keyword] = step.parameters;
+	const subject = keyword ? `${kind} item related to "${keyword}"` : `${kind} item`;
+	return {
+		type: 'describe_text',
+		description: `Describe a ${subject} that's meaningful to you. Cover what it is, where you'd find it, and why it matters in your life.`,
+		parameters: [criteria, 0.55, 120],
+		...(reward !== undefined ? { reward } : {})
+	};
+}
+
+function injectMasteryDelays(steps: (QuestStep | QuestStep[])[]): (QuestStep | QuestStep[])[] {
 	if (steps.length === 0) return steps;
 	const cutover = Math.ceil(steps.length / 2);
-	return steps.map((step, idx) => (idx >= cutover ? { ...step, delay: 24 * 60 * 60 } : step));
+	const withDelay = (s: QuestStep): QuestStep => ({ ...s, delay: 24 * 60 * 60 });
+	return steps.map((entry, idx) => {
+		if (idx < cutover) return entry;
+		return Array.isArray(entry) ? entry.map(withDelay) : withDelay(entry);
+	});
 }
+
+// Cap on mobile-only steps per quest. distance_covered + scan_barcode together
+// must not dominate the quest — desktop users would end up with too many describe_text fallbacks.
+const MAX_MOBILE_ONLY_STEPS_PER_QUEST = 2;
 
 export function validateBadgeMasterySteps(
 	raw: unknown,
 	ctx: MasteryValidationContext
-): QuestStep[] {
+): (QuestStep | QuestStep[])[] {
 	if (typeof raw !== 'object' || raw === null) {
 		throw new Error('Badge mastery generation returned a non-object payload.');
 	}
@@ -2031,10 +2140,24 @@ export function validateBadgeMasterySteps(
 	}
 
 	const clamped: QuestStep[] = [];
+	const mobileTypeSeen = new Set<string>();
+	let mobileOnlyCount = 0;
+
 	for (const candidate of stepsRaw) {
 		if (clamped.length >= ctx.stepCount) break;
 		const clean = clampMasteryStep(candidate as AIMasteryStep, ctx);
-		if (clean) clamped.push(clean);
+		if (!clean) continue;
+
+		if (isMobileOnlyStep(clean)) {
+			// Enforce "at most one of each mobile-only type" + the global cap. The system
+			// prompt asks the AI to honor this, but the clamp is the source of truth.
+			if (mobileTypeSeen.has(clean.type)) continue;
+			if (mobileOnlyCount >= MAX_MOBILE_ONLY_STEPS_PER_QUEST) continue;
+			mobileTypeSeen.add(clean.type);
+			mobileOnlyCount++;
+		}
+
+		clamped.push(clean);
 	}
 
 	if (clamped.length < ctx.stepCount) {
@@ -2043,5 +2166,12 @@ export function validateBadgeMasterySteps(
 		);
 	}
 
-	return injectMasteryDelays(clamped);
+	// Wrap each mobile-only step with a deterministic non-mobile describe_text fallback so
+	// desktop users always have a completion path. The Quest engine treats alt arrays as
+	// "any one of these counts" — see src/user/quests/tracking.ts updateQuestProgress.
+	const wrapped: (QuestStep | QuestStep[])[] = clamped.map((step) =>
+		isMobileOnlyStep(step) ? [step, buildFallbackForMobileOnly(step)] : step
+	);
+
+	return injectMasteryDelays(wrapped);
 }

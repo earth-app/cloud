@@ -21,8 +21,20 @@ import {
 	validateBadgeMasterySteps
 } from '../../../src/util/ai';
 import { ActivityType, Rarity } from '../../../src/util/types';
+import type { QuestStep } from '../../../src/user/quests';
 
 const exampleBadge = badges.find((b) => b.id === 'article_enthusiast')!;
+
+// Narrowing helpers for the (QuestStep | QuestStep[])[] return type.
+// Non-mobile clamped entries are always single steps; mobile-only entries are alt arrays of [mobile, describe_text fallback].
+function asSingle(entry: QuestStep | QuestStep[]): QuestStep {
+	if (Array.isArray(entry)) throw new Error('Expected single step, got alt-array');
+	return entry;
+}
+function asAlt(entry: QuestStep | QuestStep[]): QuestStep[] {
+	if (!Array.isArray(entry)) throw new Error('Expected alt-array, got single step');
+	return entry;
+}
 
 function ctxFor(
 	rarity: Rarity = 'normal',
@@ -194,7 +206,7 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 
 		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
 		expect(clamped).toHaveLength(4);
-		expect(clamped.every((s) => s.type === 'draw_picture')).toBe(true);
+		expect(clamped.map(asSingle).every((s) => s.type === 'draw_picture')).toBe(true);
 	});
 
 	it('clamps thresholds and rewards into safe ranges', () => {
@@ -210,7 +222,8 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 
 		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
 		expect(clamped).toHaveLength(4);
-		for (const step of clamped) {
+		for (const entry of clamped) {
+			const step = asSingle(entry);
 			expect(step.type).toBe('article_quiz');
 			expect(step.reward).toBeLessThanOrEqual(125); // normal cap
 			if (step.type === 'article_quiz') {
@@ -234,10 +247,10 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
 		expect(clamped).toHaveLength(4);
 		// cutover = ceil(4/2) = 2 → indices 2,3 should have delay; 0,1 should not.
-		expect(clamped[0].delay).toBeUndefined();
-		expect(clamped[1].delay).toBeUndefined();
-		expect(clamped[2].delay).toBe(24 * 60 * 60);
-		expect(clamped[3].delay).toBe(24 * 60 * 60);
+		expect(asSingle(clamped[0]).delay).toBeUndefined();
+		expect(asSingle(clamped[1]).delay).toBeUndefined();
+		expect(asSingle(clamped[2]).delay).toBe(24 * 60 * 60);
+		expect(asSingle(clamped[3]).delay).toBe(24 * 60 * 60);
 	});
 
 	it('converts minutes → seconds for read-time steps and wraps activity_read_time params', () => {
@@ -266,14 +279,14 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 		};
 
 		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
-		const article = clamped[0];
+		const article = asSingle(clamped[0]);
 		expect(article.type).toBe('article_read_time');
 		if (article.type === 'article_read_time') {
 			expect(article.parameters[0]).toBe('LEARNING');
 			expect(article.parameters[1]).toBe(10 * 60);
 		}
 
-		const activity = clamped[1];
+		const activity = asSingle(clamped[1]);
 		expect(activity.type).toBe('activity_read_time');
 		if (activity.type === 'activity_read_time') {
 			expect(activity.parameters[0]).toEqual({ type: 'activity_type', value: 'HOBBY' });
@@ -281,13 +294,13 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 		}
 
 		// 999 clamps to 30 minutes
-		const capped = clamped[2];
+		const capped = asSingle(clamped[2]);
 		if (capped.type === 'article_read_time') {
 			expect(capped.parameters[1]).toBe(30 * 60);
 		}
 
 		// 1 clamps to 5 minutes
-		const floored = clamped[3];
+		const floored = asSingle(clamped[3]);
 		if (floored.type === 'article_read_time') {
 			expect(floored.parameters[1]).toBe(5 * 60);
 		}
@@ -319,7 +332,7 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 		};
 		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
 		expect(clamped).toHaveLength(4);
-		expect(clamped.every((s) => s.type === 'draw_picture')).toBe(true);
+		expect(clamped.map(asSingle).every((s) => s.type === 'draw_picture')).toBe(true);
 	});
 
 	it('builds describe_text criteria server-side (AI cannot inject custom criteria)', () => {
@@ -335,13 +348,213 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 			}))
 		};
 		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
-		for (const step of clamped) {
+		for (const entry of clamped) {
+			const step = asSingle(entry);
 			if (step.type === 'describe_text') {
 				const [criteria] = step.parameters;
 				expect(criteria.map((c) => c.id).sort()).toEqual(['depth', 'originality', 'relevance']);
 				const totalWeight = criteria.reduce((a, c) => a + c.weight, 0);
 				expect(totalWeight).toBeCloseTo(1.0, 2);
 			}
+		}
+	});
+});
+
+describe('mastery: mobile-only step wrapping', () => {
+	it('wraps distance_covered with a describe_text fallback alt', () => {
+		const raw = {
+			steps: [
+				{
+					type: 'distance_covered',
+					description: 'Walk a route through your neighborhood.',
+					meters: 800
+				},
+				...Array.from({ length: 3 }, (_, idx) => ({
+					type: 'draw_picture',
+					description: `Draw ${idx}`,
+					prompt: 'leaf',
+					threshold: 0.6
+				}))
+			]
+		};
+
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+		const alt = asAlt(clamped[0]);
+		expect(alt).toHaveLength(2);
+		expect(alt[0].type).toBe('distance_covered');
+		if (alt[0].type === 'distance_covered') {
+			expect(alt[0].parameters[0]).toBe(800);
+			expect(alt[0].mobile_only).toBe(true);
+		}
+		expect(alt[1].type).toBe('describe_text');
+	});
+
+	it('wraps scan_barcode with a describe_text fallback alt and preserves optional keyword', () => {
+		const raw = {
+			steps: [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a book that connects to your reading habits.',
+					scan_kind: 'book',
+					scan_keyword: 'science'
+				},
+				...Array.from({ length: 3 }, (_, idx) => ({
+					type: 'draw_picture',
+					description: `Draw ${idx}`,
+					prompt: 'leaf',
+					threshold: 0.6
+				}))
+			]
+		};
+
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		const alt = asAlt(clamped[0]);
+		expect(alt).toHaveLength(2);
+		expect(alt[0].type).toBe('scan_barcode');
+		if (alt[0].type === 'scan_barcode') {
+			expect(alt[0].parameters).toEqual(['book', 'science']);
+			expect(alt[0].mobile_only).toBe(true);
+		}
+		expect(alt[1].type).toBe('describe_text');
+	});
+
+	it('drops scan_barcode with invalid kind; strips malformed keywords but keeps the step kind-only', () => {
+		const raw = {
+			steps: [
+				// invalid kind — whole step dropped
+				{ type: 'scan_barcode', description: 'x', scan_kind: 'tool' },
+				// valid kind, multi-word keyword — keyword stripped, kind-only scan kept
+				{
+					type: 'scan_barcode',
+					description: 'Scan a food item.',
+					scan_kind: 'food',
+					scan_keyword: 'hot dog'
+				},
+				// 3 valid drawings to fill the rest
+				...Array.from({ length: 3 }, (_, idx) => ({
+					type: 'draw_picture',
+					description: `Draw ${idx}`,
+					prompt: 'subject',
+					threshold: 0.6
+				}))
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+
+		// The surviving scan_barcode lives in an alt-array; keyword should have been stripped.
+		const altEntries = clamped.filter((e): e is QuestStep[] => Array.isArray(e));
+		expect(altEntries).toHaveLength(1);
+		const mobileStep = altEntries[0][0];
+		expect(mobileStep.type).toBe('scan_barcode');
+		if (mobileStep.type === 'scan_barcode') {
+			expect(mobileStep.parameters).toEqual(['food']); // no second arg
+		}
+	});
+
+	it('clamps distance_covered meters into [200, 5000]', () => {
+		const raw = {
+			steps: [
+				{ type: 'distance_covered', description: 'tiny', meters: 50 },
+				{ type: 'distance_covered', description: 'huge', meters: 50_000 }, // dup mobile type — dropped
+				...Array.from({ length: 3 }, () => ({
+					type: 'draw_picture',
+					description: 'Draw a leaf',
+					prompt: 'leaf',
+					threshold: 0.6
+				}))
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+		// Only ONE distance_covered survives per quest. Second is dropped via the mobile-type-seen cap.
+		const distanceEntries = clamped.filter(
+			(e): e is QuestStep[] => Array.isArray(e) && e.some((s) => s.type === 'distance_covered')
+		);
+		expect(distanceEntries).toHaveLength(1);
+		const dStep = distanceEntries[0][0];
+		if (dStep.type === 'distance_covered') {
+			expect(dStep.parameters[0]).toBeGreaterThanOrEqual(200);
+			expect(dStep.parameters[0]).toBeLessThanOrEqual(5000);
+		}
+	});
+
+	it('caps total mobile-only steps per quest (at most one of each + global cap)', () => {
+		const raw = {
+			steps: [
+				{ type: 'distance_covered', description: 'walk', meters: 1000 },
+				{ type: 'distance_covered', description: 'walk again', meters: 1500 }, // dropped (dup type)
+				{ type: 'scan_barcode', description: 'scan', scan_kind: 'book' },
+				{ type: 'scan_barcode', description: 'scan more', scan_kind: 'food' }, // dropped (dup type)
+				...Array.from({ length: 4 }, (_, idx) => ({
+					type: 'draw_picture',
+					description: `Draw ${idx}`,
+					prompt: 'subject',
+					threshold: 0.6
+				}))
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		const mobileEntries = clamped.filter(Array.isArray);
+		// One distance_covered alt + one scan_barcode alt = 2 alts max.
+		expect(mobileEntries).toHaveLength(2);
+	});
+
+	it('applies the 24h delay to BOTH branches of an alt-wrapped step in the second half', () => {
+		// 4 steps total; mobile-only at index 3 (in the delayed half) should have delay on both alts.
+		const raw = {
+			steps: [
+				...Array.from({ length: 3 }, (_, idx) => ({
+					type: 'draw_picture',
+					description: `Draw ${idx}`,
+					prompt: 'leaf',
+					threshold: 0.6
+				})),
+				{ type: 'distance_covered', description: 'walk', meters: 1000 }
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		const tail = asAlt(clamped[3]);
+		expect(tail[0].delay).toBe(24 * 60 * 60);
+		expect(tail[1].delay).toBe(24 * 60 * 60);
+	});
+
+	it('tier-aware default for distance_covered scales with tierIndex', () => {
+		const ctxLow = ctxFor('normal', {
+			tier: {
+				tierIndex: 0,
+				totalTiers: 4,
+				easier: [],
+				harder: [{ name: 'Super', description: 'harder' }]
+			}
+		});
+		const ctxHigh = ctxFor('normal', {
+			tier: {
+				tierIndex: 3,
+				totalTiers: 4,
+				easier: [{ name: 'Base', description: 'easier' }],
+				harder: []
+			}
+		});
+		const raw = {
+			steps: [
+				// `meters` omitted — clamp uses the tier-aware default.
+				{ type: 'distance_covered', description: 'walk' },
+				...Array.from({ length: 3 }, () => ({
+					type: 'draw_picture',
+					description: 'Draw',
+					prompt: 'leaf',
+					threshold: 0.6
+				}))
+			]
+		};
+		const low = validateBadgeMasterySteps(raw, ctxLow);
+		const high = validateBadgeMasterySteps(raw, ctxHigh);
+		const lowStep = asAlt(low[0])[0];
+		const highStep = asAlt(high[0])[0];
+		if (lowStep.type === 'distance_covered' && highStep.type === 'distance_covered') {
+			expect(highStep.parameters[0]).toBeGreaterThan(lowStep.parameters[0]);
 		}
 	});
 });

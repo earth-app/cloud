@@ -1163,7 +1163,7 @@ export async function generateBadgeMasterySteps(
 	badge: Badge,
 	user: prompts.UserProfilePromptData,
 	bindings: Bindings
-): Promise<QuestStep[]> {
+): Promise<(QuestStep | QuestStep[])[]> {
 	const spec = masterySpec(badge.rarity);
 	const tier = badgeTier(badge);
 	const tierForCtx = tier
@@ -1196,6 +1196,13 @@ export async function generateBadgeMasterySteps(
 	const ai = bindings.AI;
 	let result: { response?: string };
 	try {
+		// Gemma 4 does NOT document `guided_json` (verified against
+		// developers.cloudflare.com/workers-ai/models/gemma-4-26b-a4b-it/). The supported
+		// structured-output param is `response_format`. Using `json_object` (rather than
+		// `json_schema`) because: (1) the docs don't confirm json_schema support for the
+		// native binding, (2) `validateBadgeMasterySteps` does heavy server-side clamping
+		// anyway, so loose JSON + strict post-parse is more robust than a brittle schema
+		// constraint that could spuriously truncate output.
 		result = (await ai.run(
 			badgeMasteryModel as any,
 			{
@@ -1205,7 +1212,7 @@ export async function generateBadgeMasterySteps(
 				],
 				max_tokens: 2048,
 				temperature: 0.45,
-				guided_json: prompts.badgeMasteryAiSchema(spec.stepCount)
+				response_format: { type: 'json_object' }
 			} as any
 		)) as { response?: string };
 	} catch (aiError) {
