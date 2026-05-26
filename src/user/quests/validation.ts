@@ -241,6 +241,41 @@ export function normalizeThreshold(
 	};
 }
 
+// Soft check for mobile-only steps. The UI handles strict device gating; here we only
+// reject submissions that are *explicitly* desktop (windows/macos/linux OS, or PC/Desktop/Mac
+// model). Unknown/empty makes/models pass through. The API admin path (API_DEVICE_METADATA,
+// os='web', model='API') is exempt so server-to-server submissions are never blocked.
+function validateMobileDevice(
+	data: QuestDeviceMetadata
+): { success: true } | { success: false; message: string } {
+	const make = (data.make ?? '').toLowerCase().trim();
+	const model = (data.model ?? '').toLowerCase().trim();
+	const os = (data.os ?? '').toLowerCase().trim();
+
+	// API/admin submissions are exempt.
+	if (os === 'web' && model === 'api') {
+		return { success: true };
+	}
+
+	if (os === 'windows' || os === 'macos' || os === 'linux') {
+		return {
+			success: false,
+			message: `This step requires a mobile device. Declared OS "${data.os}" is a desktop platform.`
+		};
+	}
+
+	if (model === 'mac' || model === 'pc' || model === 'desktop') {
+		return {
+			success: false,
+			message: `This step requires a mobile device. Declared model "${data.model}" is a desktop device.`
+		};
+	}
+
+	// Make alone is ambiguous (Apple/Samsung/etc. make both mobile and desktop); unknown makes pass.
+	void make;
+	return { success: true };
+}
+
 // main validation function
 
 export async function validateStep(
@@ -251,6 +286,13 @@ export async function validateStep(
 ): Promise<{ success: boolean; message?: string; score?: number; prompt?: string }> {
 	if (step.type !== response.type) {
 		return { success: false, message: `Expected response type ${step.type}, got ${response.type}` };
+	}
+
+	if (step.mobile_only === true) {
+		const mobileCheck = validateMobileDevice(data);
+		if (!mobileCheck.success) {
+			return mobileCheck;
+		}
 	}
 
 	switch (response.type) {
@@ -297,6 +339,7 @@ export async function validateStep(
 		case 'order_items':
 		case 'respond_to_prompt':
 		case 'submit_event_image':
+		case 'distance_covered':
 			return { success: true };
 		default: {
 			const exhaustive: never = response;

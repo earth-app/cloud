@@ -132,17 +132,26 @@ describe('quests', () => {
 		}
 	});
 
-	it('only has distance_covered steps in mobile_only quests', () => {
+	it('requires mobile_only steps in non-mobile_only quests to provide a non-mobile alternative', () => {
 		for (const quest of quests) {
+			// mobile_only quests propagate the flag to every step, so no per-step alt is required.
+			if (quest.mobile_only) continue;
+
 			for (const stepGroup of quest.steps) {
-				const steps = Array.isArray(stepGroup) ? stepGroup : [stepGroup];
-				for (const step of steps) {
-					if (step.type === 'distance_covered') {
+				if (Array.isArray(stepGroup)) {
+					const hasMobileOnly = stepGroup.some((s) => s.mobile_only === true);
+					const hasNonMobile = stepGroup.some((s) => s.mobile_only !== true);
+					if (hasMobileOnly) {
 						expect(
-							quest.mobile_only,
-							`Quest '${quest.id}' has a distance_covered step but is not mobile_only`
+							hasNonMobile,
+							`Quest '${quest.id}' has a mobile_only step in an alt group but no non-mobile alternative`
 						).toBe(true);
 					}
+				} else {
+					expect(
+						stepGroup.mobile_only,
+						`Quest '${quest.id}' has a singular mobile_only step but the quest is not mobile_only; provide alternatives or mark the quest mobile_only`
+					).not.toBe(true);
 				}
 			}
 		}

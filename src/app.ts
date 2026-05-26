@@ -2020,6 +2020,7 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			scoreKey?: string;
 			score?: number;
 			text?: string;
+			distance?: number;
 		};
 	};
 
@@ -2089,6 +2090,19 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			return c.text('Text is required for describe_text steps', 400);
 		}
 
+		if (body.response.type === 'distance_covered') {
+			if (
+				typeof body.response.distance !== 'number' ||
+				!Number.isFinite(body.response.distance) ||
+				body.response.distance < 0
+			) {
+				return c.text(
+					'A non-negative numeric distance (meters) is required for distance_covered steps',
+					400
+				);
+			}
+		}
+
 		response = {
 			type: body.response.type,
 			index: body.response.index,
@@ -2097,7 +2111,8 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			...(body.response.timestamp !== undefined && { timestamp: body.response.timestamp }),
 			...(body.response.scoreKey !== undefined && { scoreKey: body.response.scoreKey }),
 			...(body.response.score !== undefined && { score: body.response.score }),
-			...(body.response.text !== undefined && { text: body.response.text })
+			...(body.response.text !== undefined && { text: body.response.text }),
+			...(body.response.distance !== undefined && { distance: body.response.distance })
 		} as QuestStepResponse;
 	}
 

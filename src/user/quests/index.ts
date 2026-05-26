@@ -27,6 +27,7 @@ export type QuestStep = {
 	delay?: number; // seconds after the previous step's first completion before this step unlocks;
 	// backfilling additional alternatives of the previous step is still allowed during the wait
 	reward?: number; // optional additional impact points on top of overall quest reward
+	mobile_only?: boolean; // whether this step is only available on mobile - meaning that alternatives must be provided
 } & (
 	| {
 			type: 'take_photo_location';
@@ -95,6 +96,11 @@ export type QuestStep = {
 	| {
 			type: 'submit_event_image';
 			parameters: [ActivityOrType, number]; // activity, score (0.0 - 1.0)
+	  }
+	| {
+			type: 'distance_covered';
+			parameters: [number]; // minimum distance (meters)
+			mobile_only: true;
 	  }
 );
 

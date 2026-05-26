@@ -42,6 +42,7 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 			score: number;
 	  }
 	| { type: 'match_terms' | 'order_items' | 'respond_to_prompt' } // validated externally via separate endpoints
+	| { type: 'distance_covered'; distance: number } // accelerometer-derived meters, validated externally
 	| { type: 'describe_text'; text: string }
 	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
 );
@@ -73,6 +74,7 @@ export type QuestStepProgressEntry = {
 	| { type: 'respond_to_prompt'; text: string } // text represents the user's response to the prompt
 	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
 	| { type: 'submit_event_image'; eventId: string; score: number }
+	| { type: 'distance_covered'; distance: number }
 	// contains no additional data
 	| { type: 'match_terms' | 'order_items' }
 );
@@ -257,7 +259,13 @@ async function toProgressEntry(
 		};
 	}
 
-	// attend_event, article_quiz, match_terms, and order_items have no binary payload
+	// no validation here — payload (if any) is spread into the entry as-is:
+	// - attend_event ({ eventId, timestamp })
+	// - article_quiz ({ scoreKey, score })
+	// - submit_event_image ({ eventId, score })
+	// - distance_covered ({ distance })
+	// - match_terms / order_items / respond_to_prompt (no body payload from cloud's perspective)
+
 	return { ...(response as unknown as QuestStepProgressEntry), submittedAt };
 }
 
@@ -610,8 +618,16 @@ export async function updateQuestProgress(
 		isFirstCompletionOfStep = true;
 	}
 
+	// quest-level mobile_only wins when true: propagate down so a step that omitted the
+	// flag still gets device validation in mobile-only quests. CustomQuest omits the flag,
+	// so the `in` guard keeps the type narrowing safe.
+	const questIsMobileOnly = 'mobile_only' in quest && quest.mobile_only === true;
+	const stepForValidation: QuestStep = questIsMobileOnly
+		? ({ ...submittingStep, mobile_only: true } as QuestStep)
+		: submittingStep;
+
 	// validate step response against step requirements (uses binary data for ai models)
-	const validation = await validateStep(submittingStep, stepResponse, bindings, device);
+	const validation = await validateStep(stepForValidation, stepResponse, bindings, device);
 	if (!validation.success) {
 		throw new HTTPException(400, { message: `Step validation failed: ${validation.message}` });
 	}
