@@ -102,6 +102,11 @@ export type QuestStep = {
 			parameters: [number]; // minimum distance (meters)
 			mobile_only: true;
 	  }
+	| {
+			type: 'scan_barcode';
+			parameters: ['food' | 'music' | 'book', string?]; // scan type, keyword (optional)
+			mobile_only: true;
+	  }
 );
 
 export const quests = [

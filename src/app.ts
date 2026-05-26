@@ -2021,6 +2021,8 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			score?: number;
 			text?: string;
 			distance?: number;
+			data?: string;
+			format?: number;
 		};
 	};
 
@@ -2103,6 +2105,19 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			}
 		}
 
+		if (body.response.type === 'scan_barcode') {
+			if (typeof body.response.data !== 'string' || body.response.data.trim().length === 0) {
+				return c.text('A non-empty scan value is required for scan_barcode steps', 400);
+			}
+			if (
+				typeof body.response.format !== 'number' ||
+				!Number.isFinite(body.response.format) ||
+				body.response.format < 0
+			) {
+				return c.text('A numeric Capacitor barcode format is required for scan_barcode steps', 400);
+			}
+		}
+
 		response = {
 			type: body.response.type,
 			index: body.response.index,
@@ -2112,7 +2127,9 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			...(body.response.scoreKey !== undefined && { scoreKey: body.response.scoreKey }),
 			...(body.response.score !== undefined && { score: body.response.score }),
 			...(body.response.text !== undefined && { text: body.response.text }),
-			...(body.response.distance !== undefined && { distance: body.response.distance })
+			...(body.response.distance !== undefined && { distance: body.response.distance }),
+			...(body.response.data !== undefined && { data: body.response.data }),
+			...(body.response.format !== undefined && { format: body.response.format })
 		} as QuestStepResponse;
 	}
 

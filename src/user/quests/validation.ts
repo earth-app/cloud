@@ -241,10 +241,177 @@ export function normalizeThreshold(
 	};
 }
 
-// Soft check for mobile-only steps. The UI handles strict device gating; here we only
-// reject submissions that are *explicitly* desktop (windows/macos/linux OS, or PC/Desktop/Mac
-// model). Unknown/empty makes/models pass through. The API admin path (API_DEVICE_METADATA,
-// os='web', model='API') is exempt so server-to-server submissions are never blocked.
+const LINEAR_RETAIL_BARCODE_FORMATS = new Set<number>([
+	9, // EAN_13
+	10, // EAN_8
+	14, // UPC_A
+	15 // UPC_E
+]);
+
+type BarcodeResolution = {
+	kind: 'food' | 'music' | 'book';
+	title: string;
+	metadata: Record<string, unknown>;
+};
+
+async function resolveBarcode(value: string): Promise<BarcodeResolution | null> {
+	const isIsbn = value.startsWith('978') || value.startsWith('979');
+
+	if (isIsbn) {
+		try {
+			const res = await fetch(
+				`https://openlibrary.org/api/books?bibkeys=ISBN:${value}&format=json&jscmd=data`
+			);
+			if (res.ok) {
+				const json = (await res.json()) as Record<string, any>;
+				const book = json[`ISBN:${value}`];
+				if (book?.title) {
+					return {
+						kind: 'book',
+						title: String(book.title),
+						metadata: {
+							authors: Array.isArray(book.authors)
+								? book.authors.map((a: any) => a?.name).filter(Boolean)
+								: [],
+							publishers: Array.isArray(book.publishers)
+								? book.publishers.map((p: any) => p?.name).filter(Boolean)
+								: [],
+							publish_date: book.publish_date,
+							identifiers: book.identifiers,
+							cover: book.cover,
+							url: book.url
+						}
+					};
+				}
+			}
+		} catch {
+			// fall through to other resolvers
+		}
+	}
+
+	try {
+		const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${value}.json`);
+		if (res.ok) {
+			const json = (await res.json()) as { status?: number; product?: any };
+			if (json.status === 1 && json.product?.product_name) {
+				return {
+					kind: 'food',
+					title: String(json.product.product_name),
+					metadata: {
+						brands: json.product.brands,
+						categories: json.product.categories,
+						quantity: json.product.quantity,
+						ingredients_text: json.product.ingredients_text,
+						nutriments: json.product.nutriments,
+						image_url: json.product.image_url
+					}
+				};
+			}
+		}
+	} catch {
+		// fall through
+	}
+
+	try {
+		const res = await fetch(
+			`https://musicbrainz.org/ws/2/release?query=barcode:${value}&fmt=json`,
+			{
+				headers: { 'User-Agent': '@earth-app/cloud v1.0 (support@earth-app.com)' }
+			}
+		);
+		if (res.ok) {
+			const json = (await res.json()) as { releases?: any[] };
+			const release = json.releases?.[0];
+			if (release?.title) {
+				return {
+					kind: 'music',
+					title: String(release.title),
+					metadata: {
+						artist: release['artist-credit']?.[0]?.name,
+						year: typeof release.date === 'string' ? release.date.slice(0, 4) : undefined,
+						country: release.country,
+						mbid: release.id,
+						label: release['label-info']?.[0]?.label?.name,
+						track_count: release['track-count']
+					}
+				};
+			}
+		}
+	} catch {
+		// fall through
+	}
+
+	return null;
+}
+
+async function validateScanBarcode(
+	step: QuestStep,
+	response: QuestStepResponse & { type: 'scan_barcode' }
+): Promise<{
+	success: boolean;
+	message?: string;
+	kind?: 'food' | 'music' | 'book';
+	title?: string;
+	metadata?: Record<string, unknown>;
+}> {
+	if (step.type !== 'scan_barcode') {
+		return { success: false, message: `Expected scan_barcode step, got ${step.type}` };
+	}
+
+	const value = typeof response.data === 'string' ? response.data.trim() : '';
+	if (!value) {
+		return { success: false, message: 'Scan value is required.' };
+	}
+	if (typeof response.format !== 'number' || !Number.isFinite(response.format)) {
+		return { success: false, message: 'Barcode format is required.' };
+	}
+
+	if (!LINEAR_RETAIL_BARCODE_FORMATS.has(response.format)) {
+		return {
+			success: false,
+			message: 'Barcode format is not a supported retail format (UPC-A, EAN-13, EAN-8, or UPC-E).'
+		};
+	}
+
+	const [requiredKind, keyword] = step.parameters;
+
+	const resolved = await resolveBarcode(value);
+	if (!resolved) {
+		return {
+			success: false,
+			message: 'Barcode could not be identified as a product, book, or music release.'
+		};
+	}
+
+	if (resolved.kind !== requiredKind) {
+		return {
+			success: false,
+			message: `Expected a ${requiredKind} barcode, but the scan resolved as ${resolved.kind}.`
+		};
+	}
+
+	if (typeof keyword === 'string' && keyword.trim().length > 0) {
+		const needle = keyword.trim().toLowerCase();
+		const titleWords = resolved.title
+			.toLowerCase()
+			.split(/[\s\-_,.;:!?()/\\]+/)
+			.filter(Boolean);
+		if (!titleWords.includes(needle)) {
+			return {
+				success: false,
+				message: `Resolved title "${resolved.title}" does not contain the required keyword "${keyword}".`
+			};
+		}
+	}
+
+	return {
+		success: true,
+		kind: resolved.kind,
+		title: resolved.title,
+		metadata: resolved.metadata
+	};
+}
+
 function validateMobileDevice(
 	data: QuestDeviceMetadata
 ): { success: true } | { success: false; message: string } {
@@ -283,7 +450,15 @@ export async function validateStep(
 	response: QuestStepResponse,
 	bindings: Bindings,
 	data: QuestDeviceMetadata
-): Promise<{ success: boolean; message?: string; score?: number; prompt?: string }> {
+): Promise<{
+	success: boolean;
+	message?: string;
+	score?: number;
+	prompt?: string;
+	kind?: 'food' | 'music' | 'book';
+	title?: string;
+	metadata?: Record<string, unknown>;
+}> {
 	if (step.type !== response.type) {
 		return { success: false, message: `Expected response type ${step.type}, got ${response.type}` };
 	}
@@ -332,8 +507,10 @@ export async function validateStep(
 		case 'describe_text': {
 			return await validateDescribeText(step, response, bindings);
 		}
-		// Types validated outside the worker (Mantle2). Listed explicitly so adding a new step
-		// type forces an intentional decision rather than silently passing.
+		case 'scan_barcode': {
+			return await validateScanBarcode(step, response);
+		}
+		// types validated outside the worker (mantle2)
 		case 'attend_event':
 		case 'match_terms':
 		case 'order_items':

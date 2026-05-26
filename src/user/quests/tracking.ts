@@ -45,6 +45,7 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 	| { type: 'distance_covered'; distance: number } // accelerometer-derived meters, validated externally
 	| { type: 'describe_text'; text: string }
 	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
+	| { type: 'scan_barcode'; data: string; format: number }
 );
 
 // stored in kv - binary data is replaced with an r2 bucket key
@@ -75,6 +76,12 @@ export type QuestStepProgressEntry = {
 	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
 	| { type: 'submit_event_image'; eventId: string; score: number }
 	| { type: 'distance_covered'; distance: number }
+	| {
+			type: 'scan_barcode';
+			kind: 'food' | 'music' | 'book';
+			title: string;
+			metadata: Record<string, unknown>;
+	  }
 	// contains no additional data
 	| { type: 'match_terms' | 'order_items' }
 );
@@ -208,7 +215,10 @@ async function toProgressEntry(
 	submittedAt: number,
 	bindings: Bindings,
 	score?: number,
-	prompt?: string
+	prompt?: string,
+	kind?: 'food' | 'music' | 'book',
+	title?: string,
+	metadata?: Record<string, unknown>
 ): Promise<QuestStepProgressEntry> {
 	const altIdx = response.altIndex ?? 0;
 
@@ -256,6 +266,22 @@ async function toProgressEntry(
 			text: response.text,
 			score,
 			prompt
+		};
+	}
+
+	if (response.type === 'scan_barcode') {
+		if (!kind || !title) {
+			throw new Error('scan_barcode progress entry requires resolved kind and title');
+		}
+
+		return {
+			type: 'scan_barcode',
+			index: response.index,
+			altIndex: response.altIndex,
+			submittedAt,
+			kind,
+			title,
+			metadata: metadata ?? {}
 		};
 	}
 
@@ -641,7 +667,10 @@ export async function updateQuestProgress(
 		submittedAt,
 		bindings,
 		validation.score,
-		validation.prompt
+		validation.prompt,
+		validation.kind,
+		validation.title,
+		validation.metadata
 	);
 
 	// update progress array
