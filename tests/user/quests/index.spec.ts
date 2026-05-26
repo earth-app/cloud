@@ -131,4 +131,20 @@ describe('quests', () => {
 			}
 		}
 	});
+
+	it('only has distance_covered steps in mobile_only quests', () => {
+		for (const quest of quests) {
+			for (const stepGroup of quest.steps) {
+				const steps = Array.isArray(stepGroup) ? stepGroup : [stepGroup];
+				for (const step of steps) {
+					if (step.type === 'distance_covered') {
+						expect(
+							quest.mobile_only,
+							`Quest '${quest.id}' has a distance_covered step but is not mobile_only`
+						).toBe(true);
+					}
+				}
+			}
+		}
+	});
 });

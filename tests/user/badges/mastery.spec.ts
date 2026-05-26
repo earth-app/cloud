@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MockKVNamespace } from '../helpers/mock-kv';
+import { MockKVNamespace } from '../../helpers/mock-kv';
 import {
 	getMasteredMetadata,
 	getMasteryQuest,
@@ -13,14 +13,14 @@ import {
 	MASTERY_QUEST_ID_PREFIX,
 	masteryQuestId,
 	masterySpec
-} from '../../src/user/badges/mastery';
-import { badges } from '../../src/user/badges';
+} from '../../../src/user/badges/mastery';
+import { badges } from '../../../src/user/badges';
 import {
 	badgeMasteryAiSchema,
 	MasteryValidationContext,
 	validateBadgeMasterySteps
-} from '../../src/util/ai';
-import { ActivityType, Rarity } from '../../src/util/types';
+} from '../../../src/util/ai';
+import { ActivityType, Rarity } from '../../../src/util/types';
 
 const exampleBadge = badges.find((b) => b.id === 'article_enthusiast')!;
 

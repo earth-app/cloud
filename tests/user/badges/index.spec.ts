@@ -10,10 +10,10 @@ import {
 	grantBadge,
 	isBadgeGranted,
 	resetBadgeProgress
-} from '../../src/user/badges';
-import { createMockBindings } from '../helpers/mock-bindings';
-import { MockKVNamespace } from '../helpers/mock-kv';
-import * as points from '../../src/user/points';
+} from '../../../src/user/badges';
+import { createMockBindings } from '../../helpers/mock-bindings';
+import { MockKVNamespace } from '../../helpers/mock-kv';
+import * as points from '../../../src/user/points';
 
 afterEach(() => {
 	vi.restoreAllMocks();
