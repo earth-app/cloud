@@ -292,6 +292,21 @@ describe('detectAudioFormat', () => {
 		expect(detectAudioFormat(new Uint8Array([0xff, 0xf1, 0x00, 0x00]))).toBe('aac');
 	});
 
+	it('detects m4a from ftyp box with M4A brand', () => {
+		// 4-byte box size, 'ftyp', 'M4A ' major brand
+		const m4a = new Uint8Array([
+			0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20
+		]);
+		expect(detectAudioFormat(m4a)).toBe('m4a');
+	});
+
+	it('detects m4a from ftyp box with M4B brand', () => {
+		const m4b = new Uint8Array([
+			0x00, 0x00, 0x00, 0x20, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x42, 0x20
+		]);
+		expect(detectAudioFormat(m4b)).toBe('m4a');
+	});
+
 	it('returns null for unsupported/short data', () => {
 		expect(detectAudioFormat(new Uint8Array([1, 2, 3]))).toBeNull();
 	});

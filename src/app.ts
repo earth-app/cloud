@@ -2077,7 +2077,7 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 		if (isAudio) {
 			const fmt = detectAudioFormat(parsed.data);
 			if (!fmt) {
-				return c.text('Unsupported audio format. Only MP3, FLAC, and AAC are accepted.', 415);
+				return c.text('Unsupported audio format. Only MP3, FLAC, AAC, and M4A are accepted.', 415);
 			}
 		}
 

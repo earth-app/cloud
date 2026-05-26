@@ -150,6 +150,19 @@ function detectMimeType(data: Uint8Array, stepType: string): string {
 			data[3] === 0x66
 		)
 			return 'audio/x-caf';
+		// M4A: ftyp box with M4A/M4B major brand
+		if (
+			data.length >= 12 &&
+			data[4] === 0x66 &&
+			data[5] === 0x74 &&
+			data[6] === 0x79 &&
+			data[7] === 0x70 &&
+			data[8] === 0x4d &&
+			data[9] === 0x34 &&
+			(data[10] === 0x41 || data[10] === 0x42) &&
+			data[11] === 0x20
+		)
+			return 'audio/mp4';
 		return 'audio/octet-stream';
 	}
 	// Photos

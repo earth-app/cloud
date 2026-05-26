@@ -360,7 +360,7 @@ export function isInsideLocation(
 	return distance <= radius;
 }
 
-export function detectAudioFormat(data: Uint8Array): 'mp3' | 'flac' | 'aac' | null {
+export function detectAudioFormat(data: Uint8Array): 'mp3' | 'flac' | 'aac' | 'm4a' | null {
 	if (data.length < 4) return null;
 	// ID3 tag header (mp3)
 	if (data[0] === 0x49 && data[1] === 0x44 && data[2] === 0x33) return 'mp3';
@@ -368,6 +368,19 @@ export function detectAudioFormat(data: Uint8Array): 'mp3' | 'flac' | 'aac' | nu
 	if (data[0] === 0xff && (data[1] & 0xe0) === 0xe0 && (data[1] & 0x06) === 0x02) return 'mp3';
 	// fLaC magic (flac)
 	if (data[0] === 0x66 && data[1] === 0x4c && data[2] === 0x61 && data[3] === 0x43) return 'flac';
+	// ISO BMFF ftyp box with M4A/M4B major brand — produced by iOS Voice Memos and most mobile AAC recorders
+	if (
+		data.length >= 12 &&
+		data[4] === 0x66 &&
+		data[5] === 0x74 &&
+		data[6] === 0x79 &&
+		data[7] === 0x70 &&
+		data[8] === 0x4d &&
+		data[9] === 0x34 &&
+		(data[10] === 0x41 || data[10] === 0x42) &&
+		data[11] === 0x20
+	)
+		return 'm4a';
 	// AAC ADTS sync: 0xFF + top 3 bits set + Layer bits != 01
 	if (data[0] === 0xff && (data[1] & 0xe0) === 0xe0 && (data[1] & 0x06) !== 0x02) return 'aac';
 	return null;
