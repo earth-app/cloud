@@ -1,4 +1,5 @@
 import { QuestStep } from '.';
+import { COCO_OBJECT_LABELS, IMAGENET_CLASSIFICATION_LABELS } from '../../util/ai';
 import {
 	classifyImage,
 	detectObjects,
@@ -97,89 +98,6 @@ const VISION_LABEL_ALIASES: Record<string, string[]> = {
 	spider_web: ['spiderweb'],
 	corn: ['ear', 'ear_of_corn', 'corncob']
 };
-
-const COCO_OBJECT_LABELS = new Set<string>([
-	'person',
-	'bicycle',
-	'car',
-	'motorcycle',
-	'airplane',
-	'bus',
-	'train',
-	'truck',
-	'boat',
-	'traffic_light',
-	'fire_hydrant',
-	'stop_sign',
-	'parking_meter',
-	'bench',
-	'bird',
-	'cat',
-	'dog',
-	'horse',
-	'sheep',
-	'cow',
-	'elephant',
-	'bear',
-	'zebra',
-	'giraffe',
-	'backpack',
-	'umbrella',
-	'handbag',
-	'tie',
-	'suitcase',
-	'frisbee',
-	'skis',
-	'snowboard',
-	'sports_ball',
-	'kite',
-	'baseball_bat',
-	'baseball_glove',
-	'skateboard',
-	'surfboard',
-	'tennis_racket',
-	'bottle',
-	'wine_glass',
-	'cup',
-	'fork',
-	'knife',
-	'spoon',
-	'bowl',
-	'banana',
-	'apple',
-	'sandwich',
-	'orange',
-	'broccoli',
-	'carrot',
-	'hot_dog',
-	'pizza',
-	'donut',
-	'cake',
-	'chair',
-	'couch',
-	'potted_plant',
-	'bed',
-	'dining_table',
-	'toilet',
-	'tv',
-	'laptop',
-	'mouse',
-	'remote',
-	'keyboard',
-	'cell_phone',
-	'microwave',
-	'oven',
-	'toaster',
-	'sink',
-	'refrigerator',
-	'book',
-	'clock',
-	'vase',
-	'scissors',
-	'teddy_bear',
-	'hair_drier',
-	'toothbrush'
-]);
 
 function expandVisionLabelCandidates(label: string): Set<string> {
 	const normalized = normalizeVisionLabel(label);
@@ -1153,6 +1071,19 @@ async function validateStepPhoto(
 
 		if (label && score !== undefined) {
 			const normalizedLabel = normalizeVisionLabel(label);
+
+			const candidateLabels = expandVisionLabelCandidates(normalizedLabel);
+			if (
+				![...candidateLabels].some((candidate) =>
+					IMAGENET_CLASSIFICATION_LABELS.has(candidate as any)
+				)
+			) {
+				return {
+					success: false,
+					message: `Classification label "${normalizedLabel}" is not supported by the current classification model vocabulary.`
+				};
+			}
+
 			const classifications = await classifyImage(bindings, image);
 			const classification = findBestLabelConfidence(classifications, normalizedLabel);
 
@@ -1186,7 +1117,7 @@ async function validateStepPhoto(
 		for (const [labelRaw, scoreRaw] of labelsAndScores) {
 			const label = normalizeVisionLabel(labelRaw);
 			const candidateLabels = expandVisionLabelCandidates(label);
-			if (![...candidateLabels].some((candidate) => COCO_OBJECT_LABELS.has(candidate))) {
+			if (![...candidateLabels].some((candidate) => COCO_OBJECT_LABELS.has(candidate as any))) {
 				return {
 					success: false,
 					message: `Object label "${label}" is not supported by the current detection model vocabulary.`
