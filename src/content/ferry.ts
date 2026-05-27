@@ -1,7 +1,6 @@
 // ferry - user content grading
 
 import { Buffer } from 'node:buffer';
-import { tryCache } from '../util/cache';
 import { Bindings } from '../util/types';
 
 const embedModel = '@cf/baai/bge-m3';
@@ -26,21 +25,6 @@ export interface CriterionResult {
 export interface ScoreResult {
 	score: number; // 0.0 - 1.0
 	breakdown: CriterionResult[];
-}
-
-async function embedText(env: Bindings, text: string): Promise<number[]> {
-	return tryCache(`embedding:text:${hashText(text)}`, env.CACHE, async () => {
-		const response = (await env.AI.run(embedModel, {
-			text,
-			pooling: 'cls'
-		})) as Ai_Cf_Baai_Bge_M3_Output_Embedding;
-
-		if (!response?.data || response.data.length === 0) {
-			throw new Error('Embedding failed');
-		}
-
-		return response.data[0];
-	});
 }
 
 async function embedTexts(env: Bindings, texts: string[]): Promise<number[][]> {
