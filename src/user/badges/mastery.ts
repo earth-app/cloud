@@ -65,7 +65,7 @@ export function masterySpec(rarity: Rarity): MasterySpec {
 	};
 }
 
-const MASTERY_LABEL_DEFAULT = ['envelope', 'book_jacket', 'web_site', 'compass'];
+const MASTERY_LABEL_DEFAULT = ['envelope', 'book_jacket', 'web_site', 'magnetic_compass'];
 
 export const MASTERY_TRACKER_LABELS: Partial<Record<BadgeTracker, string[]>> = {
 	articles_read: ['book_jacket', 'envelope', 'web_site'],
@@ -76,15 +76,15 @@ export const MASTERY_TRACKER_LABELS: Partial<Record<BadgeTracker, string[]>> = {
 	prompts_created: ['fountain_pen', 'ballpoint', 'envelope'],
 	article_quizzes_completed: ['book_jacket', 'envelope', 'desktop_computer'],
 	article_quizzes_completed_perfect_score: ['book_jacket', 'envelope', 'desktop_computer'],
-	activities_added: ['compass', 'magnetic_compass'],
-	activity_read_time: ['compass', 'book_jacket'],
-	impact_points_earned: ['compass', 'magnetic_compass', 'sundial'],
+	activities_added: ['magnetic_compass'],
+	activity_read_time: ['magnetic_compass', 'book_jacket'],
+	impact_points_earned: ['magnetic_compass', 'sundial'],
 	events_created: ['microphone', 'theater_curtain'],
 	events_attended: ['microphone', 'theater_curtain'],
 	event_types_attended: ['microphone', 'theater_curtain'],
 	event_images_submitted: ['reflex_camera', 'polaroid_camera', 'lens_cap'],
 	event_images_submitted_good: ['reflex_camera', 'polaroid_camera'],
-	event_countries_photographed: ['reflex_camera', 'polaroid_camera', 'compass'],
+	event_countries_photographed: ['reflex_camera', 'polaroid_camera', 'magnetic_compass'],
 	friends_added: ['envelope', 'mailbag']
 };
 
@@ -100,9 +100,6 @@ export function activityTypeNames(): ActivityType[] {
 	return com.earthapp.activity.ActivityType.values().map((t) => t.name as ActivityType);
 }
 
-// Tier ordering across rarities. Badges that share a tracker form a tier group
-// (e.g. bookworm → super_bookworm → master_bookworm → immortal_bookworm) and the
-// mastery prompt uses this so higher-tier masteries are noticeably harder.
 const RARITY_ORDER: Record<Rarity, number> = { normal: 0, rare: 1, amazing: 2, green: 3 };
 
 export type BadgeTier = {
@@ -111,8 +108,6 @@ export type BadgeTier = {
 	siblings: { id: string; name: string; rarity: Rarity; description: string }[];
 };
 
-// Null when the badge has no tracker or is the only badge in its tracker group.
-// Exempt badges are excluded from sibling lists so they don't distort tier counts.
 export function badgeTier(badge: Badge): BadgeTier | null {
 	if (!badge.tracker_id) return null;
 	if (isMasteryExempt(badge.id)) return null;
