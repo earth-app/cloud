@@ -8,6 +8,7 @@ import {
 	masteryBadgeIdFromQuestId,
 	MASTERY_QUEST_ID_PREFIX
 } from '../badges/mastery';
+import type { QuestClassificationLabel, QuestObjectLabel } from '../../util/ai';
 
 export type Quest = {
 	id: string;
@@ -19,7 +20,7 @@ export type Quest = {
 	steps: (QuestStep | QuestStep[])[]; // some steps have optional alternatives
 	premium?: boolean;
 	reward: number; // impact points reward for completing the quest
-	permissions?: ('location' | 'camera' | 'record')[]; // permissions required to complete the quest
+	permissions?: ('location' | 'camera' | 'record' | 'motion')[]; // permissions required to complete the quest - optional because they are requested anyways, but helps upfront
 };
 
 export type QuestStep = {
@@ -31,15 +32,15 @@ export type QuestStep = {
 } & (
 	| {
 			type: 'take_photo_location';
-			parameters: [number, number, number, string?, number?]; // latitude, longitude, radius in meters, classification label, confidence threshold
+			parameters: [number, number, number, QuestClassificationLabel?, number?]; // latitude, longitude, radius in meters, classification label, confidence threshold
 	  }
 	| {
 			type: 'take_photo_classification';
-			parameters: [string, number]; // classification label, confidence threshold
+			parameters: [QuestClassificationLabel, number]; // classification label, confidence threshold
 	  }
 	| {
 			type: 'take_photo_objects';
-			parameters: [string, number][]; // object detection labels, confidence threshold
+			parameters: [QuestObjectLabel, number][]; // object detection labels, confidence threshold
 	  }
 	| {
 			type: 'take_photo_caption';
@@ -79,7 +80,7 @@ export type QuestStep = {
 	  }
 	| {
 			type: 'transcribe_audio';
-			parameters: [string, number]; // prompt, accuracy threshold
+			parameters: [string, number, number?]; // prompt, accuracy threshold, minimum time in seconds
 	  }
 	| {
 			type: 'match_terms';
@@ -110,7 +111,7 @@ export type QuestStep = {
 );
 
 export const quests = [
-	// normal quests
+	// #region normal quests
 	{
 		id: 'vegetable_head',
 		title: 'Vegetable Head',
@@ -156,10 +157,6 @@ export const quests = [
 				{
 					type: 'take_photo_classification',
 					description: 'Take a photo of corn.',
-					// ImageNet's only "corn" class is `ear, spike, capitulum` (998); the model emits
-					// the primary token "ear". VISION_LABEL_ALIASES maps `corn -> ear` in validation.ts
-					// so leaving the user-facing label as "corn" while requiring 0.6 keeps both UX
-					// and pass-rate sane.
 					parameters: ['corn', 0.6]
 				}
 			],
@@ -249,30 +246,30 @@ export const quests = [
 			{
 				type: 'transcribe_audio',
 				description: 'Describe something that makes you happy for 30 seconds.',
-				parameters: ['Describe something that makes you happy.', 0.7]
+				parameters: ['Describe something that makes you happy.', 0.7, 30]
 			},
 			{
 				type: 'transcribe_audio',
 				description: 'Describe your favorite food for 30 seconds.',
-				parameters: ['Describe your favorite food.', 0.7]
+				parameters: ['Describe your favorite food.', 0.7, 30]
 			},
 			{
 				type: 'transcribe_audio',
 				description: 'Describe your favorite place for 30 seconds.',
-				parameters: ['Describe your favorite place.', 0.7],
+				parameters: ['Describe your favorite place.', 0.7, 30],
 				delay: 1200
 			},
 			[
 				{
 					type: 'transcribe_audio',
-					description: 'Describe your favorite hobby for 30 seconds.',
-					parameters: ['Describe your favorite hobby.', 0.7],
+					description: 'Describe your favorite hobby for 1 minute.',
+					parameters: ['Describe your favorite hobby.', 0.7, 60],
 					reward: 50
 				},
 				{
 					type: 'transcribe_audio',
 					description: 'Describe your favorite animal for 30 seconds.',
-					parameters: ['Describe your favorite animal.', 0.7],
+					parameters: ['Describe your favorite animal.', 0.7, 30],
 					reward: 50
 				}
 			],
@@ -299,8 +296,6 @@ export const quests = [
 			{
 				type: 'take_photo_location',
 				description: 'Take a photo of the Cloud Gate sculpture (aka "The Bean").',
-				// 50 m is tighter than typical urban-canyon GPS error (~30-50 m downtown); 100 m
-				// still keeps the photo inside Millennium Park.
 				parameters: [41.8827, -87.6233, 100]
 			},
 			{
@@ -312,7 +307,6 @@ export const quests = [
 			{
 				type: 'take_photo_location',
 				description: 'Take a photo of the Navy Pier.',
-				// Navy Pier extends ~1 km east of the centroid; 100 m only covers the entrance.
 				parameters: [41.8917, -87.6091, 400],
 				delay: 600
 			},
@@ -320,17 +314,12 @@ export const quests = [
 				{
 					type: 'draw_picture',
 					description: 'Draw a map of Illinois.',
-					// LLaVA captions an irregular polygon as "a black shape on a white background";
-					// 0.7 vs that caption is unreachable. 0.55 still gates against blank or unrelated
-					// drawings since BGE normalizes near 0.5 floor for anything off-topic.
 					parameters: ['a map of Illinois', 0.55],
 					reward: 25
 				},
 				{
 					type: 'draw_picture',
 					description: 'Draw a map of the Chicago city limits.',
-					// LLaVA cannot identify a Cook County outline; rewriting to "Chicago city limits"
-					// gives the captioner a recognizable concept.
 					parameters: ['a map of Chicago', 0.55],
 					reward: 50
 				}
@@ -362,7 +351,115 @@ export const quests = [
 		reward: 300,
 		permissions: ['camera']
 	},
-	// rare quests
+	{
+		id: 'runner',
+		title: 'Runner',
+		description: 'Enjoy the outdoors with the love for running!',
+		mobile_only: true,
+		icon: 'mdi:run-fast',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'match_terms',
+				description: 'Match the track events to their corresponding descriptions.',
+				parameters: [
+					['60m', 'One long straight run on the indoor track'],
+					['60mH', 'One long straight run on the indoor track with hurdles'],
+					['100m', 'One long straight run on the outdoor track'],
+					['110mH', 'One long straight run on the outdoor track with hurdles'],
+					['200m', 'A full lap on the indoor track'],
+					['400m', 'A full lap on the outdoor track'],
+					['600m', 'Three laps on the indoor track'],
+					['800m', 'Half of a mile run'],
+					['1600m', 'A full mile run'],
+					['3200m', 'Two miles worth of a run']
+				]
+			},
+			[
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt about running.',
+					parameters: ['running']
+				},
+				{
+					type: 'article_read_time',
+					description: 'Read articles about sports for at least 15 minutes.',
+					parameters: ['SPORT', 15 * 60]
+				}
+			],
+			{
+				type: 'distance_covered',
+				description: 'Run 1 mile.',
+				parameters: [1600]
+			},
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of your shoes.',
+				parameters: ['shoes', 0.6],
+				delay: 14400
+			},
+			[
+				{
+					type: 'submit_event_image',
+					description: 'Submit a photo at a sports event with at least a B score.',
+					parameters: [{ type: 'activity_type', value: 'SPORT' }, 0.8],
+					reward: 25
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe why running is beneficial for 45 seconds.',
+					parameters: ['why running is beneficial', 0.65, 45]
+				}
+			],
+			[
+				{
+					type: 'scan_barcode',
+					description: 'Scan a barcode for a book on "running".',
+					parameters: ['book', 'running'],
+					reward: 75
+				},
+				{
+					type: 'describe_text',
+					description: 'Describe your favorite running route.',
+					parameters: [
+						[
+							{
+								id: 'relevance',
+								ideal: 'The response directly addresses the prompt about a favorite running route.'
+							},
+							{
+								id: 'depth',
+								ideal:
+									'The response is thoughtful and shows substantive detail rather than a one-line answer.'
+							},
+							{
+								id: 'originality',
+								ideal: "The response is in the user's own voice and includes specific examples."
+							}
+						],
+						0.6,
+						75
+					]
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about sports and complete the quiz with at least an 80% score.',
+					parameters: ['SPORT', 0.8]
+				}
+			],
+			{
+				type: 'distance_covered',
+				description: 'Run 2 miles.',
+				parameters: [3200],
+				delay: 28800,
+				reward: 100
+			}
+		],
+		reward: 300,
+		permissions: ['camera', 'motion']
+	},
+	// #region rare quests
 	{
 		id: 'my_aesthetic',
 		title: 'My Aesthetic',
@@ -497,7 +594,7 @@ export const quests = [
 			{
 				type: 'transcribe_audio',
 				description: 'Talk about something you find beautiful for 30 seconds.',
-				parameters: ['Describe something you find beautiful.', 0.7],
+				parameters: ['Describe something you find beautiful.', 0.7, 30],
 				delay: 2400
 			},
 			{
@@ -749,7 +846,7 @@ export const quests = [
 			{
 				type: 'transcribe_audio',
 				description: 'Explain a scientific concept that you find interesting for 30 seconds.',
-				parameters: ['Explain a scientific concept that you find interesting.', 0.7],
+				parameters: ['Explain a scientific concept that you find interesting.', 0.7, 30],
 				delay: 2400
 			},
 			{
@@ -859,14 +956,14 @@ export const quests = [
 			{
 				type: 'transcribe_audio',
 				description: 'Describe your favorite piece of technology for 30 seconds.',
-				parameters: ['Describe your favorite piece of technology.', 0.7],
+				parameters: ['Describe your favorite piece of technology.', 0.7, 30],
 				delay: 1800
 			}
 		],
 		reward: 450,
 		permissions: ['camera']
 	},
-	// amazing quests
+	// #region amazing quests
 	{
 		id: 'insect_investigator',
 		title: 'Insect Investigator',
@@ -1055,9 +1152,9 @@ export const quests = [
 			},
 			[
 				{
-					type: 'take_photo_classification',
+					type: 'take_photo_validation',
 					description: 'Take a photo of a tree.',
-					parameters: ['tree', 0.7],
+					parameters: ['a tree', 0.6],
 					delay: 1200
 				},
 				{
@@ -1128,7 +1225,7 @@ export const quests = [
 		reward: 1300,
 		permissions: ['camera', 'location']
 	},
-	// green quests
+	// #region green quests
 	{
 		id: 'world_tour',
 		title: 'World Tour',
@@ -1422,7 +1519,7 @@ export const quests = [
 			{
 				type: 'transcribe_audio',
 				description: 'Describe your favorite author for 30 seconds.',
-				parameters: ['Describe your favorite author.', 0.7],
+				parameters: ['Describe your favorite author.', 0.7, 30],
 				delay: 1800
 			}
 		],
