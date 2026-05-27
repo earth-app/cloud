@@ -77,7 +77,7 @@ beforeEach(() => {
 		format: { container: 'mp4', codec: 'aac' },
 		native: {}
 	} as any);
-	mockClassifyImage.mockResolvedValue([{ label: 'tree', confidence: 0.9 }] as any);
+	mockClassifyImage.mockResolvedValue([{ label: 'mushroom', confidence: 0.9 }] as any);
 	mockDetectObjects.mockResolvedValue([
 		{ label: 'dog', confidence: 0.85 },
 		{ label: 'cat', confidence: 0.8 }
@@ -361,7 +361,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -380,7 +380,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -397,7 +397,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_location',
 			description: 'Take photo in area',
-			parameters: [37.7749, -122.4194, 200, 'tree', 0.5]
+			parameters: [37.7749, -122.4194, 200, 'mushroom', 0.5]
 		} as any;
 		const response = {
 			type: 'take_photo_location',
@@ -419,7 +419,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_location',
 			description: 'Take photo in area',
-			parameters: [37.7749, -122.4194, 500, 'tree', 0.5]
+			parameters: [37.7749, -122.4194, 500, 'mushroom', 0.5]
 		} as any;
 		const response = {
 			type: 'take_photo_location',
@@ -436,7 +436,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_location',
 			description: 'Take photo in area',
-			parameters: [37.7749, -122.4194, 500, 'tree']
+			parameters: [37.7749, -122.4194, 500, 'mushroom']
 		} as any;
 		const response = {
 			type: 'take_photo_location',
@@ -634,7 +634,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -651,7 +651,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -681,7 +681,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -736,7 +736,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -761,7 +761,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -788,7 +788,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -841,7 +841,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.7]
+			parameters: ['mushroom', 0.7]
 		} as any;
 		const response = {
 			type: 'take_photo_classification',
@@ -876,7 +876,7 @@ describe('validateStep', () => {
 		const step = {
 			type: 'take_photo_location',
 			description: 'Take photo in area',
-			parameters: [37.7749, -122.4194, 50, 'tree', 0.5]
+			parameters: [37.7749, -122.4194, 50, 'mushroom', 0.5]
 		} as any;
 		const response = {
 			type: 'take_photo_location',
@@ -922,7 +922,7 @@ describe('validateStep', () => {
 		const classificationStep = {
 			type: 'take_photo_classification',
 			description: 'Take a tree photo',
-			parameters: ['tree', 0.95]
+			parameters: ['mushroom', 0.95]
 		} as any;
 		const classificationResponse = {
 			type: 'take_photo_classification',
@@ -930,7 +930,7 @@ describe('validateStep', () => {
 			data: new Uint8Array([255, 216, 255])
 		} as any;
 
-		mockClassifyImage.mockResolvedValueOnce([{ label: 'tree', confidence: 0.8 }] as any);
+		mockClassifyImage.mockResolvedValueOnce([{ label: 'mushroom', confidence: 0.8 }] as any);
 		const classification = await validateStep(
 			classificationStep,
 			classificationResponse,
