@@ -20,8 +20,23 @@ export const MASTERY_EXEMPT_BADGE_IDS: ReadonlySet<string> = new Set([
 	'ultimate_adventurer'
 ]);
 
+// trackers whose badges are counterproductive to gate behind a mastery quest:
+// unbounded counters that mastery itself feeds (impact_points_earned,
+// quest_steps_completed{_green}) or social/profile growth metrics that a per-user
+// quest cannot meaningfully unlock (activities_added, friends_added).
+export const MASTERY_EXEMPT_TRACKERS: ReadonlySet<BadgeTracker> = new Set<BadgeTracker>([
+	'impact_points_earned',
+	'activities_added',
+	'friends_added',
+	'quest_steps_completed',
+	'quest_steps_completed_green'
+]);
+
 export function isMasteryExempt(badgeId: string): boolean {
-	return MASTERY_EXEMPT_BADGE_IDS.has(badgeId);
+	if (MASTERY_EXEMPT_BADGE_IDS.has(badgeId)) return true;
+	const badge = badges.find((b) => b.id === badgeId);
+	if (badge?.tracker_id && MASTERY_EXEMPT_TRACKERS.has(badge.tracker_id)) return true;
+	return false;
 }
 
 // step types the AI may emit; anything outside this list is dropped during clamping.

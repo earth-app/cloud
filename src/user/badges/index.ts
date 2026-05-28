@@ -21,7 +21,9 @@ export type BadgeTracker =
 	| 'event_types_attended' // handled over mantle2
 	| 'event_countries_photographed'
 	| 'article_quizzes_completed_perfect_score'
-	| 'activity_read_time';
+	| 'activity_read_time'
+	| 'quest_steps_completed'
+	| 'quest_steps_completed_green';
 
 export type Badge = {
 	id: string;
@@ -943,11 +945,8 @@ export async function addBadgeProgress(
 	metadata?: Record<string, any>
 ): Promise<void> {
 	const normalizedUserId = normalizeId(userId);
-	const badge = badges.find((b) => b.tracker_id === trackerId);
-	if (!badge) {
-		throw new Error(`Unknown badge tracker: ${trackerId}`);
-	}
-
+	// trackers may exist before any badge references them — data accumulates so
+	// badges added later can still compute progress from historical entries.
 	const trackerKey = `user:badge_tracker:${normalizedUserId}:${trackerId}`;
 	const trackerData = await kv.get(trackerKey, 'json');
 	let tracker: TrackerEntry[] = trackerData ? (trackerData as TrackerEntry[]) : [];

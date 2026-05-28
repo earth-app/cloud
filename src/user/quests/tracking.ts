@@ -8,6 +8,7 @@ import { sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
 import { normalizeThreshold, QuestDeviceMetadata, validateStep } from './validation';
 import { markBadgeMastered, masteryBadgeIdFromQuestId } from '../badges/mastery';
+import { addBadgeProgress } from '../badges';
 
 export type QuestProgress = {
 	questId: string;
@@ -711,11 +712,22 @@ export async function updateQuestProgress(
 		`User ${userId} submitted step ${idx}${isAltStep ? ` alt ${stepResponse.altIndex}` : ''} for quest "${quest.title}" - validation: ${validation.success}, completed: ${completed}`
 	);
 
+	// stable id for this specific step completion (alt backfills produce a new id)
+	const stepTrackerValue = isAltStep
+		? `${quest.id}:${idx}:${stepResponse.altIndex ?? 0}`
+		: `${quest.id}:${idx}`;
+	const questIsGreen = 'rarity' in quest && quest.rarity === 'green';
+
 	ctx.waitUntil(
 		Promise.all([
 			// archive to history when quest is completed (immutable, r2 keys preserved)
 			completed
 				? archiveCompletedQuest(userId0, quest.id, updatedProgress, bindings)
+				: Promise.resolve(),
+			// track quest step completion for badges (counts each unique step, incl. alt backfills)
+			addBadgeProgress(userId0, 'quest_steps_completed', stepTrackerValue, bindings.KV),
+			questIsGreen
+				? addBadgeProgress(userId0, 'quest_steps_completed_green', stepTrackerValue, bindings.KV)
 				: Promise.resolve(),
 			// award step reward and/or quest completion points, then notify
 			(async () => {
