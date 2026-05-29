@@ -71,7 +71,11 @@ import {
 	isBadgeMastered,
 	isMasteryExempt,
 	isMasteryLocked,
-	lockActiveMasteryIfApplicable
+	listMasteryQuests,
+	countActiveMasteryQuests,
+	lockActiveMasteryIfApplicable,
+	MASTERY_ACTIVE_CAP,
+	MASTERY_TTL_SECONDS
 } from './user/badges/mastery';
 import {
 	getImpactPoints,
@@ -1690,12 +1694,14 @@ app.post('/users/badges/:id/:badge_id/mastery/generate', async (c) => {
 		return c.text('Request body must include username and activities[]', 400);
 	}
 
-	// Preconditions: badge must be granted, not already locked, and not already mastered.
-	const [granted, locked, alreadyMastered, existing] = await Promise.all([
+	// Preconditions: badge must be granted, not already locked, not already mastered,
+	// no existing quest, and the user must be under the active-mastery cap.
+	const [granted, locked, alreadyMastered, existing, activeCount] = await Promise.all([
 		isBadgeGranted(id, badgeId, c.env.KV),
 		isMasteryLocked(id, badgeId, c.env.KV),
 		isBadgeMastered(id, badgeId, c.env.KV),
-		getMasteryQuest(id, badgeId, c.env.KV)
+		getMasteryQuest(id, badgeId, c.env.KV),
+		countActiveMasteryQuests(id, c.env.KV)
 	]);
 
 	if (!granted) {
@@ -1713,6 +1719,12 @@ app.post('/users/badges/:id/:badge_id/mastery/generate', async (c) => {
 			409
 		);
 	}
+	if (activeCount >= MASTERY_ACTIVE_CAP) {
+		return c.text(
+			`Active mastery cap reached (${MASTERY_ACTIVE_CAP}); complete or wait for an existing quest to expire`,
+			429
+		);
+	}
 
 	try {
 		const quest = await generateAndStoreMasteryQuest(id, badge, body, c.env);
@@ -1720,6 +1732,31 @@ app.post('/users/badges/:id/:badge_id/mastery/generate', async (c) => {
 	} catch (err) {
 		console.error(`Error generating mastery quest for badge '${badgeId}' user '${id}':`, err);
 		return c.text('Failed to generate mastery quest', 500);
+	}
+});
+
+app.get('/users/:id/badges/masteries', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) return c.text('User ID is required', 400);
+	if (id.length < 3 || id.length > 50)
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!/^\d+$/.test(id)) return c.text('User ID must be numeric', 400);
+
+	try {
+		const items = await listMasteryQuests(id, c.env.KV);
+		const active = items.filter((i) => !i.mastered).length;
+		return c.json(
+			{
+				cap: MASTERY_ACTIVE_CAP,
+				active,
+				ttl_seconds: MASTERY_TTL_SECONDS,
+				items
+			},
+			200
+		);
+	} catch (err) {
+		console.error(`Error listing masteries for user '${id}':`, err);
+		return c.text('Failed to list masteries', 500);
 	}
 });
 

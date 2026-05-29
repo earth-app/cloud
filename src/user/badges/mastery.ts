@@ -165,8 +165,18 @@ const MASTERY_QUEST_PREFIX = 'user:badge_mastery';
 const MASTERY_LOCKED_PREFIX = 'user:badge_mastery_locked';
 const MASTERED_PREFIX = 'user:badge_mastered';
 
+// stored mastery quests auto-expire from KV after 90 days; once expired the slot frees up and
+// the user can generate a fresh one (no manual cleanup needed — KV TTL handles it)
+export const MASTERY_TTL_SECONDS = 90 * 24 * 60 * 60;
+// cap on active generated-but-not-mastered quests per user; matches the frontend disable rule
+export const MASTERY_ACTIVE_CAP = 5;
+
 function masteryQuestKey(userId: string, badgeId: string): string {
 	return `${MASTERY_QUEST_PREFIX}:${normalizeId(userId)}:${badgeId}`;
+}
+
+function masteryQuestUserPrefix(userId: string): string {
+	return `${MASTERY_QUEST_PREFIX}:${normalizeId(userId)}:`;
 }
 
 function masteryLockedKey(userId: string, badgeId: string): string {
@@ -192,7 +202,57 @@ export async function getMasteryQuest(
 	kv: KVNamespace
 ): Promise<Quest | null> {
 	const stored = await kv.get<StoredMasteryQuest>(masteryQuestKey(userId, badgeId), 'json');
-	return stored?.quest ?? null;
+	if (!stored) return null;
+	// defensive expiry check (kv ttl handles eventual deletion, but a stale read can land
+	// before the ttl fires); treat anything past 90 days as already-gone
+	if (Date.now() - stored.generated_at > MASTERY_TTL_SECONDS * 1000) return null;
+	return stored.quest;
+}
+
+export type MasteryListItem = {
+	badge_id: string;
+	quest: Quest;
+	generated_at: number;
+	expires_at: number;
+	mastered: boolean;
+	mastered_at: number | null;
+};
+
+// list every stored mastery quest for the user (generated, not yet ttl-expired). includes
+// mastered entries so the badge page can still render them; cap counting filters those out
+export async function listMasteryQuests(
+	userId: string,
+	kv: KVNamespace
+): Promise<MasteryListItem[]> {
+	const prefix = masteryQuestUserPrefix(userId);
+	const { keys } = await kv.list({ prefix });
+	const items: MasteryListItem[] = [];
+	for (const k of keys) {
+		const badgeId = k.name.slice(prefix.length);
+		if (!badgeId) continue;
+		const stored = await kv.get<StoredMasteryQuest>(k.name, 'json');
+		if (!stored) continue;
+		if (Date.now() - stored.generated_at > MASTERY_TTL_SECONDS * 1000) continue;
+		const mastered = await getMasteredMetadata(userId, badgeId, kv);
+		items.push({
+			badge_id: badgeId,
+			quest: stored.quest,
+			generated_at: stored.generated_at,
+			expires_at: stored.generated_at + MASTERY_TTL_SECONDS * 1000,
+			mastered: mastered !== null,
+			mastered_at: mastered?.mastered_at ?? null
+		});
+	}
+	// newest first; the badge page will render in this order
+	items.sort((a, b) => b.generated_at - a.generated_at);
+	return items;
+}
+
+export async function countActiveMasteryQuests(userId: string, kv: KVNamespace): Promise<number> {
+	const items = await listMasteryQuests(userId, kv);
+	// cap counts unmastered slots only; completing one frees the slot immediately so the user
+	// can generate a new mastery without waiting for ttl
+	return items.filter((i) => !i.mastered).length;
 }
 
 export async function isMasteryLocked(
@@ -276,7 +336,10 @@ export async function generateAndStoreMasteryQuest(
 	const quest = buildMasteryQuest(badge, clampedSteps);
 
 	const stored: StoredMasteryQuest = { quest, generated_at: Date.now() };
-	await bindings.KV.put(masteryQuestKey(userId, badge.id), JSON.stringify(stored));
+	await bindings.KV.put(masteryQuestKey(userId, badge.id), JSON.stringify(stored), {
+		expirationTtl: MASTERY_TTL_SECONDS
+	});
+
 	return quest;
 }
 
