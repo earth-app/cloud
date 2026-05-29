@@ -1930,8 +1930,20 @@ app.get('/users/quests/:id', async (c) => {
 		return c.text('Quest ID must be alphanumeric with optional dashes or underscores', 400);
 	}
 
+	// per-user quests (mastery, activity) need the requester id to resolve; optional for
+	// catalog/custom quests which are user-agnostic
+	const userId = c.req.query('user_id')?.toLowerCase();
+	if (userId !== undefined) {
+		if (userId.length < 3 || userId.length > 50) {
+			return c.text('User ID must be between 3 and 50 characters', 400);
+		}
+		if (!/^\d+$/.test(userId)) {
+			return c.text('User ID must be numeric', 400);
+		}
+	}
+
 	try {
-		const quest = await getQuest(id, c.env);
+		const quest = await getQuest(id, c.env, userId);
 		if (!quest) {
 			return c.text('Quest not found', 404);
 		}

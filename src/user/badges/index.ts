@@ -22,8 +22,8 @@ export type BadgeTracker =
 	| 'event_countries_photographed'
 	| 'article_quizzes_completed_perfect_score'
 	| 'activity_read_time'
-	| 'quest_steps_completed'
-	| 'quest_steps_completed_green';
+	| 'quest_steps_completed' // pushed but no badges currently use this; future expansion
+	| 'quest_steps_completed_green'; // pushed but no badges currently use this; future expansion
 
 export type Badge = {
 	id: string;
@@ -290,11 +290,12 @@ export const badges = (
 		},
 		{
 			id: 'invested',
-			description: 'Read activity pages fro a combined total of 1 hour',
+			description: 'Read activity pages for a combined total of 1 hour',
 			icon: 'mdi:clock-outline',
 			rarity: 'rare',
-			progress: (...args: any[]) => min(args, 60),
-			tracker_id: 'activity_pages_read_time'
+			progress: (...args: any[]) => min(args, 60 * 60),
+			tracker_id: 'activity_read_time',
+			allows_duplicate_data: true
 		},
 		{
 			id: 'night_owl',
@@ -1219,67 +1220,114 @@ export async function revokeBadge(userId: string, badgeId: string, kv: KVNamespa
 	await kv.delete(metadataKey);
 }
 
-export async function repairDuplicateBadgeProgress(kv: KVNamespace): Promise<string[]> {
+export type RepairBadgeProgressResult = {
+	revoked: string[];
+	granted: string[];
+};
+
+export async function repairDuplicateBadgeProgress(
+	bindings: Bindings
+): Promise<RepairBadgeProgressResult> {
+	const kv = bindings.KV;
 	const revokedBadges: string[] = [];
+	const grantedBadges: string[] = [];
+	// batch grant notifications per-user so a single cycle that backfills several
+	// missed live-grants doesn't fan out as N separate notifications
+	const grantsByUser = new Map<string, string[]>();
+
 	let cursor: string | undefined;
+	let scanned = 0;
+	let normalized = 0;
+	let failed = 0;
 
 	while (true) {
 		const page = await kv.list({ prefix: 'user:badge_tracker:', cursor, limit: 1000 });
 
 		for (const key of page.keys) {
-			const trackerPrefix = 'user:badge_tracker:';
-			if (!key.name.startsWith(trackerPrefix)) continue;
+			// isolate failures per tracker key so a single bad entry doesn't kill the
+			// whole run. without this, an unexpected payload shape or KV hiccup aborts
+			// the cron and nothing downstream gets corrected.
+			try {
+				const trackerPrefix = 'user:badge_tracker:';
+				if (!key.name.startsWith(trackerPrefix)) continue;
 
-			const remainder = key.name.slice(trackerPrefix.length);
-			const separatorIndex = remainder.indexOf(':');
-			if (separatorIndex < 0) continue;
+				const remainder = key.name.slice(trackerPrefix.length);
+				const separatorIndex = remainder.indexOf(':');
+				if (separatorIndex < 0) continue;
 
-			const userId = remainder.slice(0, separatorIndex);
-			const trackerId = remainder.slice(separatorIndex + 1) as BadgeTracker;
-			const relevantBadges = getBadgeByTrackerId(trackerId);
-			if (relevantBadges.length === 0) continue;
+				const userId = remainder.slice(0, separatorIndex);
+				const trackerId = remainder.slice(separatorIndex + 1) as BadgeTracker;
+				const relevantBadges = getBadgeByTrackerId(trackerId);
+				if (relevantBadges.length === 0) continue;
 
-			const trackerData = await kv.get(key.name, 'json');
-			const tracker = Array.isArray(trackerData) ? (trackerData as TrackerEntry[]) : [];
-			const allowDuplicateData = relevantBadges.some((badge) => badge.allows_duplicate_data);
-			const dedupeByPath = trackerDedupeByPath(trackerId);
+				scanned++;
 
-			let normalizedTracker: TrackerEntry[];
-			if (allowDuplicateData) {
-				normalizedTracker = migrateLegacyTrackerData(tracker, true);
-			} else if (dedupeByPath) {
-				// For dedupe_by trackers, deduplicate based on the metadata path
-				const seen = new Set<string>();
-				normalizedTracker = [];
-				for (const entry of tracker) {
-					const key = trackerDedupeKey(entry, dedupeByPath);
-					if (!seen.has(key)) {
-						seen.add(key);
-						normalizedTracker.push(entry);
+				const trackerData = await kv.get(key.name, 'json');
+				const tracker = Array.isArray(trackerData) ? (trackerData as TrackerEntry[]) : [];
+				const allowDuplicateData = relevantBadges.some((badge) => badge.allows_duplicate_data);
+				const dedupeByPath = trackerDedupeByPath(trackerId);
+
+				let normalizedTracker: TrackerEntry[];
+				if (allowDuplicateData) {
+					normalizedTracker = migrateLegacyTrackerData(tracker, true);
+				} else if (dedupeByPath) {
+					// For dedupe_by trackers, deduplicate based on the metadata path
+					const seen = new Set<string>();
+					normalizedTracker = [];
+					for (const entry of tracker) {
+						const dedupeKey = trackerDedupeKey(entry, dedupeByPath);
+						if (!seen.has(dedupeKey)) {
+							seen.add(dedupeKey);
+							normalizedTracker.push(entry);
+						}
+					}
+				} else {
+					normalizedTracker = dedupeTrackerEntries(tracker);
+				}
+
+				if (JSON.stringify(normalizedTracker) !== JSON.stringify(tracker)) {
+					await kv.put(key.name, JSON.stringify(normalizedTracker));
+					normalized++;
+				}
+
+				// safety-net grant pass: grant any that newly satisfy the threshold
+				for (const badge of relevantBadges) {
+					if (await isBadgeGranted(userId, badge.id, kv)) {
+						continue;
+					}
+
+					const progress = await getBadgeProgressFromTracker(badge, normalizedTracker);
+					if (progress >= 1) {
+						await grantBadge(userId, badge.id, kv);
+						grantedBadges.push(`${userId}:${badge.id}`);
+						const list = grantsByUser.get(userId) ?? [];
+						list.push(badge.id);
+						grantsByUser.set(userId, list);
 					}
 				}
-			} else {
-				normalizedTracker = dedupeTrackerEntries(tracker);
-			}
 
-			if (JSON.stringify(normalizedTracker) !== JSON.stringify(tracker)) {
-				await kv.put(key.name, JSON.stringify(normalizedTracker));
-			}
-
-			if (allowDuplicateData) {
-				continue;
-			}
-
-			for (const badge of relevantBadges) {
-				if (!(await isBadgeGranted(userId, badge.id, kv))) {
+				// revoke pass: only meaningful for !allowDuplicateData trackers where
+				// dedupe could legitimately drop progress below threshold. trackers that
+				// allow duplicate data (impact_points_earned, *_read_time, etc.) accumulate
+				// monotonically — a revoke here would be wrong.
+				if (allowDuplicateData) {
 					continue;
 				}
 
-				const progress = await getBadgeProgressFromTracker(badge, normalizedTracker);
-				if (progress < 1) {
-					await revokeBadge(userId, badge.id, kv);
-					revokedBadges.push(badge.id);
+				for (const badge of relevantBadges) {
+					if (!(await isBadgeGranted(userId, badge.id, kv))) {
+						continue;
+					}
+
+					const progress = await getBadgeProgressFromTracker(badge, normalizedTracker);
+					if (progress < 1) {
+						await revokeBadge(userId, badge.id, kv);
+						revokedBadges.push(`${userId}:${badge.id}`);
+					}
 				}
+			} catch (err) {
+				failed++;
+				console.error('repairDuplicateBadgeProgress: failed key', key.name, err);
 			}
 		}
 
@@ -1290,7 +1338,42 @@ export async function repairDuplicateBadgeProgress(kv: KVNamespace): Promise<str
 		cursor = page.cursor;
 	}
 
-	return revokedBadges;
+	// one notification per affected user, listing all backfilled grants. failures here
+	// don't roll back the grant — the metadata is already written; the notification is
+	// best-effort.
+	for (const [userId, badgeIds] of grantsByUser) {
+		try {
+			const names = badgeIds.map((id) => {
+				const b = badges.find((x) => x.id === id);
+				return b ? b.name : id;
+			});
+			await sendUserNotification(
+				bindings,
+				userId,
+				names.length > 1 ? 'New Badges Unlocked!' : 'New Badge Unlocked!',
+				names.length > 1
+					? `You've unlocked the following badges: ${names.join(', ')}.`
+					: `You've unlocked the "${names[0]}" badge!`,
+				undefined,
+				'success'
+			);
+		} catch (err) {
+			console.error('repairDuplicateBadgeProgress: notification failed for user', userId, err);
+		}
+	}
+
+	console.log(
+		`repairDuplicateBadgeProgress: scanned=${scanned} normalized=${normalized} ` +
+			`granted=${grantedBadges.length} revoked=${revokedBadges.length} failed=${failed}`
+	);
+	if (grantedBadges.length > 0) {
+		console.log('repairDuplicateBadgeProgress: granted badges:', grantedBadges.join(', '));
+	}
+	if (revokedBadges.length > 0) {
+		console.log('repairDuplicateBadgeProgress: revoked badges:', revokedBadges.join(', '));
+	}
+
+	return { revoked: revokedBadges, granted: grantedBadges };
 }
 
 export async function resetBadgeProgress(

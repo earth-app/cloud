@@ -33,7 +33,18 @@ export default async function scheduled(
 	}
 
 	if (cron === '0 */4 * * *') {
-		await repairDuplicateBadgeProgress(env.KV);
+		// repair is best-effort; never let it block the article/leaderboard pipeline below
+		try {
+			const { granted, revoked } = await repairDuplicateBadgeProgress(env);
+			if (granted.length > 0 || revoked.length > 0) {
+				console.log(
+					`Badge repair: backfilled ${granted.length} missed grants, ` +
+						`revoked ${revoked.length} stale grants this cycle.`
+				);
+			}
+		} catch (err) {
+			console.error('Badge repair task failed; continuing with remaining cron work', err);
+		}
 
 		console.log('Running scheduled task: Create new articles (top + bottom ranked)');
 		console.log('Started at', new Date().toISOString());
