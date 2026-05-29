@@ -1194,15 +1194,14 @@ export async function generateBadgeMasterySteps(
 	};
 
 	const ai = bindings.AI;
-	let result: { response?: string };
+	// gemma-4 returns the openai chat-completions shape; legacy bindings return `response`
+	type GemmaResult = {
+		response?: string;
+		choices?: { message?: { content?: string } }[];
+	};
+	let result: GemmaResult;
 	try {
-		// Gemma 4 does NOT document `guided_json` (verified against
-		// developers.cloudflare.com/workers-ai/models/gemma-4-26b-a4b-it/). The supported
-		// structured-output param is `response_format`. Using `json_object` (rather than
-		// `json_schema`) because: (1) the docs don't confirm json_schema support for the
-		// native binding, (2) `validateBadgeMasterySteps` does heavy server-side clamping
-		// anyway, so loose JSON + strict post-parse is more robust than a brittle schema
-		// constraint that could spuriously truncate output.
+		// json_schema response_format lets the model enforce step shape upfront
 		result = (await ai.run(
 			badgeMasteryModel as any,
 			{
@@ -1212,9 +1211,18 @@ export async function generateBadgeMasterySteps(
 				],
 				max_tokens: 2048,
 				temperature: 0.45,
-				response_format: { type: 'json_object' }
+				response_format: {
+					type: 'json_schema',
+					json_schema: {
+						name: 'badge_mastery_quest',
+						schema: prompts.badgeMasteryAiSchema(spec.stepCount),
+						// openai strict mode would require additionalProperties:false on every
+						// nested object; the schema is intentionally permissive (validate clamps)
+						strict: false
+					}
+				}
 			} as any
-		)) as { response?: string };
+		)) as GemmaResult;
 	} catch (aiError) {
 		console.error('AI model failed for badge mastery generation', {
 			badgeId: badge.id,
@@ -1223,11 +1231,23 @@ export async function generateBadgeMasterySteps(
 		throw new Error('Failed to generate badge mastery quest using AI model', { cause: aiError });
 	}
 
-	if (!result || typeof result.response !== 'string' || result.response.trim().length === 0) {
+	const rawText =
+		typeof result?.response === 'string'
+			? result.response
+			: typeof result?.choices?.[0]?.message?.content === 'string'
+				? result.choices[0]!.message!.content!
+				: '';
+
+	if (!rawText.trim()) {
+		console.error('Badge mastery generation returned an empty response', {
+			badgeId: badge.id,
+			resultKeys: result ? Object.keys(result) : null,
+			snippet: JSON.stringify(result).slice(0, 400)
+		});
 		throw new Error('Badge mastery generation returned an empty response.');
 	}
 
-	const cleaned = stripMarkdownCodeFence(result.response);
+	const cleaned = stripMarkdownCodeFence(rawText);
 
 	let parsed: unknown;
 	try {
@@ -1241,8 +1261,7 @@ export async function generateBadgeMasterySteps(
 		throw new Error('Badge mastery generation returned invalid JSON.');
 	}
 
-	// validateBadgeMasterySteps throws if not enough steps survive clamping; the endpoint
-	// surfaces this as a 500 so the user can call generate again.
+	// throws if not enough steps survive clamping
 	return prompts.validateBadgeMasterySteps(parsed, ctx);
 }
 
