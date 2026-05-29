@@ -51,6 +51,8 @@ function ctxFor(
 		},
 		stepCount: spec.stepCount,
 		stepRewardCap: spec.stepRewardCap,
+		minAltGroups: spec.minAltGroups,
+		maxAltsPerGroup: spec.maxAltsPerGroup,
 		allowedLabels: ['book_jacket', 'envelope'],
 		allowedActivityTypes: ['HOBBY', 'LEARNING', 'STUDY'] as ActivityType[],
 		...overrides
@@ -58,11 +60,35 @@ function ctxFor(
 }
 
 describe('mastery: spec table', () => {
-	it('returns correct step count and reward per rarity', () => {
-		expect(masterySpec('normal')).toEqual({ stepCount: 4, reward: 500, stepRewardCap: 125 });
-		expect(masterySpec('rare')).toEqual({ stepCount: 6, reward: 1000, stepRewardCap: 166 });
-		expect(masterySpec('amazing')).toEqual({ stepCount: 8, reward: 2000, stepRewardCap: 250 });
-		expect(masterySpec('green')).toEqual({ stepCount: 10, reward: 4000, stepRewardCap: 400 });
+	it('returns correct step count, reward, and alt-group caps per rarity', () => {
+		expect(masterySpec('normal')).toEqual({
+			stepCount: 4,
+			reward: 500,
+			stepRewardCap: 125,
+			minAltGroups: 1,
+			maxAltsPerGroup: 3
+		});
+		expect(masterySpec('rare')).toEqual({
+			stepCount: 5,
+			reward: 800,
+			stepRewardCap: 160,
+			minAltGroups: 1,
+			maxAltsPerGroup: 3
+		});
+		expect(masterySpec('amazing')).toEqual({
+			stepCount: 6,
+			reward: 1500,
+			stepRewardCap: 250,
+			minAltGroups: 2,
+			maxAltsPerGroup: 4
+		});
+		expect(masterySpec('green')).toEqual({
+			stepCount: 7,
+			reward: 2500,
+			stepRewardCap: 357,
+			minAltGroups: 3,
+			maxAltsPerGroup: 5
+		});
 	});
 });
 
@@ -564,5 +590,144 @@ describe('mastery: badgeMasteryAiSchema', () => {
 		const schema = badgeMasteryAiSchema(6);
 		expect((schema.properties.steps as any).minItems).toBe(6);
 		expect((schema.properties.steps as any).maxItems).toBe(6);
+	});
+
+	it('attaches an alternates array with the per-rarity cap', () => {
+		const schema = badgeMasteryAiSchema(6, 4);
+		const stepItem = (schema.properties.steps as any).items;
+		expect(stepItem.properties.alternates).toBeDefined();
+		expect(stepItem.properties.alternates.maxItems).toBe(4);
+		// alternates entries must not nest more alternates (clamper would ignore them anyway)
+		expect(stepItem.properties.alternates.items.properties.alternates).toBeUndefined();
+	});
+});
+
+describe('mastery: loose clamping recovery', () => {
+	it('promotes alternates into primary slots when too few primaries clamp cleanly', () => {
+		// only 1 valid primary; 4 alts attached. clamper should promote 3 of them to fill stepCount=4
+		const raw = {
+			steps: [
+				{
+					type: 'draw_picture',
+					description: 'Draw a leaf',
+					prompt: 'leaf',
+					threshold: 0.6,
+					alternates: [
+						{
+							type: 'article_quiz',
+							description: 'Quiz 1',
+							activity_type: 'HOBBY',
+							threshold: 0.8
+						},
+						{
+							type: 'article_quiz',
+							description: 'Quiz 2',
+							activity_type: 'LEARNING',
+							threshold: 0.8
+						},
+						{
+							type: 'article_quiz',
+							description: 'Quiz 3',
+							activity_type: 'STUDY',
+							threshold: 0.8
+						},
+						{
+							type: 'draw_picture',
+							description: 'Draw a fern',
+							prompt: 'fern',
+							threshold: 0.6
+						}
+					]
+				},
+				// these primaries are invalid (no activity_type match) but their alts will be salvaged
+				{ type: 'article_quiz', description: 'invalid', activity_type: 'NOPE', threshold: 0.8 }
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+	});
+
+	it('strips alternates off the first step (singularized) and redistributes to a middle step', () => {
+		const raw = {
+			steps: [
+				{
+					type: 'draw_picture',
+					description: 'first',
+					prompt: 'sun',
+					threshold: 0.6,
+					alternates: [
+						{ type: 'draw_picture', description: 'alt for first', prompt: 'star', threshold: 0.6 }
+					]
+				},
+				{ type: 'draw_picture', description: 'mid 1', prompt: 'tree', threshold: 0.6 },
+				{ type: 'draw_picture', description: 'mid 2', prompt: 'fish', threshold: 0.6 },
+				{ type: 'draw_picture', description: 'last', prompt: 'wave', threshold: 0.6 }
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+		// first + last must be singular
+		expect(Array.isArray(clamped[0])).toBe(false);
+		expect(Array.isArray(clamped[3])).toBe(false);
+		// the displaced alt should have landed on a middle step
+		const middleAlts = [clamped[1], clamped[2]].filter(Array.isArray);
+		expect(middleAlts.length).toBeGreaterThan(0);
+	});
+
+	it('drops excess primaries past stepCount instead of throwing', () => {
+		const raw = {
+			steps: Array.from({ length: 8 }, (_, idx) => ({
+				type: 'draw_picture',
+				description: `Draw ${idx}`,
+				prompt: 'leaf',
+				threshold: 0.6
+			}))
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+	});
+
+	it('does not synthesize alts when the ai emits none (no fabrication)', () => {
+		const raw = {
+			steps: Array.from({ length: 4 }, (_, idx) => ({
+				type: 'draw_picture',
+				description: `Draw ${idx}`,
+				prompt: 'leaf',
+				threshold: 0.6
+			}))
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+		// every entry should be a single step (no alt arrays without ai-emitted alts)
+		expect(clamped.every((e) => !Array.isArray(e))).toBe(true);
+	});
+
+	it('caps alt-group size at maxAltsPerGroup', () => {
+		// inject one primary with 10 alts; clamper should keep at most 3 (normal cap)
+		const raw = {
+			steps: [
+				{ type: 'draw_picture', description: 'first', prompt: 'sun', threshold: 0.6 },
+				{
+					type: 'draw_picture',
+					description: 'mid with many alts',
+					prompt: 'tree',
+					threshold: 0.6,
+					alternates: Array.from({ length: 10 }, (_, idx) => ({
+						type: 'draw_picture',
+						description: `alt ${idx}`,
+						prompt: 'fern',
+						threshold: 0.6
+					}))
+				},
+				{ type: 'draw_picture', description: 'mid 2', prompt: 'fish', threshold: 0.6 },
+				{ type: 'draw_picture', description: 'last', prompt: 'wave', threshold: 0.6 }
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+		const midEntry = clamped[1];
+		expect(Array.isArray(midEntry)).toBe(true);
+		// group size = primary + alts; normal cap is 3 alts, so total <= 4 variants
+		expect((midEntry as QuestStep[]).length).toBeLessThanOrEqual(4);
 	});
 });

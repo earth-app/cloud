@@ -58,17 +58,22 @@ export const MASTERY_STEP_TYPES = [
 ] as const;
 export type MasteryStepType = (typeof MASTERY_STEP_TYPES)[number];
 
-const MASTERY_RARITY_TABLE: Record<Rarity, { stepCount: number; reward: number }> = {
-	normal: { stepCount: 4, reward: 500 },
-	rare: { stepCount: 6, reward: 1000 },
-	amazing: { stepCount: 8, reward: 2000 },
-	green: { stepCount: 10, reward: 4000 }
+const MASTERY_RARITY_TABLE: Record<
+	Rarity,
+	{ stepCount: number; reward: number; minAltGroups: number; maxAltsPerGroup: number }
+> = {
+	normal: { stepCount: 4, reward: 500, minAltGroups: 1, maxAltsPerGroup: 3 },
+	rare: { stepCount: 5, reward: 800, minAltGroups: 1, maxAltsPerGroup: 3 },
+	amazing: { stepCount: 6, reward: 1500, minAltGroups: 2, maxAltsPerGroup: 4 },
+	green: { stepCount: 7, reward: 2500, minAltGroups: 3, maxAltsPerGroup: 5 }
 };
 
 export type MasterySpec = {
 	stepCount: number;
 	reward: number;
 	stepRewardCap: number;
+	minAltGroups: number;
+	maxAltsPerGroup: number;
 };
 
 export function masterySpec(rarity: Rarity): MasterySpec {
@@ -76,7 +81,9 @@ export function masterySpec(rarity: Rarity): MasterySpec {
 	return {
 		stepCount: entry.stepCount,
 		reward: entry.reward,
-		stepRewardCap: Math.floor(entry.reward / entry.stepCount)
+		stepRewardCap: Math.floor(entry.reward / entry.stepCount),
+		minAltGroups: entry.minAltGroups,
+		maxAltsPerGroup: entry.maxAltsPerGroup
 	};
 }
 

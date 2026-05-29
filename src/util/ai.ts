@@ -2713,16 +2713,22 @@ export type AIMasteryStep = {
 	// scan_barcode (mobile-only): the barcode kind + optional thematic keyword the resolved title must contain.
 	scan_kind?: string;
 	scan_keyword?: string;
+	// optional sibling steps that count as completing this slot. clamper redistributes/drops
+	// these as needed (first/last must be singular, mobile-only steps ignore ai alts)
+	alternates?: Omit<AIMasteryStep, 'alternates'>[];
 };
 
 export type MasteryValidationContext = {
 	badge: Pick<Badge, 'id' | 'name' | 'description' | 'rarity' | 'tracker_id'>;
 	stepCount: number;
 	stepRewardCap: number;
+	// target minimum count of steps that carry ai-emitted alternates (best-effort: clamper
+	// won't fabricate alts, but redistributes available ones to hit this target where possible)
+	minAltGroups: number;
+	// maximum alternates attached to any one step (group size = primary + alts <= 1+max)
+	maxAltsPerGroup: number;
 	allowedLabels: string[];
 	allowedActivityTypes: ActivityType[];
-	// Tier info when this badge shares a tracker with other badges. Null for solo badges
-	// (e.g. `networker`, `going_outside`) where there's no harder/easier sibling to scale against.
 	tier?: {
 		tierIndex: number;
 		totalTiers: number;
@@ -2731,7 +2737,37 @@ export type MasteryValidationContext = {
 	} | null;
 };
 
-export function badgeMasteryAiSchema(stepCount: number) {
+// shared per-step shape; reused for both top-level steps and `alternates` entries to keep
+// the AI emitting the same field set everywhere (clamper handles any deviations loosely)
+function masteryStepShape(): Record<string, unknown> {
+	return {
+		type: { type: 'string', enum: [...MASTERY_AI_STEP_TYPES] },
+		description: { type: 'string', maxLength: 240 },
+		reward: { type: 'number' },
+		prompt: { type: 'string', maxLength: 260 },
+		threshold: { type: 'number' },
+		label: { type: 'string', maxLength: 50 },
+		activity_type: { type: 'string', maxLength: 50 },
+		min_length: { type: 'number' },
+		minutes: { type: 'number' },
+		items: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 80 } },
+		pairs: {
+			type: 'array',
+			maxItems: 12,
+			items: {
+				type: 'array',
+				minItems: 2,
+				maxItems: 2,
+				items: { type: 'string', maxLength: 80 }
+			}
+		},
+		meters: { type: 'number' },
+		scan_kind: { type: 'string', enum: ['food', 'music', 'book'] },
+		scan_keyword: { type: 'string', maxLength: 30 }
+	};
+}
+
+export function badgeMasteryAiSchema(stepCount: number, maxAltsPerGroup = 3) {
 	return {
 		type: 'object',
 		required: ['steps'],
@@ -2744,33 +2780,17 @@ export function badgeMasteryAiSchema(stepCount: number) {
 					type: 'object',
 					required: ['type', 'description'],
 					properties: {
-						type: { type: 'string', enum: [...MASTERY_AI_STEP_TYPES] },
-						description: { type: 'string', maxLength: 240 },
-						reward: { type: 'number' },
-						prompt: { type: 'string', maxLength: 260 },
-						threshold: { type: 'number' },
-						label: { type: 'string', maxLength: 50 },
-						activity_type: { type: 'string', maxLength: 50 },
-						min_length: { type: 'number' },
-						minutes: { type: 'number' },
-						items: {
+						...masteryStepShape(),
+						// optional sibling steps; clamper will redistribute/drop as needed
+						alternates: {
 							type: 'array',
-							maxItems: 12,
-							items: { type: 'string', maxLength: 80 }
-						},
-						pairs: {
-							type: 'array',
-							maxItems: 12,
+							maxItems: maxAltsPerGroup,
 							items: {
-								type: 'array',
-								minItems: 2,
-								maxItems: 2,
-								items: { type: 'string', maxLength: 80 }
+								type: 'object',
+								required: ['type', 'description'],
+								properties: masteryStepShape()
 							}
-						},
-						meters: { type: 'number' },
-						scan_kind: { type: 'string', enum: ['food', 'music', 'book'] },
-						scan_keyword: { type: 'string', maxLength: 30 }
+						}
 					}
 				}
 			}
@@ -2834,10 +2854,18 @@ TASK: Generate exactly N step objects in JSON that reinforce the activity that e
 REQUIREMENTS:
 - Output VALID JSON only matching the provided schema: { "steps": [ ... ] }
 - Each step is a flat object with a "type" field and additional type-specific fields.
-- Do NOT include alternative-step arrays — emit a flat list of single steps.
 - description (<= 220 chars): clear, instructional, written in the second person. Do NOT reference the badge by name.
 - reward (integer, optional): per-step bonus impact points; will be clamped server-side.
 - Vary the step types — repeating the same type more than twice in a row is forbidden.
+
+ALTERNATES (sibling steps that count as completing the same slot):
+- A step MAY include an "alternates" array of additional step objects that the user can substitute for the primary. Completing ANY one of {primary, alternates...} satisfies the slot.
+- The FIRST and LAST steps MUST be singular (no "alternates" field, or an empty one).
+- Aim for AT LEAST M middle steps to carry alternates (M is given as "Minimum alt groups" in the user message). Spread alt groups out — do not bunch them together.
+- Each alternates array contains 1 to A entries (A is given as "Max alternates per group"). Vary group sizes — some can be small (1 alt = group of 2 variants), some larger.
+- Each alternate is a normal step object using the same fields as primaries; they do NOT nest further (no alternates inside alternates).
+- Mobile-only steps (distance_covered, scan_barcode) MUST NOT carry alternates — the server auto-wraps them with a desktop fallback.
+- Use alternates to let the user pick a preferred medium (e.g. draw OR transcribe OR describe the same theme), not to repeat the same step.
 
 TYPE-SPECIFIC FIELDS:
 - draw_picture: prompt (subject to draw, 1-12 words), threshold (0.55-0.7).
@@ -2929,6 +2957,11 @@ Allowlists
 Generate exactly ${ctx.stepCount} steps that personalise the mastery challenge for this user.
 Anchor each step to BOTH the badge's theme (${badgeEarnedByPhrase(ctx.badge)}) and at least one of the user's listed activities or interests.
 Per-step reward cap: ${ctx.stepRewardCap} impact points.
+
+Alternates
+- Minimum alt groups: ${ctx.minAltGroups} (steps that should carry an "alternates" array)
+- Max alternates per group: ${ctx.maxAltsPerGroup}
+- The first step (index 0) and last step (index ${ctx.stepCount - 1}) must NOT carry alternates.
 
 Return JSON only.`;
 }
@@ -3222,6 +3255,14 @@ function injectMasteryDelays(steps: (QuestStep | QuestStep[])[]): (QuestStep | Q
 // must not dominate the quest — desktop users would end up with too many describe_text fallbacks.
 const MAX_MOBILE_ONLY_STEPS_PER_QUEST = 2;
 
+// loose clamper:
+//   1. extract — clamp primaries and their alternates; mobile-only dedupe (per-type + global cap)
+//   2. recover — if we have fewer valid primaries than stepCount, promote orphan/edge alts
+//   3. trim    — if we have more, drop trailing primaries (their alts feed the redistribution pool)
+//   4. edges   — strip alts off first/last; those alts go into the pool
+//   5. alts    — spread the pooled alts across middle non-mobile steps to hit minAltGroups
+//   6. mobile  — wrap mobile-only steps with a desktop describe_text fallback
+//   7. delays  — inject 24h delay on the back half
 export function validateBadgeMasterySteps(
 	raw: unknown,
 	ctx: MasteryValidationContext
@@ -3235,39 +3276,145 @@ export function validateBadgeMasterySteps(
 		throw new Error('Badge mastery generation payload is missing a `steps` array.');
 	}
 
-	const clamped: QuestStep[] = [];
+	// 1. extract primaries + collect alternates into a redistribution pool
+	type Candidate = { step: QuestStep; alts: QuestStep[] };
+	const primaries: Candidate[] = [];
+	const altPool: QuestStep[] = [];
 	const mobileTypeSeen = new Set<string>();
 	let mobileOnlyCount = 0;
 
-	for (const candidate of stepsRaw) {
-		if (clamped.length >= ctx.stepCount) break;
-		const clean = clampMasteryStep(candidate as AIMasteryStep, ctx);
-		if (!clean) continue;
+	const takeMobile = (step: QuestStep): boolean => {
+		if (!isMobileOnlyStep(step)) return true;
+		if (mobileTypeSeen.has(step.type)) return false;
+		if (mobileOnlyCount >= MAX_MOBILE_ONLY_STEPS_PER_QUEST) return false;
+		mobileTypeSeen.add(step.type);
+		mobileOnlyCount++;
+		return true;
+	};
 
-		if (isMobileOnlyStep(clean)) {
-			// Enforce "at most one of each mobile-only type" + the global cap. The system
-			// prompt asks the AI to honor this, but the clamp is the source of truth.
-			if (mobileTypeSeen.has(clean.type)) continue;
-			if (mobileOnlyCount >= MAX_MOBILE_ONLY_STEPS_PER_QUEST) continue;
-			mobileTypeSeen.add(clean.type);
-			mobileOnlyCount++;
+	for (const candidate of stepsRaw) {
+		if (typeof candidate !== 'object' || candidate === null) continue;
+		const c = candidate as AIMasteryStep;
+		const clean = clampMasteryStep(c, ctx);
+
+		// clamp & accept alternates regardless of primary outcome; mobile-only alts ineligible
+		const altCands = Array.isArray(c.alternates) ? c.alternates : [];
+		const cleanedAlts: QuestStep[] = [];
+		for (const a of altCands) {
+			const cleanAlt = clampMasteryStep(a as AIMasteryStep, ctx);
+			if (!cleanAlt) continue;
+			if (isMobileOnlyStep(cleanAlt)) continue;
+			cleanedAlts.push(cleanAlt);
 		}
 
-		clamped.push(clean);
+		if (clean && takeMobile(clean)) {
+			// mobile-only primaries reject ai alts — the desktop fallback wrap is their alt
+			const alts = isMobileOnlyStep(clean) ? [] : cleanedAlts;
+			if (isMobileOnlyStep(clean) && cleanedAlts.length > 0) altPool.push(...cleanedAlts);
+			primaries.push({ step: clean, alts });
+		} else {
+			// primary unusable — its surviving alts become orphans for redistribution
+			altPool.push(...cleanedAlts);
+		}
 	}
 
-	if (clamped.length < ctx.stepCount) {
+	// 2. if we're short, drain primary-attached alts into the pool so they're available too;
+	// we'd rather lose alt groupings than fail with a valid alt sitting unused
+	if (primaries.length < ctx.stepCount) {
+		for (const p of primaries) {
+			if (p.alts.length > 0) {
+				altPool.push(...p.alts);
+				p.alts = [];
+			}
+		}
+	}
+	while (primaries.length < ctx.stepCount && altPool.length > 0) {
+		const promoted = altPool.shift()!;
+		if (!takeMobile(promoted)) continue;
+		primaries.push({ step: promoted, alts: [] });
+	}
+
+	if (primaries.length === 0) {
+		throw new Error('Badge mastery generation produced 0 valid steps.');
+	}
+	if (primaries.length < ctx.stepCount) {
 		throw new Error(
-			`Badge mastery generation produced ${clamped.length} valid steps; ${ctx.stepCount} required.`
+			`Badge mastery generation produced ${primaries.length} valid steps; ${ctx.stepCount} required.`
 		);
 	}
 
-	// Wrap each mobile-only step with a deterministic non-mobile describe_text fallback so
-	// desktop users always have a completion path. The Quest engine treats alt arrays as
-	// "any one of these counts" — see src/user/quests/tracking.ts updateQuestProgress.
-	const wrapped: (QuestStep | QuestStep[])[] = clamped.map((step) =>
-		isMobileOnlyStep(step) ? [step, buildFallbackForMobileOnly(step)] : step
-	);
+	// 3. trim extras; their alts flow back into the pool for assignment
+	while (primaries.length > ctx.stepCount) {
+		const dropped = primaries.pop()!;
+		altPool.push(...dropped.alts);
+	}
 
+	// 4. edges singular — first/last cannot carry ai alts
+	if (primaries.length > 0 && primaries[0].alts.length > 0) {
+		altPool.push(...primaries[0].alts);
+		primaries[0].alts = [];
+	}
+	if (primaries.length > 1 && primaries[primaries.length - 1].alts.length > 0) {
+		altPool.push(...primaries[primaries.length - 1].alts);
+		primaries[primaries.length - 1].alts = [];
+	}
+
+	// 5. alt assignment to non-edge, non-mobile primaries up to the rarity target
+	const middleIndices: number[] = [];
+	for (let i = 1; i < primaries.length - 1; i++) {
+		if (isMobileOnlyStep(primaries[i].step)) continue;
+		middleIndices.push(i);
+	}
+
+	// pick assignment targets spread across the middle (deterministic stride; not RNG-dependent)
+	const assignTargets = pickSpreadIndices(middleIndices, ctx.minAltGroups);
+
+	// some steps may already have alts assigned by the ai — keep those (capped) and only add
+	const hasAltsAlready = (i: number) => primaries[i].alts.length > 0;
+	const remaining = Math.max(
+		0,
+		ctx.minAltGroups - primaries.filter((_, i) => hasAltsAlready(i)).length
+	);
+	const newTargets = assignTargets.filter((i) => !hasAltsAlready(i)).slice(0, remaining);
+
+	for (const i of newTargets) {
+		if (altPool.length === 0) break;
+		// random-ish group size in [1, maxAltsPerGroup]; bias toward smaller groups when pool is thin
+		const cap = Math.min(ctx.maxAltsPerGroup, altPool.length);
+		const wanted = 1 + Math.floor(Math.random() * cap);
+		const taken = altPool.splice(0, wanted);
+		primaries[i].alts.push(...taken);
+	}
+
+	// cap any existing groups at maxAltsPerGroup; trim overflow back into the pool (unused)
+	for (const p of primaries) {
+		if (p.alts.length > ctx.maxAltsPerGroup) {
+			p.alts.length = ctx.maxAltsPerGroup;
+		}
+	}
+
+	// 6. mobile wrap + materialize
+	const wrapped: (QuestStep | QuestStep[])[] = primaries.map(({ step, alts }) => {
+		if (isMobileOnlyStep(step)) {
+			return [step, buildFallbackForMobileOnly(step)];
+		}
+		if (alts.length === 0) return step;
+		return [step, ...alts];
+	});
+
+	// 7. delays
 	return injectMasteryDelays(wrapped);
+}
+
+// pick up to `count` indices from `pool` evenly spread by stride. preserves input order so
+// the resulting positions are monotonically increasing and as far apart as the pool allows
+function pickSpreadIndices(pool: number[], count: number): number[] {
+	if (count <= 0 || pool.length === 0) return [];
+	if (count >= pool.length) return [...pool];
+	const stride = pool.length / count;
+	const out: number[] = [];
+	for (let k = 0; k < count; k++) {
+		out.push(pool[Math.floor(k * stride + stride / 2)]);
+	}
+	return out;
 }

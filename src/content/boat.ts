@@ -1188,6 +1188,8 @@ export async function generateBadgeMasterySteps(
 		},
 		stepCount: spec.stepCount,
 		stepRewardCap: spec.stepRewardCap,
+		minAltGroups: spec.minAltGroups,
+		maxAltsPerGroup: spec.maxAltsPerGroup,
 		allowedLabels: labelsForBadge(badge),
 		allowedActivityTypes: activityTypeNames(),
 		tier: tierForCtx
@@ -1212,14 +1214,15 @@ export async function generateBadgeMasterySteps(
 					{ role: 'system', content: prompts.badgeMasterySystemMessage.trim() },
 					{ role: 'user', content: prompts.badgeMasteryUserPrompt(user, ctx).trim() }
 				],
-				max_tokens: 8192,
+				// alts roughly multiply payload size by group factor; keep headroom over reasoning + 2x output
+				max_tokens: 12288,
 				reasoning_effort: 'low',
 				temperature: 0.45,
 				response_format: {
 					type: 'json_schema',
 					json_schema: {
 						name: 'badge_mastery_quest',
-						schema: prompts.badgeMasteryAiSchema(spec.stepCount),
+						schema: prompts.badgeMasteryAiSchema(spec.stepCount, spec.maxAltsPerGroup),
 						// openai strict mode would require additionalProperties:false on every
 						// nested object; the schema is intentionally permissive (validate clamps)
 						strict: false
