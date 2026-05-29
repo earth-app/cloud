@@ -1197,7 +1197,10 @@ export async function generateBadgeMasterySteps(
 	// gemma-4 returns the openai chat-completions shape; legacy bindings return `response`
 	type GemmaResult = {
 		response?: string;
-		choices?: { message?: { content?: string } }[];
+		choices?: {
+			finish_reason?: string;
+			message?: { content?: string | null; reasoning?: string | null };
+		}[];
 	};
 	let result: GemmaResult;
 	try {
@@ -1209,7 +1212,8 @@ export async function generateBadgeMasterySteps(
 					{ role: 'system', content: prompts.badgeMasterySystemMessage.trim() },
 					{ role: 'user', content: prompts.badgeMasteryUserPrompt(user, ctx).trim() }
 				],
-				max_tokens: 2048,
+				max_tokens: 8192,
+				reasoning_effort: 'low',
 				temperature: 0.45,
 				response_format: {
 					type: 'json_schema',
@@ -1239,12 +1243,17 @@ export async function generateBadgeMasterySteps(
 				: '';
 
 	if (!rawText.trim()) {
+		// finish_reason='length' + null content means reasoning ate the entire token budget
+		const finishReason = result?.choices?.[0]?.finish_reason;
 		console.error('Badge mastery generation returned an empty response', {
 			badgeId: badge.id,
+			finishReason,
 			resultKeys: result ? Object.keys(result) : null,
 			snippet: JSON.stringify(result).slice(0, 400)
 		});
-		throw new Error('Badge mastery generation returned an empty response.');
+		throw new Error(
+			`Badge mastery generation returned an empty response (finish_reason=${finishReason ?? 'unknown'}).`
+		);
 	}
 
 	const cleaned = stripMarkdownCodeFence(rawText);
