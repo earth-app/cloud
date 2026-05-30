@@ -18,23 +18,42 @@ export async function uploadPlaceThumbnail(
 	bindings: Bindings,
 	ctx: ExecutionCtxLike
 ): Promise<[Uint8Array | null, string | null]> {
+	if (eventId <= 0n) {
+		console.error('Cannot generate event thumbnail: non-positive event ID', {
+			name,
+			eventId: eventId.toString()
+		});
+		return [null, null];
+	}
+
 	const cleanedName = name.trim();
 	if (!cleanedName) {
-		console.warn('Cannot generate event thumbnail: empty place name', { eventId });
+		console.warn('Cannot generate event thumbnail: empty place name', {
+			eventId: eventId.toString()
+		});
 		return [null, null];
 	}
 
 	const [image0, author] = await findPlaceThumbnail(cleanedName, bindings);
 	if (!image0) {
-		console.warn('No thumbnail image found for event place', { name: cleanedName, eventId });
+		console.warn('No thumbnail image found for event place', {
+			name: cleanedName,
+			eventId: eventId.toString()
+		});
 		return [null, null];
 	}
 	if (image0.length === 0) {
-		console.warn('Generated thumbnail image was empty', { name: cleanedName, eventId });
+		console.warn('Generated thumbnail image was empty', {
+			name: cleanedName,
+			eventId: eventId.toString()
+		});
 		return [null, null];
 	}
 
 	const safeAuthor = author?.trim() || 'Unknown';
+	console.log(
+		`Place lookup succeeded for event ${eventId}: ${cleanedName} (${image0.length} source bytes, author=${safeAuthor})`
+	);
 	const storedImage = await uploadEventThumbnail(eventId, image0, safeAuthor, bindings, ctx);
 
 	return [storedImage, safeAuthor];
@@ -128,6 +147,10 @@ export async function uploadEventThumbnail(
 	ctx: ExecutionCtxLike,
 	convertToWebP = true
 ): Promise<Uint8Array> {
+	if (eventId <= 0n) {
+		throw new Error(`Event thumbnail eventId must be positive, got ${eventId}`);
+	}
+
 	if (image.length === 0) {
 		throw new Error('Event thumbnail image cannot be empty');
 	}
@@ -149,12 +172,20 @@ export async function uploadEventThumbnail(
 					.output({ format: 'image/webp', quality: 80 })
 			).image();
 		} catch (err) {
-			console.error('Failed to transform event thumbnail image to webp', { eventId, err });
+			console.error('Failed to transform event thumbnail image to webp', {
+				eventId: eventId.toString(),
+				inputBytes: image.length,
+				err
+			});
 			throw new Error('Failed to transform event thumbnail image');
 		}
 
 		image0 = await streamToUint8Array(transformedStream);
 		if (image0.length === 0) {
+			console.error('Transformed event thumbnail image was empty', {
+				eventId: eventId.toString(),
+				inputBytes: image.length
+			});
 			throw new Error('Transformed event thumbnail image was empty');
 		}
 	}
@@ -167,7 +198,21 @@ export async function uploadEventThumbnail(
 		bindings.KV.put(`event:${eventId}:thumbnail:author`, author)
 	]);
 	ctx.waitUntil(upload);
-	await upload;
+	try {
+		await upload;
+	} catch (err) {
+		console.error('Failed to persist event thumbnail to R2/KV', {
+			eventId: eventId.toString(),
+			thumbnailPath,
+			bytes: image0.length,
+			err
+		});
+		throw err;
+	}
+
+	console.log(
+		`Persisted event thumbnail at ${thumbnailPath} (${image0.length} bytes, author=${author})`
+	);
 
 	return image0;
 } // event thumbnails

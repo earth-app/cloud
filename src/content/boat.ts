@@ -1330,7 +1330,26 @@ export async function postEvent(
 		return data;
 	}
 
-	const eventId = BigInt(eventIdRaw);
+	let eventId: bigint;
+	try {
+		eventId = BigInt(eventIdRaw);
+	} catch (err) {
+		console.error('Skipping thumbnail generation: event ID failed BigInt parsing', {
+			eventIdRaw,
+			name: data.name,
+			err
+		});
+		return data;
+	}
+
+	if (eventId <= 0n) {
+		console.error('Skipping thumbnail generation: event ID is zero or negative', {
+			eventIdRaw,
+			name: data.name,
+			responseSnippet: JSON.stringify(data).slice(0, 300)
+		});
+		return data;
+	}
 
 	const persistedName = typeof data.name === 'string' ? data.name : '';
 	const sourceName = event.name || '';
@@ -1348,7 +1367,7 @@ export async function postEvent(
 			`Generating thumbnail for place birthday event: ${locationName} (event ${eventIdRaw})`
 		);
 		try {
-			const [image] = await uploadPlaceThumbnail(locationName, eventId, bindings, ctx);
+			const [image, author] = await uploadPlaceThumbnail(locationName, eventId, bindings, ctx);
 			if (!image || image.length === 0) {
 				console.warn('No thumbnail was generated for place birthday event', {
 					eventId: eventIdRaw,
@@ -1357,6 +1376,10 @@ export async function postEvent(
 					sourceName,
 					mohoSource
 				});
+			} else {
+				console.log(
+					`Stored place birthday thumbnail for event ${eventIdRaw} (${locationName}): ${image.length} bytes, author=${author ?? 'Unknown'}`
+				);
 			}
 		} catch (thumbnailErr) {
 			console.error('Thumbnail generation failed for created event; continuing without thumbnail', {
