@@ -68,6 +68,7 @@ export async function getOnboarding(
 		if (!parsed || typeof parsed !== 'object') return null;
 		if (!Array.isArray(parsed.completed_steps)) parsed.completed_steps = [];
 		if (!Array.isArray(parsed.interests)) parsed.interests = [];
+
 		return parsed;
 	} catch {
 		return null;
