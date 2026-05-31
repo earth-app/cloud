@@ -356,11 +356,28 @@ async function archiveCompletedQuest(
 	await bindings.KV.delete(`user:quest_progress:${userId}`);
 }
 
+// per-rank reduction (fraction 0..1) applied to QuestStep.delay; administrator bypasses entirely.
+// mirrors the cosmetics-discount pattern in mantle2's PointsHelper::getPriceDiscount — keep in sync.
+export const QUEST_DELAY_REDUCTION_BY_RANK: Record<string, number> = {
+	free: 0,
+	pro: 0.1,
+	writer: 0.25,
+	organizer: 0.5,
+	administrator: 1
+};
+
+export function getQuestDelayReduction(rank?: string | null): number {
+	if (!rank) return 0;
+	const normalized = rank.trim().toLowerCase();
+	return QUEST_DELAY_REDUCTION_BY_RANK[normalized] ?? 0;
+}
+
 export async function checkStepDelay(
 	userId: string,
 	stepIndex: number,
 	altIndex: number | undefined,
-	bindings: Bindings
+	bindings: Bindings,
+	rank?: string | null
 ): Promise<{ available: boolean; secondsRemaining?: number; availableAt?: number }> {
 	const userId0 = normalizeId(userId);
 	const res = await bindings.KV.getWithMetadata<
@@ -387,6 +404,10 @@ export async function checkStepDelay(
 
 	if (!stepDef?.delay) return { available: true };
 
+	const reduction = getQuestDelayReduction(rank);
+	// full bypass for administrators (and any future 100%-off rank)
+	if (reduction >= 1) return { available: true };
+
 	let baseTime: number;
 	if (stepIndex === 0) {
 		baseTime = metadata.startedAt ?? 0;
@@ -399,7 +420,8 @@ export async function checkStepDelay(
 		}
 	}
 
-	const availableAt = baseTime + stepDef.delay * 1000;
+	const effectiveDelayMs = Math.round(stepDef.delay * (1 - reduction) * 1000);
+	const availableAt = baseTime + effectiveDelayMs;
 	const now = Date.now();
 	if (now < availableAt) {
 		const secondsRemaining = Math.ceil((availableAt - now) / 1000);
@@ -577,7 +599,8 @@ export async function updateQuestProgress(
 	stepResponse: QuestStepResponse,
 	device: QuestDeviceMetadata,
 	bindings: Bindings,
-	ctx: ExecutionCtxLike
+	ctx: ExecutionCtxLike,
+	rank?: string | null
 ) {
 	const userId0 = normalizeId(userId);
 	const res = await bindings.KV.getWithMetadata<
@@ -621,7 +644,7 @@ export async function updateQuestProgress(
 
 	// delay validation: only gates advancement of the current step, not backfilling of past alt steps.
 	if (idx === metadata.currentStep) {
-		const delayStatus = await checkStepDelay(userId, idx, stepResponse.altIndex, bindings);
+		const delayStatus = await checkStepDelay(userId, idx, stepResponse.altIndex, bindings, rank);
 		if (!delayStatus.available) {
 			const s = delayStatus.secondsRemaining!;
 			throw new HTTPException(425, {

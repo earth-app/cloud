@@ -10,6 +10,7 @@ type TimerState = {
 	userId: string;
 	field: string;
 	metadata?: Record<string, any>;
+	rank?: string | null;
 	running: boolean;
 };
 
@@ -18,6 +19,7 @@ type TimerRequestBody = {
 	userId?: string;
 	field?: string;
 	metadata?: Record<string, any>;
+	rank?: string;
 };
 
 function normalizeText(value: unknown) {
@@ -67,7 +69,8 @@ function promptAnalyticsMetadata(prompt?: Partial<Prompt>) {
 async function maybeAdvanceReadTimeQuestStep(
 	userId: string,
 	tracker: 'articles_read_time' | 'activity_read_time',
-	bindings: Bindings
+	bindings: Bindings,
+	rank?: string | null
 ) {
 	try {
 		const questProgress = await getCurrentQuestProgress(userId, bindings);
@@ -134,7 +137,13 @@ async function maybeAdvanceReadTimeQuestStep(
 			return;
 		}
 
-		const delayStatus = await checkStepDelay(userId, currentStepIndex, candidateAltIndex, bindings);
+		const delayStatus = await checkStepDelay(
+			userId,
+			currentStepIndex,
+			candidateAltIndex,
+			bindings,
+			rank
+		);
 		if (!delayStatus.available) {
 			return;
 		}
@@ -155,7 +164,8 @@ async function maybeAdvanceReadTimeQuestStep(
 					waitUntil(promise) {
 						waitUntilPromises.push(Promise.resolve(promise));
 					}
-				}
+				},
+				rank
 			);
 			await Promise.all(waitUntilPromises);
 		} catch (innerError) {
@@ -200,6 +210,7 @@ export class UserTimer {
 		const userId = normalizeText(body.userId);
 		const field = normalizeText(body.field);
 		const metadata = toRecord(body.metadata);
+		const rank = normalizeText(body.rank) || null;
 
 		if (action === 'start') {
 			if (!userId) {
@@ -221,6 +232,7 @@ export class UserTimer {
 				userId,
 				field,
 				metadata,
+				rank,
 				running: true
 			};
 			this.timer = timer;
@@ -240,7 +252,14 @@ export class UserTimer {
 			this.timer = undefined;
 
 			try {
-				await applyField(timer.field, timer.userId, durationMs, timer.metadata || {}, this.env);
+				await applyField(
+					timer.field,
+					timer.userId,
+					durationMs,
+					timer.metadata || {},
+					this.env,
+					timer.rank
+				);
 			} catch (error) {
 				console.error('Error applying field:', error);
 			}
@@ -257,7 +276,8 @@ async function applyField(
 	userId: string,
 	durationMs: number,
 	metadata: Record<string, any>,
-	bindings: Bindings
+	bindings: Bindings,
+	rank?: string | null
 ) {
 	const duration = Math.max(0, durationMs / 1000); // convert to seconds
 	const [fieldName, rawFieldParameter] = field.split(':', 2);
@@ -305,7 +325,7 @@ async function applyField(
 				// await logAnalyticsBatch(contentId, userId, entries, bindings);
 			}
 
-			await maybeAdvanceReadTimeQuestStep(userId, 'articles_read_time', bindings);
+			await maybeAdvanceReadTimeQuestStep(userId, 'articles_read_time', bindings, rank);
 			break;
 		}
 		case 'prompts_read_time': {
@@ -355,7 +375,7 @@ async function applyField(
 
 			// add to activity_read_time
 			await addBadgeProgress(userId, 'activity_read_time', duration, bindings.KV, { activity });
-			await maybeAdvanceReadTimeQuestStep(userId, 'activity_read_time', bindings);
+			await maybeAdvanceReadTimeQuestStep(userId, 'activity_read_time', bindings, rank);
 			break;
 		}
 	}

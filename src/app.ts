@@ -154,6 +154,7 @@ app.post('/users/timer', async (c) => {
 		userId?: string;
 		field?: string;
 		metadata?: Record<string, any>;
+		rank?: string;
 	};
 
 	try {
@@ -162,6 +163,7 @@ app.post('/users/timer', async (c) => {
 			userId?: string;
 			field?: string;
 			metadata?: Record<string, any>;
+			rank?: string;
 		}>();
 	} catch {
 		return c.text('Invalid request body', 400);
@@ -174,6 +176,7 @@ app.post('/users/timer', async (c) => {
 		body.metadata && typeof body.metadata === 'object' && !Array.isArray(body.metadata)
 			? body.metadata
 			: undefined;
+	const rank = normalizeQuestRank(body.rank) ?? undefined;
 
 	if (!action) {
 		return c.text('Action is required', 400);
@@ -196,7 +199,7 @@ app.post('/users/timer', async (c) => {
 
 	return stub.fetch('https://do/timer', {
 		method: 'POST',
-		body: JSON.stringify({ action, userId, field, metadata }),
+		body: JSON.stringify({ action, userId, field, metadata, rank }),
 		headers: {
 			'Content-Type': 'application/json'
 		}
@@ -2207,7 +2210,8 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 		userId,
 		body.response.index,
 		body.response.altIndex,
-		c.env
+		c.env,
+		rank
 	);
 	if (!delayCheck.available) {
 		const s = delayCheck.secondsRemaining!;
@@ -2222,7 +2226,14 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 	}
 
 	try {
-		const result = await updateQuestProgress(userId, response, body.device, c.env, c.executionCtx);
+		const result = await updateQuestProgress(
+			userId,
+			response,
+			body.device,
+			c.env,
+			c.executionCtx,
+			rank
+		);
 		return c.json(result, 200);
 	} catch (error) {
 		if (error instanceof HTTPException) {
