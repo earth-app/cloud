@@ -16,6 +16,10 @@ export type Bindings = {
 	MANTLE_URL: string;
 	MAPS_API_KEY: string;
 	ENCRYPTION_KEY: string;
+
+	// optional credentials
+	CF_ANALYTICS_TOKEN?: string;
+	CF_ZONE_TAG?: string;
 };
 
 export type ExecutionCtxLike = {

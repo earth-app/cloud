@@ -121,6 +121,23 @@ import {
 	updateCustomQuest
 } from './user/quests/custom';
 import { deleteUserDataVariant, deleteR2Prefix } from './util/deletion';
+import {
+	OnboardingStepId,
+	ONBOARDING_STEPS,
+	completeStep as completeOnboardingStep,
+	dismissOnboarding,
+	getOrCreateOnboarding,
+	setPersona,
+	resetOnboarding
+} from './user/onboarding';
+import {
+	addToBlacklist,
+	isBlacklisted,
+	listBlacklist,
+	removeFromBlacklist,
+	BlacklistKind
+} from './admin/blacklist';
+import { bumpSignupFunnel, getAnalyticsSnapshot } from './admin/cf-analytics';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -3268,6 +3285,143 @@ app.delete('/events/delete_image', async (c) => {
 	}
 
 	return c.body(null, 204);
+});
+
+// Onboarding
+
+app.get('/users/onboarding/:id', async (c) => {
+	const id = c.req.param('id');
+	if (!id) return c.text('Missing user id', 400);
+	const state = await getOrCreateOnboarding(c.env, id);
+	return c.json({ state, steps: ONBOARDING_STEPS }, 200);
+});
+
+app.post('/users/onboarding/:id/step', async (c) => {
+	const id = c.req.param('id');
+	if (!id) return c.text('Missing user id', 400);
+	let body: { step?: string } = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid JSON', 400);
+	}
+	const step = body.step as OnboardingStepId;
+	if (!step || !ONBOARDING_STEPS.includes(step)) {
+		return c.text('Invalid step', 400);
+	}
+	const state = await completeOnboardingStep(c.env, id, step);
+	return c.json({ state }, 200);
+});
+
+app.post('/users/onboarding/:id/persona', async (c) => {
+	const id = c.req.param('id');
+	if (!id) return c.text('Missing user id', 400);
+	let body: { persona?: string; interests?: string[] } = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid JSON', 400);
+	}
+	if (typeof body.persona !== 'string' || body.persona.length === 0 || body.persona.length > 64) {
+		return c.text('Invalid persona', 400);
+	}
+	const interests = Array.isArray(body.interests)
+		? body.interests.filter((s): s is string => typeof s === 'string' && s.length > 0).slice(0, 20)
+		: [];
+	const state = await setPersona(c.env, id, body.persona, interests);
+	return c.json({ state }, 200);
+});
+
+app.post('/users/onboarding/:id/dismiss', async (c) => {
+	const id = c.req.param('id');
+	if (!id) return c.text('Missing user id', 400);
+	const state = await dismissOnboarding(c.env, id);
+	return c.json({ state }, 200);
+});
+
+app.delete('/users/onboarding/:id', async (c) => {
+	const id = c.req.param('id');
+	if (!id) return c.text('Missing user id', 400);
+	await resetOnboarding(c.env, id);
+	return c.body(null, 204);
+});
+
+// Admin: blacklists
+
+app.get('/admin/blacklist', async (c) => {
+	const kind = c.req.query('kind');
+	if (kind && kind !== 'username' && kind !== 'email') {
+		return c.text('Invalid kind', 400);
+	}
+	const entries = await listBlacklist(c.env, kind as BlacklistKind | undefined);
+	return c.json({ entries }, 200);
+});
+
+app.post('/admin/blacklist', async (c) => {
+	let body: { kind?: string; value?: string; reason?: string; added_by?: string } = {};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid JSON', 400);
+	}
+	if (body.kind !== 'username' && body.kind !== 'email') {
+		return c.text('Invalid kind', 400);
+	}
+	if (!body.value || typeof body.value !== 'string' || body.value.length > 128) {
+		return c.text('Invalid value', 400);
+	}
+	const entry = await addToBlacklist(
+		c.env,
+		body.kind,
+		body.value,
+		body.reason ?? '',
+		body.added_by
+	);
+	return c.json({ entry }, 201);
+});
+
+app.delete('/admin/blacklist', async (c) => {
+	const kind = c.req.query('kind');
+	const value = c.req.query('value');
+	if (kind !== 'username' && kind !== 'email') {
+		return c.text('Invalid kind', 400);
+	}
+	if (!value) return c.text('Missing value', 400);
+	const removed = await removeFromBlacklist(c.env, kind, value);
+	return removed ? c.body(null, 204) : c.text('Not found', 404);
+});
+
+app.get('/admin/blacklist/check', async (c) => {
+	const kind = c.req.query('kind');
+	const value = c.req.query('value');
+	if (kind !== 'username' && kind !== 'email') {
+		return c.text('Invalid kind', 400);
+	}
+	if (!value) return c.text('Missing value', 400);
+	const entry = await isBlacklisted(c.env, kind, value);
+	return c.json({ blacklisted: entry !== null, entry }, 200);
+});
+
+// admin - analytics
+
+app.get('/admin/analytics', async (c) => {
+	const since = c.req.query('since') || undefined;
+	const until = c.req.query('until') || undefined;
+	const snapshot = await getAnalyticsSnapshot(c.env, since, until);
+	return c.json(snapshot, 200);
+});
+
+app.post('/admin/funnel/:field', async (c) => {
+	const field = c.req.param('field');
+	if (
+		field !== 'signup_views' &&
+		field !== 'signups_completed' &&
+		field !== 'verifications_completed'
+	) {
+		return c.text('Invalid field', 400);
+	}
+	const next = await bumpSignupFunnel(c.env, field);
+	return c.json(next, 200);
 });
 
 export default app;
