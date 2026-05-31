@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 // Defer importing the module under test until after mocks are declared
 import { createMockBindings } from '../helpers/mock-bindings';
 import { MockKVNamespace } from '../helpers/mock-kv';
@@ -43,13 +43,6 @@ beforeEach(() => {
 	mapsMocks.extractCountry = vi.fn(() => null) as any;
 	mapsMocks.reverseGeocode = vi.fn(async () => null) as any;
 	badgesMocks.addBadgeProgress = vi.fn(async () => undefined) as any;
-});
-
-afterAll(() => {
-	vi.unmock('../../src/util/maps');
-	vi.unmock('../../src/user/badges');
-	vi.unmock('exifreader');
-	vi.resetModules();
 });
 
 describe('addSubmissionToIndex', () => {

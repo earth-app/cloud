@@ -23,6 +23,7 @@ import { postPrompt } from '../../src/util/mantle2';
 import { postActivity } from '../../src/util/mantle2';
 import { retrieveActivities } from '../../src/util/mantle2';
 import { ExactDateWithYearEntry } from '@earth-app/moho';
+import { com } from '@earth-app/ocean';
 import { env } from 'cloudflare:workers';
 import { MockKVNamespace } from '../helpers/mock-kv';
 import {
@@ -235,6 +236,28 @@ describe('findArticle', () => {
 	});
 
 	it('returns an article when topic generation succeeds', async () => {
+		const fakeOceanArticle = {
+			title: 'Climate Change Coverage',
+			author: 'Author',
+			source: 'Source',
+			url: 'https://example.com/article',
+			keywords: ['climate', 'change'],
+			date: '2026-01-01',
+			links: {},
+			abstract:
+				'Detailed coverage of climate change impacts and adaptation strategies across communities. '.repeat(
+					5
+				)
+		};
+
+		vi.spyOn(com.earthapp.ocean.boat, 'searchAllAsPromise').mockResolvedValue({
+			asJsReadonlyArrayView: () => [
+				{
+					toJson: () => JSON.stringify(fakeOceanArticle)
+				}
+			]
+		} as any);
+
 		const bindings = createBindings({
 			AI: {
 				run: vi.fn(async (model: string) => {
