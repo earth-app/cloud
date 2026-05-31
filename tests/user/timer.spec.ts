@@ -228,6 +228,136 @@ describe('UserTimer', () => {
 		expect(timeTracker?.[0]?.value).toBeGreaterThan(0);
 	});
 
+	it('honors administrator rank to bypass step delay on auto-advance', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const timer = new UserTimer(createDurableState(), bindings);
+
+		const questId = 'timer_rank_delay_bypass';
+		const quest = {
+			id: questId,
+			title: 'Timer Rank Delay Bypass',
+			description: 'Validates rank-aware delay reduction in the timer.',
+			icon: 'mdi:timer-outline',
+			rarity: 'normal',
+			steps: [
+				{
+					type: 'article_read_time',
+					description: 'Read for at least 5 seconds (60s lockout).',
+					parameters: ['SPORT', 5],
+					delay: 60
+				}
+			],
+			reward: 10
+		} as any;
+
+		quests.push(quest);
+		try {
+			await startQuest('301', questId, bindings);
+
+			let now = 1_000;
+			vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+			await timer.fetch(
+				new Request('https://do/timer', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						action: 'start',
+						userId: '301',
+						field: 'articles_read_time:article-rank',
+						metadata: { article: { id: 'article-rank' } },
+						rank: 'administrator'
+					})
+				})
+			);
+
+			// only 7.5s elapsed — well short of the 60s delay — but admin bypasses
+			now = 7_500;
+			const stopResponse = await timer.fetch(
+				new Request('https://do/timer', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						action: 'stop',
+						userId: '301',
+						field: 'articles_read_time:article-rank'
+					})
+				})
+			);
+			expect(stopResponse.status).toBe(200);
+
+			const questHistory = await getQuestHistory('301', bindings);
+			expect(questHistory).toContain(questId);
+		} finally {
+			quests.splice(quests.indexOf(quest), 1);
+		}
+	});
+
+	it('respects step delay when no rank is supplied to the timer', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const timer = new UserTimer(createDurableState(), bindings);
+
+		const questId = 'timer_rank_delay_blocked';
+		const quest = {
+			id: questId,
+			title: 'Timer Rank Delay Blocked',
+			description: 'Validates that without rank, the delay still gates auto-advance.',
+			icon: 'mdi:timer-outline',
+			rarity: 'normal',
+			steps: [
+				{
+					type: 'article_read_time',
+					description: 'Read for at least 5 seconds (60s lockout).',
+					parameters: ['SPORT', 5],
+					delay: 60
+				}
+			],
+			reward: 10
+		} as any;
+
+		quests.push(quest);
+		try {
+			await startQuest('302', questId, bindings);
+
+			let now = 1_000;
+			vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+			await timer.fetch(
+				new Request('https://do/timer', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						action: 'start',
+						userId: '302',
+						field: 'articles_read_time:article-rank-blocked',
+						metadata: { article: { id: 'article-rank-blocked' } }
+					})
+				})
+			);
+
+			now = 7_500;
+			const stopResponse = await timer.fetch(
+				new Request('https://do/timer', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({
+						action: 'stop',
+						userId: '302',
+						field: 'articles_read_time:article-rank-blocked'
+					})
+				})
+			);
+			expect(stopResponse.status).toBe(200);
+
+			const questHistory = await getQuestHistory('302', bindings);
+			expect(questHistory).not.toContain(questId);
+		} finally {
+			quests.splice(quests.indexOf(quest), 1);
+		}
+	});
+
 	it('preserves metadata on activity_read_time trackers and completes matching read-time quests', async () => {
 		const kv = new MockKVNamespace();
 		const bindings = createMockBindings({ KV: kv as any });

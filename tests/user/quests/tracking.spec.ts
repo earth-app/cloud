@@ -5,11 +5,13 @@ vi.mock('../../../src/user/notifications', () => ({
 }));
 
 import {
+	QUEST_DELAY_REDUCTION_BY_RANK,
 	checkStepDelay,
 	downloadStepData,
 	enrichProgressEntries,
 	getCompletedQuestProgress,
 	getCurrentQuestProgress,
+	getQuestDelayReduction,
 	getQuestHistory,
 	handleQuizQuestStep,
 	maybeArchiveCompletedQuest,
@@ -122,6 +124,28 @@ describe('enrichProgressEntries', () => {
 	});
 });
 
+describe('getQuestDelayReduction', () => {
+	it('returns 0 for nullish or unknown ranks', () => {
+		expect(getQuestDelayReduction(undefined)).toBe(0);
+		expect(getQuestDelayReduction(null)).toBe(0);
+		expect(getQuestDelayReduction('')).toBe(0);
+		expect(getQuestDelayReduction('mystery')).toBe(0);
+	});
+
+	it('normalizes case and whitespace', () => {
+		expect(getQuestDelayReduction(' Pro ')).toBe(QUEST_DELAY_REDUCTION_BY_RANK.pro);
+		expect(getQuestDelayReduction('ADMINISTRATOR')).toBe(1);
+	});
+
+	it('exposes the documented reductions', () => {
+		expect(QUEST_DELAY_REDUCTION_BY_RANK.free).toBe(0);
+		expect(QUEST_DELAY_REDUCTION_BY_RANK.pro).toBe(0.1);
+		expect(QUEST_DELAY_REDUCTION_BY_RANK.writer).toBe(0.25);
+		expect(QUEST_DELAY_REDUCTION_BY_RANK.organizer).toBe(0.5);
+		expect(QUEST_DELAY_REDUCTION_BY_RANK.administrator).toBe(1);
+	});
+});
+
 describe('checkStepDelay', () => {
 	it('returns available=true when there is no active quest', async () => {
 		const bindings = createMockBindings({ KV: new MockKVNamespace() as any });
@@ -182,6 +206,92 @@ describe('checkStepDelay', () => {
 		});
 
 		expect(await checkStepDelay('124', 99, 0, bindings)).toEqual({ available: true });
+	});
+
+	it('administrators bypass step delays entirely', async () => {
+		const kv = new MockKVNamespace();
+		const now = Date.now();
+		const progress = [] as any[];
+		progress[3] = {
+			type: 'article_quiz',
+			index: 3,
+			scoreKey: 'quiz:key',
+			score: 90,
+			submittedAt: now
+		};
+
+		await kv.put('user:quest_progress:301', JSON.stringify(progress), {
+			metadata: {
+				questId: 'vegetable_head',
+				currentStep: 4,
+				completed: false,
+				startedAt: now
+			}
+		});
+
+		const bindings = createMockBindings({ KV: kv as any });
+		const status = await checkStepDelay('301', 4, 0, bindings, 'administrator');
+		expect(status).toEqual({ available: true });
+	});
+
+	it('applies rank-based delay reduction to secondsRemaining', async () => {
+		const kv = new MockKVNamespace();
+		const now = Date.now();
+		const progress = [] as any[];
+		progress[3] = {
+			type: 'article_quiz',
+			index: 3,
+			scoreKey: 'quiz:key',
+			score: 90,
+			submittedAt: now
+		};
+
+		await kv.put('user:quest_progress:302', JSON.stringify(progress), {
+			metadata: {
+				questId: 'vegetable_head',
+				currentStep: 4,
+				completed: false,
+				startedAt: now
+			}
+		});
+
+		const bindings = createMockBindings({ KV: kv as any });
+
+		const full = await checkStepDelay('302', 4, 0, bindings, 'free');
+		const organizer = await checkStepDelay('302', 4, 0, bindings, 'organizer');
+		expect(full.available).toBe(false);
+		expect(organizer.available).toBe(false);
+		// organizer is 50% off — remaining time should be roughly half
+		const ratio = organizer.secondsRemaining! / full.secondsRemaining!;
+		expect(ratio).toBeGreaterThan(0.45);
+		expect(ratio).toBeLessThan(0.55);
+	});
+
+	it('treats unknown ranks as no discount', async () => {
+		const kv = new MockKVNamespace();
+		const now = Date.now();
+		const progress = [] as any[];
+		progress[3] = {
+			type: 'article_quiz',
+			index: 3,
+			scoreKey: 'quiz:key',
+			score: 90,
+			submittedAt: now
+		};
+
+		await kv.put('user:quest_progress:303', JSON.stringify(progress), {
+			metadata: {
+				questId: 'vegetable_head',
+				currentStep: 4,
+				completed: false,
+				startedAt: now
+			}
+		});
+
+		const bindings = createMockBindings({ KV: kv as any });
+		const baseline = await checkStepDelay('303', 4, 0, bindings, 'free');
+		const garbage = await checkStepDelay('303', 4, 0, bindings, 'nonsense');
+		expect(garbage.secondsRemaining).toBe(baseline.secondsRemaining);
 	});
 
 	it('uses previous alternative step completion time for delayed unlock checks', async () => {
