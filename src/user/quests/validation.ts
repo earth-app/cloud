@@ -1328,15 +1328,37 @@ async function validateDescribeText(
 		return { success: false, message: 'Text response cannot be empty.' };
 	}
 
-	if (normalizedText.length > 1024) {
-		return { success: false, message: 'Text response exceeds maximum length of 1024 characters.' };
-	}
+	const [criteria, threshold, rawMinLength, rawMaxLength] = step.parameters;
 
-	const [criteria, threshold, minLength] = step.parameters;
-	if (minLength && normalizedText.length < minLength) {
+	// the absolute window — per-step values get clamped into [50, 2048] so a
+	// misconfigured step can't drop below the floor or exceed the hard ceiling.
+	const TEXT_FLOOR = 50;
+	const TEXT_CEILING = 2048;
+	const clampLen = (n: number, fallback: number) =>
+		Math.min(TEXT_CEILING, Math.max(TEXT_FLOOR, Math.floor(n)));
+
+	const minLength =
+		typeof rawMinLength === 'number' && Number.isFinite(rawMinLength)
+			? clampLen(rawMinLength, 200)
+			: 200;
+	const maxLength =
+		typeof rawMaxLength === 'number' && Number.isFinite(rawMaxLength)
+			? clampLen(rawMaxLength, TEXT_CEILING)
+			: TEXT_CEILING;
+
+	const effectiveMax = Math.max(minLength, maxLength);
+
+	if (normalizedText.length < minLength) {
 		return {
 			success: false,
-			message: `Response text is less than ${minLength} characters`
+			message: `Response text is less than ${minLength} characters.`
+		};
+	}
+
+	if (normalizedText.length > effectiveMax) {
+		return {
+			success: false,
+			message: `Response text exceeds maximum length of ${effectiveMax} characters.`
 		};
 	}
 

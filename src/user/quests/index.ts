@@ -92,7 +92,7 @@ export type QuestStep = {
 	  }
 	| {
 			type: 'describe_text';
-			parameters: [ScoringCriterion[], number, number?]; // rubric criteria, score threshold, min length
+			parameters: [ScoringCriterion[], number, number?, number?]; // rubric criteria, score threshold, min length, max length
 	  }
 	| {
 			type: 'submit_event_image';

@@ -2705,6 +2705,7 @@ export type AIMasteryStep = {
 	label?: string;
 	activity_type?: string;
 	min_length?: number;
+	max_length?: number;
 	minutes?: number;
 	items?: string[];
 	pairs?: [string, string][];
@@ -2749,6 +2750,7 @@ function masteryStepShape(): Record<string, unknown> {
 		label: { type: 'string', maxLength: 50 },
 		activity_type: { type: 'string', maxLength: 50 },
 		min_length: { type: 'number' },
+		max_length: { type: 'number' },
 		minutes: { type: 'number' },
 		items: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 80 } },
 		pairs: {
@@ -2875,7 +2877,7 @@ TYPE-SPECIFIC FIELDS:
 - take_photo_classification: label (one of the allowed values), threshold (0.5-0.8).
 - take_photo_validation: prompt (1-2 sentences describing what the photo should show), threshold (0.5-0.75).
 - transcribe_audio: prompt (1-2 sentences describing what the user should say aloud), threshold (0.55-0.8).
-- describe_text: prompt (1-2 sentences asking for written reflection), threshold (0.5-0.75), min_length (50-300 integer characters).
+- describe_text: prompt (1-2 sentences asking for written reflection), threshold (0.5-0.75), min_length (50-2048 integer characters, defaults to 200 if omitted), max_length (optional 50-2048 integer characters, defaults to 2048 — only set this when you want a tighter ceiling than the default).
 - match_terms: prompt (1 sentence instruction), pairs (array of 4-8 [term, description] pairs related to the badge theme).
 - order_items: items (array of 4-8 short labels in the correct order, e.g. chronological, size, intensity).
 - distance_covered (MOBILE-ONLY): meters (200-5000 integer — minimum distance the user covers on foot, run, or bike; vehicular travel does NOT count). Frame the description as a walk/run/ride that ties to the badge's theme.
@@ -3089,7 +3091,9 @@ function clampMasteryStep(step: AIMasteryStep, ctx: MasteryValidationContext): Q
 					: null;
 			if (!prompt) return null;
 			const threshold = clampNumber(step.threshold, 0.5, 0.75, 0.6);
-			const minLength = clampInt(step.min_length, 50, 300, 100);
+			const minLength = clampInt(step.min_length, 50, 2048, 200);
+			const rawMaxLength = clampInt(step.max_length, 50, 2048, 2048);
+			const maxLength = Math.max(minLength, rawMaxLength);
 			// Server-built criteria — AI-emitted criteria are never trusted because the
 			// shape is intricate (weights must sum to 1) and mis-shaped input crashes the
 			// scorer in `src/content/ferry.ts`.
@@ -3114,7 +3118,7 @@ function clampMasteryStep(step: AIMasteryStep, ctx: MasteryValidationContext): Q
 			return {
 				type: 'describe_text',
 				description,
-				parameters: [criteria, threshold, minLength],
+				parameters: [criteria, threshold, minLength, maxLength],
 				...(cappedReward !== undefined ? { reward: cappedReward } : {})
 			};
 		}
