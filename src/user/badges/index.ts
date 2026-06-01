@@ -1155,7 +1155,18 @@ export async function isBadgeGranted(
 	const normalizedUserId = normalizeId(userId);
 	const metadataKey = `user:badge:${normalizedUserId}:${badgeId}`;
 	const metadata = await kv.get(metadataKey);
-	return metadata !== null;
+	if (metadata !== null) return true;
+
+	if (isLegacyPaddedId(userId)) {
+		const legacyKey = `user:badge:${userId}:${badgeId}`;
+		const legacyMetadata = await kv.get(legacyKey);
+		if (legacyMetadata !== null) {
+			await migrateLegacyKey(legacyKey, metadataKey, kv);
+			return true;
+		}
+	}
+
+	return false;
 }
 
 export async function getBadgeMetadata(
@@ -1290,40 +1301,39 @@ export async function repairDuplicateBadgeProgress(
 					normalized++;
 				}
 
-				// safety-net grant pass: grant any that newly satisfy the threshold
-				for (const badge of relevantBadges) {
-					if (await isBadgeGranted(userId, badge.id, kv)) {
-						continue;
-					}
+				// compute stage up-front
+				const evaluations = await Promise.all(
+					relevantBadges.map(async (badge) => {
+						const progress = await getBadgeProgressFromTracker(badge, normalizedTracker);
+						const granted = await isBadgeGranted(userId, badge.id, kv);
+						return { badge, progress, granted };
+					})
+				);
 
-					const progress = await getBadgeProgressFromTracker(badge, normalizedTracker);
-					if (progress >= 1) {
-						await grantBadge(userId, badge.id, kv);
-						grantedBadges.push(`${userId}:${badge.id}`);
-						const list = grantsByUser.get(userId) ?? [];
-						list.push(badge.id);
-						grantsByUser.set(userId, list);
-					}
+				// safety-net grant pass: grant any that newly satisfy the threshold
+				for (const evaluation of evaluations) {
+					if (evaluation.granted) continue;
+					if (evaluation.progress < 1) continue;
+
+					await grantBadge(userId, evaluation.badge.id, kv);
+					grantedBadges.push(`${userId}:${evaluation.badge.id}`);
+					const list = grantsByUser.get(userId) ?? [];
+					list.push(evaluation.badge.id);
+					grantsByUser.set(userId, list);
+					evaluation.granted = true; // keep snapshot in sync for the revoke pass
 				}
 
-				// revoke pass: only meaningful for !allowDuplicateData trackers where
-				// dedupe could legitimately drop progress below threshold. trackers that
-				// allow duplicate data (impact_points_earned, *_read_time, etc.) accumulate
-				// monotonically — a revoke here would be wrong.
+				// revoke pass
 				if (allowDuplicateData) {
 					continue;
 				}
 
-				for (const badge of relevantBadges) {
-					if (!(await isBadgeGranted(userId, badge.id, kv))) {
-						continue;
-					}
+				for (const evaluation of evaluations) {
+					if (!evaluation.granted) continue;
+					if (evaluation.progress >= 1) continue;
 
-					const progress = await getBadgeProgressFromTracker(badge, normalizedTracker);
-					if (progress < 1) {
-						await revokeBadge(userId, badge.id, kv);
-						revokedBadges.push(`${userId}:${badge.id}`);
-					}
+					await revokeBadge(userId, evaluation.badge.id, kv);
+					revokedBadges.push(`${userId}:${evaluation.badge.id}`);
 				}
 			} catch (err) {
 				failed++;
