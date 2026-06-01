@@ -2423,7 +2423,9 @@ app.get('/users/quests/history/:user_id', async (c) => {
 					: null;
 				return {
 					questId,
-					quest: await getQuest(questId, c.env),
+					// userId is required for per-user quests (badge_mastery_*, custom) to resolve;
+					// completed.quest already carries the right shape for mastery, fall back to it
+					quest: completed?.quest ?? (await getQuest(questId, c.env, userId)),
 					...(completed ? { completedAt: completed.completedAt, progress: enrichedProgress } : {})
 				};
 			})
