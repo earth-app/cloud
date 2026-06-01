@@ -2417,6 +2417,7 @@ app.get('/users/quests/history/:user_id', async (c) => {
 	const limitRaw = parseInt(c.req.query('limit') ?? '25', 10) || 25;
 	const limit = Math.min(100, Math.max(1, limitRaw));
 	const search = (c.req.query('search') ?? '').trim().toLowerCase();
+	const sort = (c.req.query('sort') ?? 'desc').toLowerCase() as 'asc' | 'desc' | 'rand';
 
 	try {
 		const userId0 = normalizeId(userId);
@@ -2455,9 +2456,17 @@ app.get('/users/quests/history/:user_id', async (c) => {
 
 		const total = filtered.length;
 		const start = (page - 1) * limit;
-		const paginated = filtered.slice(start, start + limit);
+		const paginated = filtered.slice(start, start + limit).sort((a, b) => {
+			if (sort === 'asc') {
+				return (a.completedAt ?? 0) - (b.completedAt ?? 0);
+			}
+			if (sort === 'rand') {
+				return Math.random() - 0.5;
+			}
+			return (b.completedAt ?? 0) - (a.completedAt ?? 0);
+		});
 
-		return c.json({ items: paginated, total, page, limit }, 200);
+		return c.json({ items: paginated, total, page, limit, sort }, 200);
 	} catch (err) {
 		console.error(`Error getting quest history for user '${userId}':`, err);
 		return c.text('Failed to get quest history', 500);
