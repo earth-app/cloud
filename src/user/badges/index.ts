@@ -374,7 +374,7 @@ export const badges = (
 			id: 'pioneer',
 			description: 'Read activities for a combined total of 24 hours',
 			icon: 'mdi:compass-rose',
-			rarity: 'normal',
+			rarity: 'rare',
 			progress: (...args: any[]) => min(args, 24 * 60 * 60),
 			tracker_id: 'activity_read_time',
 			allows_duplicate_data: true
