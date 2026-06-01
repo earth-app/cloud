@@ -1392,7 +1392,7 @@ describe('validateStep', () => {
 			const step = {
 				type: 'describe_text',
 				description: 'Describe your favorite outdoor activity',
-				parameters: [criteria, 0.7]
+				parameters: [criteria, 0.7, 50]
 			} as any;
 			const response = {
 				type: 'describe_text',
@@ -1422,7 +1422,7 @@ describe('validateStep', () => {
 			const step = {
 				type: 'describe_text',
 				description: 'Describe your favorite outdoor activity',
-				parameters: [criteria, 80]
+				parameters: [criteria, 80, 50]
 			} as any;
 			const response = {
 				type: 'describe_text',
@@ -1469,12 +1469,12 @@ describe('validateStep', () => {
 			const step = {
 				type: 'describe_text',
 				description: 'Describe your favorite outdoor activity',
-				parameters: [criteria, 0.85]
+				parameters: [criteria, 0.85, 50]
 			} as any;
 			const response = {
 				type: 'describe_text',
 				index: 0,
-				text: 'I like biking around my neighborhood.'
+				text: 'I like biking around my quiet suburban neighborhood every weekend.'
 			} as any;
 
 			mockScoreText.mockResolvedValueOnce({ score: 0.6, breakdown: [] } as any);

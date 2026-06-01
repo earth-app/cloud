@@ -1811,7 +1811,7 @@ describe('GET /users/quests/:id', () => {
 		const shortId = await callApp('/users/quests/ab', { method: 'GET' });
 		expect(shortId.status).toBe(400);
 
-		const longId = await callApp('/users/quests/' + 'a'.repeat(51), { method: 'GET' });
+		const longId = await callApp('/users/quests/' + 'a'.repeat(81), { method: 'GET' });
 		expect(longId.status).toBe(400);
 	});
 
