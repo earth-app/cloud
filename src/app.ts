@@ -2413,24 +2413,51 @@ app.get('/users/quests/history/:user_id', async (c) => {
 		return c.text('User ID must be numeric', 400);
 	}
 
+	const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10) || 1);
+	const limitRaw = parseInt(c.req.query('limit') ?? '25', 10) || 25;
+	const limit = Math.min(100, Math.max(1, limitRaw));
+	const search = (c.req.query('search') ?? '').trim().toLowerCase();
+
 	try {
+		const userId0 = normalizeId(userId);
 		const questIds = await getQuestHistory(userId, c.env);
-		const history = await Promise.all(
+		// resolve quest metadata + completedAt in parallel; no r2 reads, no enrichment in list
+		const resolved = await Promise.all(
 			questIds.map(async (questId) => {
-				const completed = await getCompletedQuestProgress(userId, questId, c.env);
-				const enrichedProgress = completed
-					? await enrichProgressEntries(completed.progress, c.env)
-					: null;
+				const [meta, quest] = await Promise.all([
+					c.env.KV.get<{ r2Key: string; completedAt: number }>(
+						`user:quest_history:${userId0}:${questId}`,
+						'json'
+					),
+					getQuest(questId, c.env, userId)
+				]);
+				if (!quest) return null;
 				return {
 					questId,
-					// userId is required for per-user quests (badge_mastery_*, custom) to resolve;
-					// completed.quest already carries the right shape for mastery, fall back to it
-					quest: completed?.quest ?? (await getQuest(questId, c.env, userId)),
-					...(completed ? { completedAt: completed.completedAt, progress: enrichedProgress } : {})
+					quest,
+					completedAt: meta?.completedAt ?? null
 				};
 			})
 		);
-		return c.json(history, 200);
+
+		const items = resolved.filter((x): x is NonNullable<typeof x> => x !== null);
+
+		const filtered = search
+			? items.filter(
+					(i) =>
+						i.quest.title.toLowerCase().includes(search) ||
+						i.quest.id.toLowerCase().includes(search)
+				)
+			: items;
+
+		// newest first; null completedAt sorts to the end
+		filtered.sort((a, b) => (b.completedAt ?? 0) - (a.completedAt ?? 0));
+
+		const total = filtered.length;
+		const start = (page - 1) * limit;
+		const paginated = filtered.slice(start, start + limit);
+
+		return c.json({ items: paginated, total, page, limit }, 200);
 	} catch (err) {
 		console.error(`Error getting quest history for user '${userId}':`, err);
 		return c.text('Failed to get quest history', 500);
