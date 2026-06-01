@@ -1942,8 +1942,8 @@ app.get('/users/quests/:id', async (c) => {
 		return c.text('Quest ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	if (id.length < 3 || id.length > 80) {
+		return c.text('Quest ID must be between 3 and 80 characters', 400);
 	}
 
 	if (!/^[a-z0-9_-]+$/.test(id)) {
@@ -2489,15 +2489,16 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 		return c.text('User ID must be numeric', 400);
 	}
 
-	if (questId.length < 3 || questId.length > 50) {
-		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	if (questId.length < 3 || questId.length > 80) {
+		return c.text('Quest ID must be between 3 and 80 characters', 400);
 	}
 
 	if (!/^[a-z0-9_-]+$/.test(questId)) {
 		return c.text('Quest ID must be alphanumeric with optional dashes or underscores', 400);
 	}
 
-	const quest = await getQuest(questId, c.env);
+	// require user_id to resolve
+	const quest = await getQuest(questId, c.env, userId);
 	if (!quest) {
 		return c.text('Quest not found', 404);
 	}
@@ -2508,7 +2509,7 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 			return c.text('Completed quest not found', 404);
 		}
 		const enrichedProgress = await enrichProgressEntries(result.progress, c.env);
-		return c.json({ ...result, progress: enrichedProgress }, 200);
+		return c.json({ ...result, quest: result.quest ?? quest, progress: enrichedProgress }, 200);
 	} catch (err) {
 		console.error(`Error getting completed quest '${questId}' for user '${userId}':`, err);
 		return c.text('Failed to get completed quest progress', 500);
@@ -2590,8 +2591,8 @@ app.patch('/users/quests/custom/:quest_id', async (c) => {
 		return c.text('Quest ID is required', 400);
 	}
 
-	if (questId.length < 3 || questId.length > 50) {
-		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	if (questId.length < 3 || questId.length > 80) {
+		return c.text('Quest ID must be between 3 and 80 characters', 400);
 	}
 
 	const body = await c.req.json<CustomQuestUpdateInput>();
@@ -2657,8 +2658,8 @@ app.delete('/users/quests/custom/:quest_id', async (c) => {
 		return c.text('Quest ID is required', 400);
 	}
 
-	if (questId.length < 3 || questId.length > 50) {
-		return c.text('Quest ID must be between 3 and 50 characters', 400);
+	if (questId.length < 3 || questId.length > 80) {
+		return c.text('Quest ID must be between 3 and 80 characters', 400);
 	}
 
 	try {
