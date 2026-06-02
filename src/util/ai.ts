@@ -12,6 +12,7 @@ import { ScoringCriterion } from '../content/ferry';
 import type { QuestStep } from '../user/quests';
 import type { Badge } from '../user/badges';
 import { clampInt, clampNumber } from './util';
+import { BarcodeResolution } from '../user/quests/validation';
 
 // #region vision labels
 
@@ -2764,7 +2765,10 @@ function masteryStepShape(): Record<string, unknown> {
 			}
 		},
 		meters: { type: 'number' },
-		scan_kind: { type: 'string', enum: ['food', 'music', 'book'] },
+		scan_kind: {
+			type: 'string',
+			enum: ['food', 'music', 'book', 'beauty', 'pet', 'product', 'vehicle', 'flight']
+		},
 		scan_keyword: { type: 'string', maxLength: 30 }
 	};
 }
@@ -2881,7 +2885,10 @@ TYPE-SPECIFIC FIELDS:
 - match_terms: prompt (1 sentence instruction), pairs (array of 4-8 [term, description] pairs related to the badge theme).
 - order_items: items (array of 4-8 short labels in the correct order, e.g. chronological, size, intensity).
 - distance_covered (MOBILE-ONLY): meters (200-5000 integer — minimum distance the user covers on foot, run, or bike; vehicular travel does NOT count). Frame the description as a walk/run/ride that ties to the badge's theme.
-- scan_barcode (MOBILE-ONLY): scan_kind ("food" | "music" | "book"), scan_keyword (optional single lowercase word, only emit for higher tiers — it gates the scan to a specific subject by requiring that word in the resolved product title).
+- scan_barcode (MOBILE-ONLY): scan_kind (one of "food" | "music" | "book" | "beauty" | "pet" | "product" | "vehicle" | "flight"), scan_keyword (optional single lowercase word, only emit for higher tiers — it gates the scan to a specific subject by requiring that word in the resolved title).
+  - food/music/book/beauty/pet/product are retail (UPC/EAN) barcodes resolved against Open*Facts, MusicBrainz, or Open Library.
+  - vehicle is a 17-character VIN (US-market 1981+) decoded via NHTSA vPIC — only emit for badges genuinely tied to driving, owning, or maintaining a vehicle.
+  - flight is an IATA boarding-pass barcode (PDF417/Aztec/QR/Data Matrix) — only emit for badges tied to travel or attending events that require flying.
 
 MOBILE-ONLY STEPS:
 - distance_covered and scan_barcode require a phone. The server will automatically wrap them with a non-mobile describe_text fallback so desktop users still have a completion path — you should emit them as FLAT single steps, NEVER as alternative arrays.
@@ -2891,8 +2898,13 @@ MOBILE-ONLY STEPS:
   - distance_covered: badges about attending events, photographing places, outdoor activity, exploration, or physical engagement. Skip for purely contemplative, screen-based, or social-only badges.
   - scan_barcode kind="book": badges about reading or article-related learning.
   - scan_barcode kind="music": badges about events, entertainment, or audio engagement.
-  - scan_barcode kind="food": badges about community, wellness, or in-person gatherings.
-  - Skip both for abstract milestones (activities_added, impact_points_earned, prompts_responded, friends_added).
+  - scan_barcode kind="food": badges about community, wellness, cooking, or in-person gatherings.
+  - scan_barcode kind="beauty": badges about self-care, fashion, personal style, or wellness rituals.
+  - scan_barcode kind="pet": badges tied to pets, animal care, or pet-owner community.
+  - scan_barcode kind="product": general fallback for badges about household, home improvement, hobby gear, or technology purchases — use only when no narrower kind fits.
+  - scan_barcode kind="vehicle": badges about driving, road trips, car maintenance, or vehicle ownership (decodes a VIN).
+  - scan_barcode kind="flight": badges about travel, holidays abroad, or attending events in another city (decodes a boarding pass).
+  - Skip all scan_barcode kinds for abstract milestones (activities_added, impact_points_earned, prompts_responded, friends_added).
 
 CONSTRAINTS:
 - Do not fabricate activity_type values or classification labels — pick from the provided allowlists.
@@ -3179,14 +3191,24 @@ function clampMasteryStep(step: AIMasteryStep, ctx: MasteryValidationContext): Q
 		}
 		case 'scan_barcode': {
 			const kindRaw = typeof step.scan_kind === 'string' ? step.scan_kind.trim().toLowerCase() : '';
-			if (kindRaw !== 'food' && kindRaw !== 'music' && kindRaw !== 'book') return null;
-			const kind = kindRaw as 'food' | 'music' | 'book';
+			const allowedKinds: ReadonlySet<BarcodeResolution['kind']> = new Set([
+				'food',
+				'music',
+				'book',
+				'beauty',
+				'pet',
+				'product',
+				'vehicle',
+				'flight'
+			]);
+			if (!allowedKinds.has(kindRaw as BarcodeResolution['kind'])) return null;
+			const kind = kindRaw as BarcodeResolution['kind'];
 
 			const keywordRaw =
 				typeof step.scan_keyword === 'string' ? step.scan_keyword.trim().toLowerCase() : '';
 			const keyword = /^[a-z0-9]{1,30}$/.test(keywordRaw) ? keywordRaw : undefined;
 
-			const parameters: ['food' | 'music' | 'book', string?] = keyword ? [kind, keyword] : [kind];
+			const parameters: [BarcodeResolution['kind'], string?] = keyword ? [kind, keyword] : [kind];
 			return {
 				type: 'scan_barcode',
 				description,
@@ -3235,11 +3257,23 @@ function buildFallbackForMobileOnly(step: QuestStep & { mobile_only: true }): Qu
 	}
 
 	// scan_barcode
-	const [kind, keyword] = step.parameters;
-	const subject = keyword ? `${kind} item related to "${keyword}"` : `${kind} item`;
+	const scanStep = step as QuestStep & { type: 'scan_barcode'; mobile_only: true };
+	const [kind, keyword] = scanStep.parameters;
+	const fallbackSubject: Record<BarcodeResolution['kind'], string> = {
+		food: 'a food item',
+		music: 'a music release (album, EP, or single)',
+		book: 'a book',
+		beauty: 'a beauty or personal-care product',
+		pet: 'a pet food or pet-care product',
+		product: 'a household or hobby product',
+		vehicle: 'a vehicle (car, truck, motorcycle, etc.)',
+		flight: 'a flight or trip you have taken'
+	};
+	const base = fallbackSubject[kind] ?? `${kind} item`;
+	const subject = keyword ? `${base} related to "${keyword}"` : base;
 	return {
 		type: 'describe_text',
-		description: `Describe a ${subject} that's meaningful to you. Cover what it is, where you'd find it, and why it matters in your life.`,
+		description: `Describe ${subject} that's meaningful to you — what it is, the story behind it, and why it matters in your life.`,
 		parameters: [criteria, 0.55, 120],
 		...(reward !== undefined ? { reward } : {})
 	};

@@ -13,6 +13,8 @@ import { isInsideLocation } from '../../util/util';
 import { Bindings } from '../../util/types';
 import { QuestStepResponse } from './tracking';
 
+const USER_AGENT = '@earth-app/cloud v1.0 (support@earth-app.com)';
+
 export const API_DEVICE_METADATA: QuestDeviceMetadata = {
 	make: 'unknown',
 	model: 'API',
@@ -159,107 +161,244 @@ export function normalizeThreshold(
 	};
 }
 
-const LINEAR_RETAIL_BARCODE_FORMATS = new Set<number>([
+// barcodes
+
+const RETAIL_FORMATS = new Set<number>([
 	9, // EAN_13
 	10, // EAN_8
 	14, // UPC_A
 	15 // UPC_E
 ]);
 
-type BarcodeResolution = {
-	kind: 'food' | 'music' | 'book';
+const VIN_FORMATS = new Set<number>([
+	3, // CODE_39
+	6, // DATA_MATRIX
+	11 // PDF_417
+]);
+
+const BOARDING_PASS_FORMATS = new Set<number>([
+	11, // PDF_417
+	1, // AZTEC
+	0, // QR_CODE
+	6 // DATA_MATRIX
+]);
+
+type ResolvedKind = 'food' | 'music' | 'book' | 'beauty' | 'pet' | 'product' | 'vehicle' | 'flight';
+
+export type BarcodeResolution = {
+	kind: ResolvedKind;
 	title: string;
 	metadata: Record<string, unknown>;
 };
 
-async function resolveBarcode(value: string): Promise<BarcodeResolution | null> {
-	const isIsbn = value.startsWith('978') || value.startsWith('979');
+const KIND_PRIORITY: ResolvedKind[] = ['book', 'food', 'music', 'beauty', 'pet', 'product'];
+const KIND_FORMATS: Record<ResolvedKind, Set<number>> = {
+	food: RETAIL_FORMATS,
+	music: RETAIL_FORMATS,
+	book: RETAIL_FORMATS,
+	beauty: RETAIL_FORMATS,
+	pet: RETAIL_FORMATS,
+	product: RETAIL_FORMATS,
+	vehicle: VIN_FORMATS,
+	flight: BOARDING_PASS_FORMATS
+};
 
-	if (isIsbn) {
-		try {
-			const res = await fetch(
-				`https://openlibrary.org/api/books?bibkeys=ISBN:${value}&format=json&jscmd=data`
-			);
-			if (res.ok) {
-				const json = (await res.json()) as Record<string, any>;
-				const book = json[`ISBN:${value}`];
-				if (book?.title) {
-					return {
-						kind: 'book',
-						title: String(book.title),
-						metadata: {
-							authors: Array.isArray(book.authors)
-								? book.authors.map((a: any) => a?.name).filter(Boolean)
-								: [],
-							publishers: Array.isArray(book.publishers)
-								? book.publishers.map((p: any) => p?.name).filter(Boolean)
-								: [],
-							publish_date: book.publish_date,
-							identifiers: book.identifiers,
-							cover: book.cover,
-							url: book.url
-						}
-					};
-				}
-			}
-		} catch {
-			// fall through to other resolvers
-		}
-	}
+const isIsbn = (value: string) => value.startsWith('978') || value.startsWith('979');
 
+const OFF_DATABASES: { kind: ResolvedKind; host: string }[] = [
+	{ kind: 'food', host: 'world.openfoodfacts.org' },
+	{ kind: 'beauty', host: 'world.openbeautyfacts.org' },
+	{ kind: 'pet', host: 'world.openpetfoodfacts.org' },
+	{ kind: 'product', host: 'world.openproductsfacts.org' } // catch-all → ranked last
+];
+
+const OFF_FIELDS = 'product_name,brands,categories,quantity,ingredients_text,nutriments,image_url';
+
+async function resolveOpenFacts(
+	value: string,
+	kind: ResolvedKind,
+	host: string
+): Promise<BarcodeResolution | null> {
 	try {
-		const res = await fetch(`https://world.openfoodfacts.org/api/v0/product/${value}.json`);
-		if (res.ok) {
-			const json = (await res.json()) as { status?: number; product?: any };
-			if (json.status === 1 && json.product?.product_name) {
-				return {
-					kind: 'food',
-					title: String(json.product.product_name),
-					metadata: {
-						brands: json.product.brands,
-						categories: json.product.categories,
-						quantity: json.product.quantity,
-						ingredients_text: json.product.ingredients_text,
-						nutriments: json.product.nutriments,
-						image_url: json.product.image_url
-					}
-				};
+		const res = await fetch(`https://${host}/api/v2/product/${value}.json?fields=${OFF_FIELDS}`, {
+			headers: { 'User-Agent': USER_AGENT }
+		});
+		if (!res.ok) return null;
+		const json = (await res.json()) as { product?: any };
+		const product = json.product;
+		if (!product?.product_name) return null;
+		return {
+			kind,
+			title: String(product.product_name),
+			metadata: {
+				brands: product.brands,
+				categories: product.categories,
+				quantity: product.quantity,
+				ingredients_text: product.ingredients_text,
+				nutriments: product.nutriments,
+				image_url: product.image_url
 			}
-		}
+		};
 	} catch {
-		// fall through
+		return null;
 	}
+}
 
+async function resolveBook(value: string): Promise<BarcodeResolution | null> {
+	try {
+		const res = await fetch(
+			`https://openlibrary.org/api/books?bibkeys=ISBN:${value}&format=json&jscmd=data`
+		);
+		if (!res.ok) return null;
+		const json = (await res.json()) as Record<string, any>;
+		const book = json[`ISBN:${value}`];
+		if (!book?.title) return null;
+		return {
+			kind: 'book',
+			title: String(book.title),
+			metadata: {
+				authors: Array.isArray(book.authors)
+					? book.authors.map((a: any) => a?.name).filter(Boolean)
+					: [],
+				publishers: Array.isArray(book.publishers)
+					? book.publishers.map((p: any) => p?.name).filter(Boolean)
+					: [],
+				publish_date: book.publish_date,
+				identifiers: book.identifiers,
+				cover: book.cover,
+				url: book.url
+			}
+		};
+	} catch {
+		return null;
+	}
+}
+
+async function resolveMusic(value: string): Promise<BarcodeResolution | null> {
 	try {
 		const res = await fetch(
 			`https://musicbrainz.org/ws/2/release?query=barcode:${value}&fmt=json`,
-			{
-				headers: { 'User-Agent': '@earth-app/cloud v1.0 (support@earth-app.com)' }
-			}
+			{ headers: { 'User-Agent': USER_AGENT } }
 		);
-		if (res.ok) {
-			const json = (await res.json()) as { releases?: any[] };
-			const release = json.releases?.[0];
-			if (release?.title) {
-				return {
-					kind: 'music',
-					title: String(release.title),
-					metadata: {
-						artist: release['artist-credit']?.[0]?.name,
-						year: typeof release.date === 'string' ? release.date.slice(0, 4) : undefined,
-						country: release.country,
-						mbid: release.id,
-						label: release['label-info']?.[0]?.label?.name,
-						track_count: release['track-count']
-					}
-				};
+		if (!res.ok) return null;
+		const json = (await res.json()) as { releases?: any[] };
+		const release = json.releases?.[0];
+		if (!release?.title) return null;
+		return {
+			kind: 'music',
+			title: String(release.title),
+			metadata: {
+				artist: release['artist-credit']?.[0]?.name,
+				year: typeof release.date === 'string' ? release.date.slice(0, 4) : undefined,
+				country: release.country,
+				mbid: release.id,
+				label: release['label-info']?.[0]?.label?.name,
+				track_count: release['track-count']
 			}
-		}
+		};
 	} catch {
-		// fall through
+		return null;
+	}
+}
+
+// VIN: 17 chars, excluding I/O/Q. Decoded for free by NHTSA's vPIC
+// (US-market vehicles, model year 1981 and forward).
+const VIN_REGEX = /^[A-HJ-NPR-Z0-9]{17}$/;
+
+async function resolveVehicle(value: string): Promise<BarcodeResolution | null> {
+	const vin = value.toUpperCase();
+	if (!VIN_REGEX.test(vin)) return null;
+	try {
+		const res = await fetch(
+			`https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/${vin}?format=json`
+		);
+		if (!res.ok) return null;
+		const json = (await res.json()) as { Results?: any[] };
+		const r = json.Results?.[0];
+		if (!r) return null;
+		const make = typeof r.Make === 'string' ? r.Make.trim() : '';
+		const model = typeof r.Model === 'string' ? r.Model.trim() : '';
+		const year = typeof r.ModelYear === 'string' ? r.ModelYear.trim() : '';
+		if (!make && !model) return null; // vPIC returns blanks when it can't decode
+		return {
+			kind: 'vehicle',
+			title: [year, make, model].filter(Boolean).join(' '),
+			metadata: {
+				make,
+				model,
+				year,
+				vehicle_type: r.VehicleType,
+				body_class: r.BodyClass,
+				manufacturer: r.Manufacturer,
+				plant_country: r.PlantCountry,
+				fuel_type: r.FuelTypePrimary,
+				doors: r.Doors,
+				vin
+			}
+		};
+	} catch {
+		return null;
+	}
+}
+
+// IATA BCBP (Resolution 792): the payload is fixed-width plaintext, so no API
+// call is needed. We parse leg 1's mandatory fields and deliberately drop the
+// passenger-name field (it's PII).
+const BCBP_MIN_LENGTH = 60;
+
+function parseBoardingPass(value: string): BarcodeResolution | null {
+	if (value.charAt(0) !== 'M') return null; // format code
+	if (!/[1-9]/.test(value.charAt(1))) return null; // number of legs encoded
+	if (value.length < BCBP_MIN_LENGTH) return null;
+
+	const pnr = value.substring(23, 30).trim();
+	const from = value.substring(30, 33).trim().toUpperCase();
+	const to = value.substring(33, 36).trim().toUpperCase();
+	const carrier = value.substring(36, 39).trim().toUpperCase();
+	const flightNumber = value.substring(39, 44).trim().replace(/^0+/, '');
+	const julianDate = value.substring(44, 47).trim();
+	const cabin = value.charAt(47);
+	const seat = value.substring(48, 52).trim().replace(/^0+/, '');
+
+	if (!/^[A-Z]{3}$/.test(from) || !/^[A-Z]{3}$/.test(to)) return null;
+
+	const flight = `${carrier}${flightNumber}`;
+	return {
+		kind: 'flight',
+		title: `${flight} ${from} ${to}`,
+		metadata: {
+			carrier,
+			flight_number: flightNumber,
+			from, // IATA origin — enrich to a city/airport name via a local table
+			to, // IATA destination
+			cabin,
+			seat,
+			pnr,
+			julian_date: julianDate
+			// passenger name intentionally not captured
+		}
+	};
+}
+
+async function resolveBarcode(value: string, format: number): Promise<BarcodeResolution | null> {
+	if (!RETAIL_FORMATS.has(format)) {
+		const boardingPass = parseBoardingPass(value);
+		if (boardingPass) return boardingPass;
+		if (VIN_FORMATS.has(format)) return resolveVehicle(value);
+		return null;
 	}
 
-	return null;
+	const attempts: Promise<BarcodeResolution | null>[] = [];
+	if (isIsbn(value)) attempts.push(resolveBook(value));
+	attempts.push(resolveMusic(value));
+	for (const db of OFF_DATABASES) attempts.push(resolveOpenFacts(value, db.kind, db.host));
+
+	const settled = await Promise.allSettled(attempts);
+	const hits = settled
+		.flatMap((s) => (s.status === 'fulfilled' && s.value ? [s.value] : []))
+		.sort((a, b) => KIND_PRIORITY.indexOf(a.kind) - KIND_PRIORITY.indexOf(b.kind));
+
+	return hits[0] ?? null;
 }
 
 async function validateScanBarcode(
@@ -268,7 +407,7 @@ async function validateScanBarcode(
 ): Promise<{
 	success: boolean;
 	message?: string;
-	kind?: 'food' | 'music' | 'book';
+	kind?: ResolvedKind;
 	title?: string;
 	metadata?: Record<string, unknown>;
 }> {
@@ -284,21 +423,21 @@ async function validateScanBarcode(
 		return { success: false, message: 'Barcode format is required.' };
 	}
 
-	if (!LINEAR_RETAIL_BARCODE_FORMATS.has(response.format)) {
+	const [requiredKind, keyword] = step.parameters as [ResolvedKind, string | undefined];
+
+	// Format gate is now per-kind: a "vehicle" target wants a VIN format, a
+	// "flight" target wants a boarding-pass format, everything else wants retail.
+	const allowedFormats = KIND_FORMATS[requiredKind];
+	if (!allowedFormats || !allowedFormats.has(response.format)) {
 		return {
 			success: false,
-			message: 'Barcode format is not a supported retail format (UPC-A, EAN-13, EAN-8, or UPC-E).'
+			message: `Barcode format ${response.format} is not valid for a ${requiredKind} scan.`
 		};
 	}
 
-	const [requiredKind, keyword] = step.parameters;
-
-	const resolved = await resolveBarcode(value);
+	const resolved = await resolveBarcode(value, response.format);
 	if (!resolved) {
-		return {
-			success: false,
-			message: 'Barcode could not be identified as a product, book, or music release.'
-		};
+		return { success: false, message: 'Barcode could not be identified.' };
 	}
 
 	if (resolved.kind !== requiredKind) {
@@ -373,7 +512,7 @@ export async function validateStep(
 	message?: string;
 	score?: number;
 	prompt?: string;
-	kind?: 'food' | 'music' | 'book';
+	kind?: BarcodeResolution['kind'];
 	title?: string;
 	metadata?: Record<string, unknown>;
 }> {

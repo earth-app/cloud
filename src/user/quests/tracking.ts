@@ -6,7 +6,12 @@ import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util
 import { addImpactPoints } from '../points';
 import { sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
-import { normalizeThreshold, QuestDeviceMetadata, validateStep } from './validation';
+import {
+	BarcodeResolution,
+	normalizeThreshold,
+	QuestDeviceMetadata,
+	validateStep
+} from './validation';
 import { markBadgeMastered, masteryBadgeIdFromQuestId } from '../badges/mastery';
 import { addBadgeProgress } from '../badges';
 
@@ -79,7 +84,7 @@ export type QuestStepProgressEntry = {
 	| { type: 'distance_covered'; distance: number }
 	| {
 			type: 'scan_barcode';
-			kind: 'food' | 'music' | 'book';
+			kind: BarcodeResolution['kind'];
 			title: string;
 			metadata: Record<string, unknown>;
 	  }
@@ -230,7 +235,7 @@ async function toProgressEntry(
 	bindings: Bindings,
 	score?: number,
 	prompt?: string,
-	kind?: 'food' | 'music' | 'book',
+	kind?: BarcodeResolution['kind'],
 	title?: string,
 	metadata?: Record<string, unknown>
 ): Promise<QuestStepProgressEntry> {
