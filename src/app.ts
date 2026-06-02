@@ -2038,7 +2038,7 @@ app.post('/users/quests/progress/:user_id/start', async (c) => {
 		}
 	}
 
-	const activeProgress = await getCurrentQuestProgress(userId, c.env);
+	const activeProgress = await getCurrentQuestProgress(userId, c.env, c.executionCtx);
 	if (activeProgress.questId && !activeProgress.completed && activeProgress.questId !== questId) {
 		const lockResult = await lockActiveMasteryIfApplicable(
 			userId,
@@ -2202,7 +2202,7 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 		} as QuestStepResponse;
 	}
 
-	const activeQuestProgress = await getCurrentQuestProgress(userId, c.env);
+	const activeQuestProgress = await getCurrentQuestProgress(userId, c.env, c.executionCtx);
 	const activeQuest = activeQuestProgress.quest;
 	if (!activeQuest) {
 		return c.text('No active quest found', 404);
@@ -2278,7 +2278,7 @@ app.delete('/users/quests/progress/:user_id/reset', async (c) => {
 
 	try {
 		// If the active quest is a mastery quest, resetting permanently locks it.
-		const activeProgress = await getCurrentQuestProgress(userId, c.env);
+		const activeProgress = await getCurrentQuestProgress(userId, c.env, c.executionCtx);
 		if (activeProgress.questId && !activeProgress.completed) {
 			const lockResult = await lockActiveMasteryIfApplicable(
 				userId,
@@ -2315,7 +2315,7 @@ app.get('/users/quests/progress/:user_id', async (c) => {
 	}
 
 	try {
-		const progress = await getCurrentQuestProgress(userId, c.env);
+		const progress = await getCurrentQuestProgress(userId, c.env, c.executionCtx);
 
 		if (progress.completed) {
 			await maybeArchiveCompletedQuest(userId, c.env, c.executionCtx);
@@ -2357,7 +2357,8 @@ app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
 	try {
 		const { progress, quest, currentStepIndex, completed } = await getCurrentQuestProgress(
 			userId,
-			c.env
+			c.env,
+			c.executionCtx
 		);
 		if (!quest) {
 			return c.text('No active quest found for user', 404);
@@ -2504,7 +2505,7 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 	}
 
 	try {
-		const result = await getCompletedQuestProgress(userId, questId, c.env);
+		const result = await getCompletedQuestProgress(userId, questId, c.env, c.executionCtx);
 		if (!result) {
 			return c.text('Completed quest not found', 404);
 		}
@@ -3070,7 +3071,7 @@ app.post('/events/submit_image', async (c) => {
 
 			return Promise.allSettled([
 				(async () => {
-					const quest = await getCurrentQuestProgress(userId.toString(), c.env);
+					const quest = await getCurrentQuestProgress(userId.toString(), c.env, c.executionCtx);
 					if (!quest) return;
 
 					async function checkStep(

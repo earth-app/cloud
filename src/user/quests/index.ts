@@ -10,6 +10,7 @@ import {
 } from '../badges/mastery';
 import type { QuestClassificationLabel, QuestObjectLabel } from '../../util/ai';
 import { BarcodeResolution } from './validation';
+import { prewarmBuiltInHashes } from './migration';
 
 export type Quest = {
 	id: string;
@@ -1528,6 +1529,10 @@ export const quests = [
 		permissions: ['camera']
 	}
 ] as Quest[];
+
+// snapshot built-in quest step hashes once at module load so the migration check
+// on the hot read path is a free array compare against an in-memory map.
+prewarmBuiltInHashes(quests);
 
 export async function getAllQuests(kv: KVNamespace): Promise<(CustomQuest | Quest)[]> {
 	const quests0 = [...quests];
