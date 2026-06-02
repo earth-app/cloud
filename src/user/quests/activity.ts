@@ -310,6 +310,174 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 				}
 			];
 		}
+		case 'PETS': {
+			return [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a barcode on a pet food or pet-care product you use.',
+					parameters: ['pet'],
+					mobile_only: true,
+					reward: 50
+				},
+				{
+					type: 'take_photo_validation',
+					description: 'Take a photo of a pet you love.',
+					parameters: [`A photo of a pet related to ${activity.name}`, 0.6]
+				},
+				{
+					type: 'activity_read_time',
+					description: `Read about ${activity.name} for at least 10 minutes`,
+					parameters: [{ type: 'activity', ...activity }, 10 * 60]
+				}
+			];
+		}
+		case 'HEALTH': {
+			return [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a barcode on a food or beauty item that supports your routine.',
+					parameters: ['beauty'],
+					mobile_only: true,
+					reward: 50
+				},
+				{
+					type: 'article_read_time',
+					description: 'Read an article about health for at least 10 minutes',
+					parameters: ['HEALTH', 10 * 60]
+				},
+				{
+					type: 'activity_read_time',
+					description: 'Read about this activity for at least 15 minutes',
+					parameters: [{ type: 'activity', ...activity }, 15 * 60],
+					reward: 25
+				}
+			];
+		}
+		case 'FASHION': {
+			return [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a barcode on a beauty or personal-care item in your routine.',
+					parameters: ['beauty'],
+					mobile_only: true,
+					reward: 50
+				},
+				{
+					type: 'take_photo_validation',
+					description: `Take a photo that captures your take on ${activity.name}.`,
+					parameters: [`A photo expressing personal style related to ${activity.name}`, 0.55]
+				},
+				{
+					type: 'describe_text',
+					description: `Describe your feelings about ${activity.name}.`,
+					parameters: [
+						[
+							{
+								id: 'creativity',
+								weight: 0.5,
+								ideal: 'The writing should be creative and expressive in length and depth'
+							},
+							{
+								id: 'depth',
+								weight: 0.3,
+								ideal:
+									'The writing should be deep, meaningful, and effective about why the activity is important to the user'
+							},
+							{
+								id: 'originality',
+								weight: 0.2,
+								ideal:
+									"The writing should be the user's own voice and effectively detail why the activity is special, unique to themselves"
+							}
+						],
+						0.3,
+						350
+					]
+				}
+			];
+		}
+		case 'HOLIDAY': {
+			return [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a boarding pass from a trip you took for this holiday.',
+					parameters: ['flight'],
+					mobile_only: true,
+					reward: 75
+				},
+				{
+					type: 'attend_event',
+					description: `Attend a holiday event for ${activity.name} with at least 10 attendees.`,
+					parameters: [{ type: 'activity_type', value: 'HOLIDAY' }, 10],
+					reward: 50
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe your holiday experience for at least 60s.',
+					parameters: ['Describe your holiday experience.', 0.6, 60],
+					reward: 50
+				}
+			];
+		}
+		case 'TRAVEL': {
+			return [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a boarding pass or VIN tied to a trip you have taken.',
+					parameters: ['flight'],
+					mobile_only: true,
+					reward: 75
+				},
+				{
+					type: 'take_photo_validation',
+					description: `Take a photo from somewhere related to ${activity.name}.`,
+					parameters: [`A photo from a travel moment related to ${activity.name}`, 0.55]
+				},
+				{
+					type: 'activity_read_time',
+					description: 'Read about travel for at least 10 minutes',
+					parameters: [{ type: 'activity_type', value: 'TRAVEL' }, 10 * 60]
+				}
+			];
+		}
+		case 'NATURE': {
+			return [
+				{
+					type: 'distance_covered',
+					description: 'Walk or run for at least 2km.',
+					parameters: [2000],
+					mobile_only: true,
+					reward: 75
+				},
+				{
+					type: 'take_photo_validation',
+					description: 'Take a photo of a natural landmark or scenery.',
+					parameters: ['A photo of a natural landmark or scenery.', 0.55]
+				}
+			];
+		}
+		case 'RELAXATION': {
+			return [
+				{
+					type: 'scan_barcode',
+					description: 'Scan a barcode on a music item that matches your routine.',
+					parameters: ['music'],
+					mobile_only: true,
+					reward: 50
+				},
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt from @cloud about your routine.',
+					parameters: ['routine', 1]
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe your favorite relaxation techniques for at least 75s.',
+					parameters: ['Describe your favorite relaxation techniques.', 0.6, 75],
+					reward: 25
+				}
+			];
+		}
 		default: {
 			return [
 				{
