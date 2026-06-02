@@ -9,6 +9,7 @@ import {
 	MASTERY_QUEST_ID_PREFIX
 } from '../badges/mastery';
 import type { QuestClassificationLabel, QuestObjectLabel } from '../../util/ai';
+import { BarcodeResolution } from './validation';
 
 export type Quest = {
 	id: string;
@@ -105,7 +106,7 @@ export type QuestStep = {
 	  }
 	| {
 			type: 'scan_barcode';
-			parameters: ['food' | 'music' | 'book', string?]; // scan type, keyword (optional)
+			parameters: [BarcodeResolution['kind'], string?]; // scan type, keyword (optional)
 			mobile_only: true;
 	  }
 );
