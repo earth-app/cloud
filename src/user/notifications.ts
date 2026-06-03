@@ -35,6 +35,30 @@ function noStoreJson(body: unknown, status: number = 200) {
 	});
 }
 
+export async function pushLiveMessage(
+	bindings: Bindings,
+	userId: string,
+	type: string,
+	data: unknown
+): Promise<void> {
+	const channel = `users:${userId}`;
+	try {
+		const stub = bindings.NOTIFIER.get(bindings.NOTIFIER.idFromName(channel));
+		await stub.fetch('https://do/push', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ type, data })
+		});
+	} catch (error) {
+		// best-effort: never let a missed live push fail the request
+		console.warn('[pushLiveMessage] failed to deliver to notifier', {
+			channel,
+			type,
+			error: error instanceof Error ? error.message : String(error)
+		});
+	}
+}
+
 export async function sendUserNotification(
 	bindings: Bindings,
 	id: string,
