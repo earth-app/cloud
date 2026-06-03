@@ -31,6 +31,8 @@ export type QuestStep = {
 	// backfilling additional alternatives of the previous step is still allowed during the wait
 	reward?: number; // optional additional impact points on top of overall quest reward
 	mobile_only?: boolean; // whether this step is only available on mobile - meaning that alternatives must be provided
+	// short coaching string shown to first-quest users above the step input
+	tutorial_hint?: string;
 } & (
 	| {
 			type: 'take_photo_location';

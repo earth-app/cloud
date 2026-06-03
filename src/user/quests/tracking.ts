@@ -5,7 +5,7 @@ import type { CustomQuest } from './custom';
 import { ActivityType, Bindings, ExecutionCtxLike } from '../../util/types';
 import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util';
 import { addImpactPoints } from '../points';
-import { sendUserNotification } from '../notifications';
+import { pushLiveMessage, sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
 import {
 	BarcodeResolution,
@@ -1069,6 +1069,16 @@ export async function updateQuestProgress(
 			questIsGreen
 				? addBadgeProgress(userId0, 'quest_steps_completed_green', stepTrackerValue, bindings.KV)
 				: Promise.resolve(),
+			// live-push step + completion state to any open ws sessions to reflect progress
+			pushLiveMessage(bindings, userId0, 'quest_progress', {
+				questId: quest.id,
+				stepIndex: idx,
+				altIndex: isAltStep ? (stepResponse.altIndex ?? 0) : undefined,
+				validated: validation.success,
+				completed,
+				stepReward: submittingStep.reward ?? 0,
+				questReward: completed ? quest.reward : 0
+			}),
 			// award step reward and/or quest completion points, then notify
 			(async () => {
 				if (submittingStep.reward) {
