@@ -24,6 +24,9 @@ export async function getProfilePhoto(id: bigint, bindings: Bindings): Promise<U
 	const fallback = await resp!.arrayBuffer();
 	return new Uint8Array(fallback);
 }
+// sdxl-lightning occasionally returns truncated/blank output; anything under 1KB is almost certainly corrupt
+const MIN_PROFILE_BYTES = 1024;
+
 export async function newProfilePhoto(
 	data: UserProfilePromptData,
 	id: bigint,
@@ -31,7 +34,19 @@ export async function newProfilePhoto(
 	ctx: ExecutionCtxLike
 ) {
 	const profileImage = `users/${id}/profile.png`;
-	const profile = await generateProfilePhoto(data, bindings.AI);
+
+	let profile: Uint8Array;
+	try {
+		profile = await generateProfilePhoto(data, bindings.AI);
+	} catch (err) {
+		// surface a clean message to mantle2 instead of a raw model error
+		const detail = err instanceof Error ? err.message : String(err);
+		throw new Error(`Profile photo generation failed - ${detail}`);
+	}
+
+	if (!profile || profile.byteLength < MIN_PROFILE_BYTES) {
+		throw new Error('Profile photo generation failed - model returned no data');
+	}
 
 	// put original image and schedule variations to be created in background
 	ctx.waitUntil(
