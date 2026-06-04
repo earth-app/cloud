@@ -448,20 +448,14 @@ app.post('/articles/recommend_similar_articles', async (c) => {
 		limit?: number;
 	}>();
 
-	if (!body.article || !body.pool) {
+	if (!body || !body.article || !Array.isArray(body.pool)) {
 		return c.text('Invalid request body', 400);
 	}
 
-	if (!Array.isArray(body.pool)) {
-		return c.text('Invalid request body format', 400);
-	}
+	body.pool = body.pool.filter((a) => a && a.id && a.title && a.content).slice(0, 20);
 
 	if (body.pool.length === 0) {
-		return c.text('No articles provided', 400);
-	}
-
-	if (body.pool.length > 20) {
-		return c.text('Article pool cannot exceed 20 articles', 400);
+		return c.json([], 200);
 	}
 
 	// default limit is 5, max 10
@@ -975,32 +969,18 @@ app.post('/users/recommend_articles', async (c) => {
 		limit?: number;
 	}>();
 
-	if (!body.pool || !body.activities) {
+	if (!body || !Array.isArray(body.pool) || !Array.isArray(body.activities)) {
 		return c.text('Invalid request body', 400);
 	}
 
-	if (!Array.isArray(body.pool) || !Array.isArray(body.activities)) {
-		return c.text('Invalid request body format', 400);
-	}
+	// be forgiving: clean inputs instead of rejecting so partial/imperfect data still gets a result
+	body.pool = body.pool.filter((a) => a && a.id && a.title && a.content).slice(0, 20);
+	body.activities = body.activities
+		.filter((a) => typeof a === 'string' && a.trim().length > 0)
+		.slice(0, 10);
 
 	if (body.pool.length === 0 || body.activities.length === 0) {
-		return c.text('No articles or activities provided', 400);
-	}
-
-	if (body.pool.length > 20) {
-		return c.text('Article pool cannot exceed 20 articles', 400);
-	}
-
-	if (body.pool.some((a) => !a.id || !a.title || !a.content)) {
-		return c.text('Each article must have an id, title, and content', 400);
-	}
-
-	if (body.activities.length > 10) {
-		return c.text('Activities cannot exceed 10 items', 400);
-	}
-
-	if (body.activities.some((a) => typeof a !== 'string' || a.trim().length === 0)) {
-		return c.text('Each activity must be a non-empty string', 400);
+		return c.json([], 200);
 	}
 
 	// default limit is 10, max 25
@@ -2893,32 +2873,17 @@ app.post('/users/recommend_events', async (c) => {
 		limit?: number;
 	}>();
 
-	if (!body.pool || !body.activities) {
+	if (!body || !Array.isArray(body.pool) || !Array.isArray(body.activities)) {
 		return c.text('Invalid request body', 400);
 	}
 
-	if (!Array.isArray(body.pool) || !Array.isArray(body.activities)) {
-		return c.text('Invalid request body format', 400);
-	}
+	body.pool = body.pool.filter((e) => e && e.id && e.name).slice(0, 20);
+	body.activities = body.activities
+		.filter((a) => typeof a === 'string' && a.trim().length > 0)
+		.slice(0, 10);
 
 	if (body.pool.length === 0 || body.activities.length === 0) {
-		return c.text('No events or activities provided', 400);
-	}
-
-	if (body.pool.length > 20) {
-		return c.text('Event pool cannot exceed 20 events', 400);
-	}
-
-	if (body.pool.some((e) => !e.id || !e.name)) {
-		return c.text('Each event in the pool must have an id and name', 400);
-	}
-
-	if (body.activities.length > 10) {
-		return c.text('Activities cannot exceed 10 items', 400);
-	}
-
-	if (body.activities.some((a) => typeof a !== 'string' || a.trim().length === 0)) {
-		return c.text('Activities must be non-empty strings', 400);
+		return c.json([], 200);
 	}
 
 	// default limit is 10, max 25
@@ -2961,20 +2926,14 @@ app.post('/events/recommend_similar_events', async (c) => {
 		limit?: number;
 	}>();
 
-	if (!body.event || !body.pool) {
+	if (!body || !body.event || !Array.isArray(body.pool)) {
 		return c.text('Invalid request body', 400);
 	}
 
-	if (!Array.isArray(body.pool)) {
-		return c.text('Invalid request body format', 400);
-	}
+	body.pool = body.pool.filter((e) => e && e.id && e.name).slice(0, 20);
 
 	if (body.pool.length === 0) {
-		return c.text('No events provided', 400);
-	}
-
-	if (body.pool.length > 20) {
-		return c.text('Event pool cannot exceed 20 events', 400);
+		return c.json([], 200);
 	}
 
 	// default limit is 5, max 10
