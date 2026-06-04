@@ -484,7 +484,12 @@ export async function createArticleQuiz(
 	ai: Ai
 ): Promise<ArticleQuizQuestion[]> {
 	try {
-		const content = article.ocean.content || article.ocean.abstract || '';
+		// user-authored articles have no ocean; fall back to article.content
+		const content = article.ocean?.content || article.ocean?.abstract || article.content || '';
+		if (!content.trim()) {
+			console.warn('createArticleQuiz: no usable content for article, skipping');
+			return [];
+		}
 		const firstPart = content.substring(0, QUIZ_CUTOFF);
 		const lastPart = content.substring(content.length - QUIZ_CUTOFF);
 		const quizResult = (await ai.run(quizModel, {
