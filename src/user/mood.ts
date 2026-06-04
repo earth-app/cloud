@@ -16,7 +16,7 @@ export type MoodSnapshot = {
 const TTL_SECONDS = 60 * 60 * 24 * 30; // 30 day sliding window, more than enough for daily aggregates
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const TOPIC_RE = /^[a-zA-Z0-9-]{1,64}$/;
+const TOPIC_RE = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export function isValidEmoji(value: unknown): value is MoodEmoji {
 	return typeof value === 'string' && (EMOJIS as readonly string[]).includes(value);
