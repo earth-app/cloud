@@ -137,6 +137,14 @@ import {
 	removeFromBlacklist,
 	BlacklistKind
 } from './admin/blacklist';
+import {
+	getMoodSnapshot,
+	recordMood,
+	sanitizeTopic,
+	sanitizeDate,
+	isValidEmoji,
+	EMOJIS
+} from './user/mood';
 import { bumpSignupFunnel, getAnalyticsSnapshot } from './admin/cf-analytics';
 
 const app = new Hono<{ Bindings: Bindings }>();
@@ -3470,6 +3478,49 @@ app.post('/admin/funnel/:field', async (c) => {
 	}
 	const next = await bumpSignupFunnel(c.env, field);
 	return c.json(next, 200);
+});
+
+// MoodSpark - anonymous emoji-vote aggregator. fully anonymous, no user state.
+
+app.get('/mood/:topic/:date', async (c) => {
+	const topic = sanitizeTopic(c.req.param('topic'));
+	const date = sanitizeDate(c.req.param('date'));
+	if (!topic) return c.text('Invalid topic', 400);
+	if (!date) return c.text('Invalid date', 400);
+
+	const snapshot = await getMoodSnapshot(c.env, topic, date);
+	const payload = snapshot ?? {
+		counts: EMOJIS.reduce<Record<string, number>>((acc, e) => {
+			acc[e] = 0;
+			return acc;
+		}, {}),
+		total: 0,
+		updated_at: 0
+	};
+
+	c.header('Cache-Control', 'public, max-age=30');
+	return c.json(payload, 200);
+});
+
+app.post('/mood/:topic/:date', async (c) => {
+	const topic = sanitizeTopic(c.req.param('topic'));
+	const date = sanitizeDate(c.req.param('date'));
+	if (!topic) return c.text('Invalid topic', 400);
+	if (!date) return c.text('Invalid date', 400);
+
+	let body: { emoji?: unknown };
+	try {
+		body = await c.req.json<{ emoji?: unknown }>();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!isValidEmoji(body.emoji)) {
+		return c.text('Invalid emoji', 400);
+	}
+
+	const snapshot = await recordMood(c.env, topic, date, body.emoji);
+	return c.json(snapshot, 200);
 });
 
 export default app;
