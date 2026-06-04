@@ -130,7 +130,6 @@ import {
 	setPersona,
 	resetOnboarding
 } from './user/onboarding';
-import { clearLastAuth, getLastAuth, setLastAuth } from './user/reauth';
 import {
 	addToBlacklist,
 	isBlacklisted,
@@ -3392,38 +3391,6 @@ app.delete('/users/onboarding/:id', async (c) => {
 	const id = c.req.param('id');
 	if (!id) return c.text('Missing user id', 400);
 	await resetOnboarding(c.env, id);
-	return c.body(null, 204);
-});
-
-// Reauth (short-lived "recently authenticated" window)
-
-app.get('/auth/reauth/:id', async (c) => {
-	const id = c.req.param('id');
-	if (!id) return c.text('Missing user id', 400);
-	const record = await getLastAuth(c.env, id);
-	// reauth state must never be cached - freshness matters for the deletion window
-	c.header('Cache-Control', 'no-store');
-	return c.json({ at: record?.at ?? null }, 200);
-});
-
-app.post('/auth/reauth/:id', async (c) => {
-	const id = c.req.param('id');
-	if (!id) return c.text('Missing user id', 400);
-	let body: { at?: number } = {};
-	try {
-		body = await c.req.json();
-	} catch {
-		return c.text('Invalid JSON', 400);
-	}
-	const at = typeof body.at === 'number' && Number.isFinite(body.at) ? body.at : Date.now();
-	await setLastAuth(c.env, id, at);
-	return c.json({ at }, 200);
-});
-
-app.delete('/auth/reauth/:id', async (c) => {
-	const id = c.req.param('id');
-	if (!id) return c.text('Missing user id', 400);
-	await clearLastAuth(c.env, id);
 	return c.body(null, 204);
 });
 

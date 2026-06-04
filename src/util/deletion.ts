@@ -139,7 +139,6 @@ export async function deleteUserDataVariant(
 		env.KV.delete(`journey:activities:${userId}`),
 		env.KV.delete(`user:impact_points:${userId}`),
 		env.KV.delete(`user:onboarding:${userId}`),
-		env.KV.delete(`auth:last_auth:${userId}`),
 		deleteQuestHistoryDataForUser(userId, env),
 		clearCachePrefix(`user:profile_photo:${userId}:`, env.CACHE),
 		clearCachePrefix(`user:${userId}:submissions`, env.CACHE),
