@@ -109,7 +109,8 @@ describe('newProfilePhoto', () => {
 				run: async () =>
 					new ReadableStream<Uint8Array>({
 						start(controller) {
-							controller.enqueue(new Uint8Array([7, 8]));
+							// must clear MIN_PROFILE_BYTES (1024); sdxl output under 1KB is treated as corrupt
+							controller.enqueue(new Uint8Array(2048).fill(7));
 							controller.close();
 						}
 					})
@@ -132,7 +133,8 @@ describe('newProfilePhoto', () => {
 			ctx as any
 		);
 
-		expect(Array.from(profile)).toEqual([7, 8]);
+		expect(profile.length).toBe(2048);
+		expect(profile.every((b) => b === 7)).toBe(true);
 		await Promise.all(waits);
 
 		expect(await bindings.R2.get('users/11/profile.png')).not.toBeNull();

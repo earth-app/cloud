@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../src/user/notifications', () => ({
-	sendUserNotification: vi.fn(async () => undefined)
+	sendUserNotification: vi.fn(async () => undefined),
+	pushLiveMessage: vi.fn(async () => undefined)
 }));
 
 import {

@@ -310,19 +310,23 @@ describe('POST /articles/recommend_similar_articles', () => {
 		expect(response.status).toBe(400);
 	});
 
-	it('validates pool shape and size constraints', async () => {
+	it('validates pool shape and clamps size constraints', async () => {
+		// a non-array pool is structurally malformed and rejected
 		const invalidFormat = await callApp('/articles/recommend_similar_articles', {
 			method: 'POST',
 			body: JSON.stringify({ article: sampleArticle, pool: {} })
 		});
 		expect(invalidFormat.status).toBe(400);
 
+		// an empty pool is forgiven and returns an empty recommendation set
 		const emptyPool = await callApp('/articles/recommend_similar_articles', {
 			method: 'POST',
 			body: JSON.stringify({ article: sampleArticle, pool: [] })
 		});
-		expect(emptyPool.status).toBe(400);
+		expect(emptyPool.status).toBe(200);
+		expect(await emptyPool.json()).toEqual([]);
 
+		// an oversized pool is clamped to 20 rather than rejected
 		const oversizedPool = await callApp('/articles/recommend_similar_articles', {
 			method: 'POST',
 			body: JSON.stringify({
@@ -330,7 +334,7 @@ describe('POST /articles/recommend_similar_articles', () => {
 				pool: Array.from({ length: 21 }, (_, i) => ({ ...sampleArticle, id: String(i + 1) }))
 			})
 		});
-		expect(oversizedPool.status).toBe(400);
+		expect(oversizedPool.status).toBe(200);
 	});
 
 	it('returns recommendations for valid article pools', async () => {
@@ -731,7 +735,8 @@ describe('PUT /users/profile_photo/:id', () => {
 					async () =>
 						new ReadableStream<Uint8Array>({
 							start(controller) {
-								controller.enqueue(new Uint8Array([7, 8, 9]));
+								// must clear MIN_PROFILE_BYTES (1024); sdxl output under 1KB is treated as corrupt
+								controller.enqueue(new Uint8Array(2048).fill(7));
 								controller.close();
 							}
 						})
@@ -773,7 +778,8 @@ describe('GET /users/profile_photo/:id', () => {
 					async () =>
 						new ReadableStream<Uint8Array>({
 							start(controller) {
-								controller.enqueue(new Uint8Array([7, 8, 9]));
+								// must clear MIN_PROFILE_BYTES (1024); sdxl output under 1KB is treated as corrupt
+								controller.enqueue(new Uint8Array(2048).fill(7));
 								controller.close();
 							}
 						})
@@ -814,24 +820,39 @@ describe('POST /users/recommend_articles', () => {
 		expect(json[0]?.id).toBe(sampleArticle.id);
 	});
 
-	it('rejects malformed and out-of-range request payloads', async () => {
-		const invalidPayloads = [
+	it('rejects structurally malformed request payloads', async () => {
+		// pool/activities must be arrays; missing or wrong-typed fields are rejected
+		const malformedPayloads = [
 			{ activities: ['nature'] },
-			{ pool: [], activities: ['nature'] },
 			{ pool: [sampleArticle] },
-			{ pool: [sampleArticle], activities: [] },
-			{ pool: [sampleArticle], activities: Array.from({ length: 11 }, (_, i) => `a-${i}`) },
-			{ pool: [sampleArticle], activities: [''] },
-			{ pool: [sampleArticle], activities: { a: 'b' } },
-			{ pool: [{ id: '' }], activities: ['nature'] }
+			{ pool: [sampleArticle], activities: { a: 'b' } }
 		];
 
-		for (const payload of invalidPayloads) {
+		for (const payload of malformedPayloads) {
 			const response = await callApp('/users/recommend_articles', {
 				method: 'POST',
 				body: JSON.stringify(payload)
 			});
 			expect(response.status).toBe(400);
+		}
+	});
+
+	it('forgives out-of-range and empty payloads by clamping instead of rejecting', async () => {
+		// empty/over-limit inputs are cleaned and return an empty set rather than a 400
+		const forgivablePayloads = [
+			{ pool: [], activities: ['nature'] },
+			{ pool: [sampleArticle], activities: [] },
+			{ pool: [sampleArticle], activities: Array.from({ length: 11 }, (_, i) => `a-${i}`) },
+			{ pool: [sampleArticle], activities: [''] },
+			{ pool: [{ id: '' }], activities: ['nature'] }
+		];
+
+		for (const payload of forgivablePayloads) {
+			const response = await callApp('/users/recommend_articles', {
+				method: 'POST',
+				body: JSON.stringify(payload)
+			});
+			expect(response.status).toBe(200);
 		}
 	});
 });
@@ -2305,24 +2326,39 @@ describe('POST /users/recommend_events', () => {
 		expect(response.status).toBe(200);
 	});
 
-	it('rejects malformed and out-of-range request payloads', async () => {
-		const invalidPayloads = [
+	it('rejects structurally malformed request payloads', async () => {
+		// pool/activities must be arrays; missing or wrong-typed fields are rejected
+		const malformedPayloads = [
 			{ activities: ['nature'] },
-			{ pool: [], activities: ['nature'] },
 			{ pool: [sampleEvent] },
-			{ pool: [sampleEvent], activities: [] },
-			{ pool: [sampleEvent], activities: [''] },
-			{ pool: [sampleEvent], activities: { a: 'b' } },
-			{ pool: [{ id: '' }], activities: ['nature'] },
-			{ pool: Array.from({ length: 21 }, () => sampleEvent), activities: ['nature'] }
+			{ pool: [sampleEvent], activities: { a: 'b' } }
 		];
 
-		for (const payload of invalidPayloads) {
+		for (const payload of malformedPayloads) {
 			const response = await callApp('/users/recommend_events', {
 				method: 'POST',
 				body: JSON.stringify(payload)
 			});
 			expect(response.status).toBe(400);
+		}
+	});
+
+	it('forgives out-of-range and empty payloads by clamping instead of rejecting', async () => {
+		// empty/over-limit inputs are cleaned and return a result rather than a 400
+		const forgivablePayloads = [
+			{ pool: [], activities: ['nature'] },
+			{ pool: [sampleEvent], activities: [] },
+			{ pool: [sampleEvent], activities: [''] },
+			{ pool: [{ id: '' }], activities: ['nature'] },
+			{ pool: Array.from({ length: 21 }, () => sampleEvent), activities: ['nature'] }
+		];
+
+		for (const payload of forgivablePayloads) {
+			const response = await callApp('/users/recommend_events', {
+				method: 'POST',
+				body: JSON.stringify(payload)
+			});
+			expect(response.status).toBe(200);
 		}
 	});
 });
@@ -2336,7 +2372,7 @@ describe('POST /events/recommend_similar_events', () => {
 		expect(response.status).toBe(200);
 	});
 
-	it('rejects oversized pools for similarity recommendations', async () => {
+	it('clamps oversized pools for similarity recommendations instead of rejecting', async () => {
 		const response = await callApp('/events/recommend_similar_events', {
 			method: 'POST',
 			body: JSON.stringify({
@@ -2344,7 +2380,7 @@ describe('POST /events/recommend_similar_events', () => {
 				pool: Array.from({ length: 21 }, () => sampleEvent)
 			})
 		});
-		expect(response.status).toBe(400);
+		expect(response.status).toBe(200);
 	});
 });
 
