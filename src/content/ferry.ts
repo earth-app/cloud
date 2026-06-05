@@ -2,12 +2,55 @@
 
 import { Buffer } from 'node:buffer';
 import { Bindings } from '../util/types';
+import { streamToUint8Array } from '../util/util';
 
 const embedModel = '@cf/baai/bge-m3';
 const imageClassificationModel = '@cf/microsoft/resnet-50';
 const objectDetectionModel = '@cf/facebook/detr-resnet-50';
 const imageCaptionModel = '@cf/llava-hf/llava-1.5-7b-hf';
 const audioTranscriptionModel = '@cf/openai/whisper-large-v3-turbo';
+
+// images larger than this must be downscaled to be passed to workers AI
+const AI_IMAGE_MAX_DIMENSION = 1024;
+const AI_IMAGE_JPEG_QUALITY = 85;
+
+// downscaling threshold for AI scoring; under this size downscaling is not necessary
+const AI_IMAGE_DOWNSCALE_THRESHOLD = AI_IMAGE_MAX_DIMENSION * AI_IMAGE_MAX_DIMENSION * 4; // 4 bytes per pixel for RGBA input
+
+export async function downscaleImageForAI(env: Bindings, image: Uint8Array): Promise<Uint8Array> {
+	if (image.length <= AI_IMAGE_DOWNSCALE_THRESHOLD) return image;
+
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(image);
+			controller.close();
+		}
+	});
+
+	try {
+		const transformed = (
+			await env.IMAGES.input(stream)
+				.transform({
+					width: AI_IMAGE_MAX_DIMENSION,
+					height: AI_IMAGE_MAX_DIMENSION,
+					fit: 'scale-down'
+				})
+				.output({ format: 'image/jpeg', quality: AI_IMAGE_JPEG_QUALITY })
+		).image();
+
+		const downscaled = await streamToUint8Array(transformed);
+		// fall back to the original if the transform produced nothing usable
+		return downscaled.length > 0 ? downscaled : image;
+	} catch (err) {
+		// scoring should not hard-fail on a transform error; the original bytes may already be
+		// small enough, and if not the ai call surfaces its own error
+		console.error('Failed to downscale image for AI scoring; using original bytes', {
+			inputBytes: image.length,
+			err
+		});
+		return image;
+	}
+}
 
 export interface ScoringCriterion {
 	id: string;
@@ -155,9 +198,11 @@ export async function scoreImage(
 	prompt: string,
 	rubric: ScoringCriterion[]
 ): Promise<[string, ScoreResult]> {
+	const scaled = await downscaleImageForAI(env, image);
+
 	// caption, score
 	const caption = await env.AI.run(imageCaptionModel, {
-		image: [...new Uint8Array(image)],
+		image: [...new Uint8Array(scaled)],
 		prompt,
 		// Caption prompts cap output at ~150 words; 2048 was ~10× excess and billed accordingly.
 		max_tokens: 512
@@ -200,8 +245,9 @@ export async function classifyImage(
 	env: Bindings,
 	image: Uint8Array
 ): Promise<{ label: string; confidence: number }[]> {
+	const scaled = await downscaleImageForAI(env, image);
 	const response = (await env.AI.run(imageClassificationModel, {
-		image: [...new Uint8Array(image)]
+		image: [...new Uint8Array(scaled)]
 	})) as AiImageClassificationOutput;
 
 	return (
@@ -220,8 +266,9 @@ export async function detectObjects(
 	env: Bindings,
 	image: Uint8Array
 ): Promise<{ label: string; confidence: number; box: [number, number, number, number] }[]> {
+	const scaled = await downscaleImageForAI(env, image);
 	const response = (await env.AI.run(objectDetectionModel as any, {
-		image: [...new Uint8Array(image)]
+		image: [...new Uint8Array(scaled)]
 	})) as
 		| AiObjectDetectionOutput
 		| {

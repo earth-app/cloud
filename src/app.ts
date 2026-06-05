@@ -2238,11 +2238,11 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 		}
 
 		const isAudio = body.response.type === 'transcribe_audio';
-		const maxBytes = isAudio ? 5 * 1024 * 1024 : 10 * 1024 * 1024;
+		const maxBytes = isAudio ? 5 * 1024 * 1024 : 25 * 1024 * 1024;
 
 		if (parsed.data.length > maxBytes) {
 			return c.text(
-				`${isAudio ? 'Audio' : 'Image'} data exceeds the ${isAudio ? '5 MB' : '10 MB'} size limit`,
+				`${isAudio ? 'Audio' : 'Image'} data exceeds the ${isAudio ? '5 MB' : '25 MB'} size limit`,
 				400
 			);
 		}
@@ -3097,12 +3097,14 @@ app.post('/events/submit_image', async (c) => {
 	}
 
 	const len = binaryString.length;
-	const MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10MB
+	// images are downscaled before ai scoring, so this only guards the upload (keep it generous
+	// for straight-from-camera phone photos)
+	const MAX_IMAGE_SIZE = 25 * 1024 * 1024; // 25MB
 	if (len === 0) {
 		return c.text('Image data is required', 400);
 	}
 	if (len > MAX_IMAGE_SIZE) {
-		return c.text('Image size exceeds 10MB limit', 413);
+		return c.text('Image size exceeds 25MB limit', 413);
 	}
 
 	const imageData = new Uint8Array(len);
