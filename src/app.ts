@@ -512,15 +512,12 @@ app.get('/articles/quiz', async (c) => {
 		return c.text('Quiz not found for the specified article', 404);
 	}
 
-	// Convert correct_answer_index for true/false questions with -1 index
 	const processedQuizData = quizData.map((question) => {
 		if (question.type === 'true_false') {
 			let normalizedIndex = question.correct_answer_index;
 			let normalizedAnswer = question.correct_answer;
 
-			// Convert index if it's -1
 			if (normalizedIndex === -1) {
-				// Use is_true/is_false to determine correct answer
 				if (question.is_true) {
 					normalizedIndex = 0;
 					normalizedAnswer = 'True';
@@ -528,7 +525,6 @@ app.get('/articles/quiz', async (c) => {
 					normalizedIndex = 1;
 					normalizedAnswer = 'False';
 				} else {
-					// Default to false if no indicators
 					normalizedIndex = 1;
 					normalizedAnswer = 'False';
 				}
@@ -540,16 +536,30 @@ app.get('/articles/quiz', async (c) => {
 				correct_answer: normalizedAnswer || 'False',
 				correct_answer_index: normalizedIndex
 			};
-		} else if (question.type === 'multiple_choice') {
-			// derive correct_answer from options if not provided
+		}
+
+		if (question.type === 'multiple_choice') {
 			const normalizedAnswer =
 				question.correct_answer || question.options[question.correct_answer_index];
 
-			return {
-				...question,
-				correct_answer: normalizedAnswer
-			};
+			return { ...question, correct_answer: normalizedAnswer };
 		}
+
+		if (question.type === 'multi_select') {
+			// strip correct_answers/correct_answer_indices so the client can't read the answer key
+			const { correct_answers: _ca, correct_answer_indices: _i, ...rest } = question;
+			void _ca;
+			void _i;
+			return rest;
+		}
+
+		if (question.type === 'order') {
+			// items[] stored on the server is the canonical correct order — shuffle for the wire so
+			// the answer doesn't leak. server validates against the canonical copy on submit.
+			const shuffled = [...question.items].sort(() => Math.random() - 0.5);
+			return { ...question, items: shuffled };
+		}
+
 		return question;
 	});
 
@@ -592,8 +602,14 @@ app.post('/articles/quiz/submit', async (c) => {
 		userId: string;
 		answers: {
 			question: string;
-			text: string;
-			index: number;
+			// single-pick: multiple_choice / true_false
+			text?: string;
+			index?: number;
+			// multi_select
+			texts?: string[];
+			indices?: number[];
+			// order — sequence of item strings the user submitted
+			ordered?: string[];
 		}[];
 	}>();
 	if (!body.articleId || !body.userId || !body.answers) {
@@ -614,35 +630,76 @@ app.post('/articles/quiz/submit', async (c) => {
 		return c.text('Quiz not found for the specified article', 404);
 	}
 
+	const arraysEqual = (a: readonly string[], b: readonly string[]): boolean =>
+		a.length === b.length && a.every((v, i) => v === b[i]);
+	const setsEqual = (a: readonly number[], b: readonly number[]): boolean => {
+		if (a.length !== b.length) return false;
+		const sa = [...a].sort((x, y) => x - y);
+		const sb = [...b].sort((x, y) => x - y);
+		return sa.every((v, i) => v === sb[i]);
+	};
+
 	let score = 0;
-	const results = [];
+	const results: any[] = [];
 	for (const question of quizData) {
 		const userAnswer = body.answers.find((a) => a.question === question.question);
-
 		let correct = false;
+
+		if (question.type === 'multi_select') {
+			const correctIdx = Array.isArray(question.correct_answer_indices)
+				? question.correct_answer_indices
+				: [];
+			const userIdx = Array.isArray(userAnswer?.indices) ? userAnswer!.indices! : [];
+			correct = correctIdx.length > 0 && setsEqual(correctIdx, userIdx);
+			if (correct) score++;
+
+			results.push({
+				question: question.question,
+				type: 'multi_select',
+				options: question.options,
+				correct_answers:
+					question.correct_answers ?? correctIdx.map((i) => question.options[i] ?? ''),
+				correct_answer_indices: correctIdx,
+				user_answers: userAnswer?.texts ?? [],
+				user_answer_indices: userIdx,
+				correct
+			});
+			continue;
+		}
+
+		if (question.type === 'order') {
+			const correctOrder = Array.isArray(question.items) ? question.items : [];
+			const userOrder = Array.isArray(userAnswer?.ordered) ? userAnswer!.ordered! : [];
+			correct = correctOrder.length > 0 && arraysEqual(correctOrder, userOrder);
+			if (correct) score++;
+
+			results.push({
+				question: question.question,
+				type: 'order',
+				correct_order: correctOrder,
+				user_order: userOrder,
+				correct
+			});
+			continue;
+		}
+
+		// existing single-pick path: multiple_choice + true_false
 		let actualCorrectIndex = question.correct_answer_index;
 		let actualOptions = question.options;
 
-		// Handle true/false questions
 		if (question.type === 'true_false') {
-			// Always use ['True', 'False'] for true/false questions
 			actualOptions = ['True', 'False'];
-
-			// Convert index if it's -1
 			if (actualCorrectIndex === -1) {
-				// Use is_true/is_false to determine correct answer
 				if (question.is_true) {
 					actualCorrectIndex = 0;
 				} else if (question.is_false) {
 					actualCorrectIndex = 1;
 				} else {
-					// Default to false if no indicators
 					actualCorrectIndex = 1;
 				}
 			}
 		}
 
-		// Standard index-based comparison
 		if (userAnswer && userAnswer.index === actualCorrectIndex) {
 			correct = true;
 			score++;
@@ -650,6 +707,7 @@ app.post('/articles/quiz/submit', async (c) => {
 
 		results.push({
 			question: question.question,
+			type: question.type,
 			options: actualOptions,
 			correct_answer_index: actualCorrectIndex,
 			user_answer_index: userAnswer?.index,

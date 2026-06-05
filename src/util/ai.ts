@@ -2155,12 +2155,20 @@ OUTPUT FORMAT: Return only the quiz questions, answer choices, correct answers, 
 `;
 
 export const articleQuizPrompt = `
-Generate a quiz with brief questions (multiple choice and true/false) based on the article.
+Generate a quiz with brief questions based on the article. Mix question types when the content supports it.
+
+ALLOWED TYPES:
+- "multiple_choice" — 2-4 options, exactly one correct. Set "correct_answer" and "correct_answer_index" (0-based).
+- "multi_select"    — 3-5 options, two or more correct. Set "correct_answers" (string array) and "correct_answer_indices" (number array, 0-based, sorted).
+- "true_false"      — options must be ["True","False"]. Set "correct_answer" to "True" or "False", "correct_answer_index" to 0 or 1, "is_true"/"is_false" accordingly.
+- "order"           — 3-6 short items the reader must put into the correct sequence. Provide "items" as the CANONICAL correct order (the client will shuffle for display).
 
 REQUIREMENTS:
-- Mix of multiple choice (2-4 options) and true/false
-- Concise (max 100 chars per question, 60 per option)
-- Directly related to article content
+- Concise (max 100 chars per question, 60 per option/item).
+- Directly related to article content; only use "order" when the article actually describes a sequence (steps, timeline, magnitudes, etc.). Skip otherwise.
+- Only use "multi_select" when more than one option is genuinely correct — never invent extra correct answers.
+- Set ONLY the fields appropriate for the chosen type. Leave the others off.
+- Variety is preferred but not required; if the article only supports one or two types, that's fine.
 
 OUTPUT: Return the quiz as JSON.
 `;

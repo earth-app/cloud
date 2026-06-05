@@ -433,12 +433,23 @@ export type ArticleQuizQuestion = {
 			correct_answer_index: number;
 	  }
 	| {
+			type: 'multi_select';
+			options: string[];
+			correct_answers?: string[];
+			correct_answer_indices: number[];
+	  }
+	| {
 			type: 'true_false';
 			options: ('True' | 'False')[] | [];
 			correct_answer?: 'True' | 'False';
 			correct_answer_index: number | -1;
 			is_true: boolean;
 			is_false: boolean;
+	  }
+	| {
+			// items[] is the canonical correct order; the cloud shuffles before serving to clients
+			type: 'order';
+			items: string[];
 	  }
 );
 
@@ -456,7 +467,11 @@ const articleQuizAiSchema = {
 						type: 'string',
 						maxLength: 100
 					},
-					type: { type: 'string', enum: ['multiple_choice', 'true_false'] },
+					type: {
+						type: 'string',
+						enum: ['multiple_choice', 'multi_select', 'true_false', 'order']
+					},
+					// multiple_choice / multi_select / true_false
 					options: {
 						type: 'array',
 						maxItems: 4,
@@ -467,10 +482,21 @@ const articleQuizAiSchema = {
 					},
 					correct_answer: { type: 'string' },
 					correct_answer_index: { type: 'number' },
+					// multi_select
+					correct_answers: { type: 'array', items: { type: 'string' } },
+					correct_answer_indices: { type: 'array', items: { type: 'number' } },
+					// true_false
 					is_true: { type: 'boolean' },
-					is_false: { type: 'boolean' }
+					is_false: { type: 'boolean' },
+					// order
+					items: {
+						type: 'array',
+						minItems: 3,
+						maxItems: 6,
+						items: { type: 'string', maxLength: 60 }
+					}
 				},
-				required: ['question', 'type', 'options', 'correct_answer', 'correct_answer_index']
+				required: ['question', 'type']
 			}
 		}
 	},
