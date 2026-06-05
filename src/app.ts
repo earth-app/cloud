@@ -819,6 +819,56 @@ app.post('/articles/quiz/create_manual', async (c) => {
 		return c.text('Quiz must be a non-empty array of questions', 400);
 	}
 
+	// strict per-type shape validation
+	for (let i = 0; i < body.quiz.length; i++) {
+		const q = body.quiz[i] as ArticleQuizQuestion | undefined;
+		if (!q || typeof q.question !== 'string' || q.question.trim().length === 0) {
+			return c.text(`Question at index ${i} is missing question text`, 400);
+		}
+		const t = (q as any).type;
+		if (t === 'multiple_choice') {
+			const opts = (q as any).options;
+			if (!Array.isArray(opts) || opts.length < 2 || opts.length > 6) {
+				return c.text(`multiple_choice at ${i} needs 2-6 options`, 400);
+			}
+			const idx = (q as any).correct_answer_index;
+			if (typeof idx !== 'number' || idx < 0 || idx >= opts.length) {
+				return c.text(`multiple_choice at ${i} has out-of-range correct_answer_index`, 400);
+			}
+		} else if (t === 'multi_select') {
+			const opts = (q as any).options;
+			if (!Array.isArray(opts) || opts.length < 3 || opts.length > 6) {
+				return c.text(`multi_select at ${i} needs 3-6 options`, 400);
+			}
+			const ci = (q as any).correct_answer_indices;
+			if (!Array.isArray(ci) || ci.length < 1 || ci.length >= opts.length) {
+				return c.text(`multi_select at ${i} needs 1..(options-1) correct_answer_indices`, 400);
+			}
+			for (const v of ci) {
+				if (typeof v !== 'number' || v < 0 || v >= opts.length) {
+					return c.text(`multi_select at ${i} has out-of-range correct_answer_indices`, 400);
+				}
+			}
+		} else if (t === 'true_false') {
+			const idx = (q as any).correct_answer_index;
+			if (typeof idx !== 'number' || (idx !== 0 && idx !== 1 && idx !== -1)) {
+				return c.text(`true_false at ${i} needs correct_answer_index 0/1/-1`, 400);
+			}
+		} else if (t === 'order') {
+			const items = (q as any).items;
+			if (!Array.isArray(items) || items.length < 3 || items.length > 6) {
+				return c.text(`order at ${i} needs 3-6 items`, 400);
+			}
+			for (const item of items) {
+				if (typeof item !== 'string' || item.trim().length === 0) {
+					return c.text(`order at ${i} has empty items`, 400);
+				}
+			}
+		} else {
+			return c.text(`Unknown question type at ${i}: ${t}`, 400);
+		}
+	}
+
 	const key = `article:quiz:${normalizeId(body.articleId)}`;
 	await c.env.KV.put(key, JSON.stringify(body.quiz)); // no expiration, quiz is persistent
 
