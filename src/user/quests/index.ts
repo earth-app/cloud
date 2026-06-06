@@ -126,8 +126,6 @@ export const quests = [
 			{
 				type: 'take_photo_classification',
 				description: 'Take a photo of broccoli.',
-				// ResNet-50 commonly confuses brassicas (head_cabbage vs cauliflower vs broccoli),
-				// so 0.6 keeps the step meaningful but reliably passable on a clear photo.
 				parameters: ['broccoli', 0.6]
 			},
 			{
@@ -529,8 +527,6 @@ export const quests = [
 				{
 					type: 'take_photo_objects',
 					description: 'Take a photo with a snowboard and skis in it.',
-					// Both items in the same frame at 0.7 each is uncommon outside a ski shop;
-					// DETR scores them 0.55-0.70 in mixed scenes.
 					parameters: [
 						['snowboard', 0.5],
 						['skis', 0.5]
@@ -561,7 +557,6 @@ export const quests = [
 				{
 					type: 'take_photo_objects',
 					description: 'Take a photo with a fork, knife, and spoon in it.',
-					// DETR detects place-setting cutlery in the 0.5-0.75 range each; 3× 0.7 is brittle.
 					parameters: [
 						['fork', 0.55],
 						['knife', 0.55],
@@ -945,8 +940,6 @@ export const quests = [
 				{
 					type: 'draw_picture',
 					description: 'Draw a robot.',
-					// LLaVA often captions a hand-drawn robot as "cartoon character" or "android";
-					// 0.8 is unreliable.
 					parameters: ['robot', 0.7]
 				},
 				{
@@ -1339,8 +1332,6 @@ export const quests = [
 				{
 					type: 'take_photo_location',
 					description: 'Take a photo at Yellowstone National Park.',
-					// Yellowstone is ~80 × 60 km; 5 km only covers the Old Faithful basin and
-					// rejects visitors to Mammoth/Lamar/Norris. 30 km includes the major attractions.
 					parameters: [44.428, -110.5885, 30000],
 					delay: 1200,
 					reward: 250

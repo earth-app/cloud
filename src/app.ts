@@ -157,6 +157,18 @@ app.use('*', async (c, next) => {
 	})(c, next);
 });
 
+// emit json for every error path cloud can format
+app.onError((err, c) => {
+	if (err instanceof HTTPException) {
+		const status = err.status;
+		return c.json({ message: err.message || 'Request failed', code: status }, status);
+	}
+
+	console.error('Unhandled error in cloud worker:', err);
+	const message = err instanceof Error && err.message ? err.message : 'Internal Server Error';
+	return c.json({ message, code: 500 }, 500);
+});
+
 // Implementation
 
 // Admin Migration
@@ -2167,17 +2179,37 @@ app.post('/users/quests/progress/:user_id/start', async (c) => {
 
 // update quest progress
 app.patch('/users/quests/progress/:user_id/update', async (c) => {
+	// stopwatch phases — used to emit Server-Timing for slow/flaky submits
+	const requestStart = performance.now();
+	const phases: Array<[string, number]> = [];
+	let phaseStart = requestStart;
+	const markPhase = (label: string) => {
+		const now = performance.now();
+		phases.push([label, now - phaseStart]);
+		phaseStart = now;
+	};
+
+	const writeServerTiming = () => {
+		const entries = phases
+			.map(([label, dur]) => `${label};dur=${dur.toFixed(1)}`)
+			.concat([`total;dur=${(performance.now() - requestStart).toFixed(1)}`]);
+		c.header('Server-Timing', entries.join(', '));
+	};
+
 	const userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
-		return c.text('User ID is required', 400);
+		writeServerTiming();
+		return c.json({ message: 'User ID is required', code: 400 }, 400);
 	}
 
 	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+		writeServerTiming();
+		return c.json({ message: 'User ID must be between 3 and 50 characters', code: 400 }, 400);
 	}
 
 	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+		writeServerTiming();
+		return c.json({ message: 'User ID must be numeric', code: 400 }, 400);
 	}
 
 	let body: {
@@ -2202,16 +2234,21 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 	try {
 		body = await c.req.json<typeof body>();
 	} catch (jsonErr) {
-		return c.text('Request body must be valid JSON', 400);
+		writeServerTiming();
+		return c.json({ message: 'Request body must be valid JSON', code: 400 }, 400);
 	}
 
 	if (!body.device) {
-		return c.text('Device metadata is required', 400);
+		writeServerTiming();
+		return c.json({ message: 'Device metadata is required', code: 400 }, 400);
 	}
 
 	if (!body.response) {
-		return c.text('Step response is required', 400);
+		writeServerTiming();
+		return c.json({ message: 'Step response is required', code: 400 }, 400);
 	}
+
+	markPhase('parse');
 
 	const binaryTypes = [
 		'take_photo_location',
@@ -2229,20 +2266,32 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 
 	if (isBinaryType) {
 		if (!body.response.dataUrl) {
-			return c.text('A base64 data URL is required for this step type', 400);
+			writeServerTiming();
+			return c.json(
+				{ message: 'A base64 data URL is required for this step type', code: 400 },
+				400
+			);
 		}
 
 		const parsed = fromDataURL(body.response.dataUrl);
 		if (!parsed) {
-			return c.text('Invalid data URL format. Expected: data:<mime>;base64,<data>', 400);
+			writeServerTiming();
+			return c.json(
+				{ message: 'Invalid data URL format. Expected: data:<mime>;base64,<data>', code: 400 },
+				400
+			);
 		}
 
 		const isAudio = body.response.type === 'transcribe_audio';
 		const maxBytes = isAudio ? 5 * 1024 * 1024 : 25 * 1024 * 1024;
 
 		if (parsed.data.length > maxBytes) {
-			return c.text(
-				`${isAudio ? 'Audio' : 'Image'} data exceeds the ${isAudio ? '5 MB' : '25 MB'} size limit`,
+			writeServerTiming();
+			return c.json(
+				{
+					message: `${isAudio ? 'Audio' : 'Image'} data exceeds the ${isAudio ? '5 MB' : '25 MB'} size limit`,
+					code: 400
+				},
 				400
 			);
 		}
@@ -2250,7 +2299,14 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 		if (isAudio) {
 			const fmt = detectAudioFormat(parsed.data);
 			if (!fmt) {
-				return c.text('Unsupported audio format. Only MP3, FLAC, AAC, and M4A are accepted.', 415);
+				writeServerTiming();
+				return c.json(
+					{
+						message: 'Unsupported audio format. Only MP3, FLAC, AAC, and M4A are accepted.',
+						code: 415
+					},
+					415
+				);
 			}
 		}
 
@@ -2260,9 +2316,11 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			altIndex: body.response.altIndex,
 			data: parsed.data
 		} as QuestStepResponse;
+		markPhase('decode-upload');
 	} else {
 		if (body.response.type === 'describe_text' && typeof body.response.text !== 'string') {
-			return c.text('Text is required for describe_text steps', 400);
+			writeServerTiming();
+			return c.json({ message: 'Text is required for describe_text steps', code: 400 }, 400);
 		}
 
 		if (body.response.type === 'distance_covered') {
@@ -2271,8 +2329,13 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 				!Number.isFinite(body.response.distance) ||
 				body.response.distance < 0
 			) {
-				return c.text(
-					'A non-negative numeric distance (meters) is required for distance_covered steps',
+				writeServerTiming();
+				return c.json(
+					{
+						message:
+							'A non-negative numeric distance (meters) is required for distance_covered steps',
+						code: 400
+					},
 					400
 				);
 			}
@@ -2280,14 +2343,25 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 
 		if (body.response.type === 'scan_barcode') {
 			if (typeof body.response.data !== 'string' || body.response.data.trim().length === 0) {
-				return c.text('A non-empty scan value is required for scan_barcode steps', 400);
+				writeServerTiming();
+				return c.json(
+					{ message: 'A non-empty scan value is required for scan_barcode steps', code: 400 },
+					400
+				);
 			}
 			if (
 				typeof body.response.format !== 'number' ||
 				!Number.isFinite(body.response.format) ||
 				body.response.format < 0
 			) {
-				return c.text('A numeric Capacitor barcode format is required for scan_barcode steps', 400);
+				writeServerTiming();
+				return c.json(
+					{
+						message: 'A numeric Capacitor barcode format is required for scan_barcode steps',
+						code: 400
+					},
+					400
+				);
 			}
 		}
 
@@ -2308,20 +2382,27 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 
 	const activeQuestProgress = await getCurrentQuestProgress(userId, c.env, c.executionCtx);
 	const activeQuest = activeQuestProgress.quest;
+	markPhase('load-quest');
 	if (!activeQuest) {
-		return c.text('No active quest found', 404);
+		writeServerTiming();
+		return c.json({ message: 'No active quest found', code: 404 }, 404);
 	}
 
 	const rank = normalizeQuestRank(body.rank);
 	if (activeQuest.premium) {
 		if (!rank) {
-			return c.text('Rank is required for premium quests', 400);
+			writeServerTiming();
+			return c.json({ message: 'Rank is required for premium quests', code: 400 }, 400);
 		}
 
 		if (rank === 'free') {
 			await resetQuestProgress(userId, c.env);
-			return c.text(
-				'Premium quests cannot be updated with free rank; progress has been reset',
+			writeServerTiming();
+			return c.json(
+				{
+					message: 'Premium quests cannot be updated with free rank; progress has been reset',
+					code: 403
+				},
 				403
 			);
 		}
@@ -2336,6 +2417,7 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 	);
 	if (!delayCheck.available) {
 		const s = delayCheck.secondsRemaining!;
+		writeServerTiming();
 		return c.json(
 			{
 				message: `Step not yet available. Try again in ${s} second${s === 1 ? '' : 's'}.`,
@@ -2345,6 +2427,7 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			425
 		);
 	}
+	markPhase('delay-check');
 
 	try {
 		const result = await updateQuestProgress(
@@ -2353,16 +2436,19 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 			body.device,
 			c.env,
 			c.executionCtx,
-			rank
+			rank,
+			markPhase
 		);
+		writeServerTiming();
 		return c.json(result, 200);
 	} catch (error) {
+		writeServerTiming();
 		if (error instanceof HTTPException) {
 			return c.json({ message: error.message, code: error.status }, error.status);
 		}
 
 		console.error(`Error updating quest progress:`, error);
-		return c.text('Failed to update quest progress', 500);
+		return c.json({ message: 'Failed to update quest progress', code: 500 }, 500);
 	}
 });
 

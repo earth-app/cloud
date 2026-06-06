@@ -5,7 +5,8 @@ import {
 	detectObjects,
 	scoreAudio,
 	scoreImage,
-	scoreText
+	scoreText,
+	type ScoreResult
 } from '../../content/ferry';
 import ExifReader from 'exifreader';
 import { parseBuffer } from 'music-metadata';
@@ -14,6 +15,36 @@ import { Bindings } from '../../util/types';
 import { QuestStepResponse } from './tracking';
 
 const USER_AGENT = '@earth-app/cloud v1.0 (support@earth-app.com)';
+
+// hard cap so a cold workers-ai start can't stack past mantle2's 10s curl timeout
+const AI_VALIDATION_TIMEOUT_MS = 8000;
+
+class AIValidationTimeoutError extends Error {
+	constructor(public readonly kind: string) {
+		super(`AI validation step "${kind}" timed out after ${AI_VALIDATION_TIMEOUT_MS}ms`);
+		this.name = 'AIValidationTimeoutError';
+	}
+}
+
+// race a workers-ai promise against an 8s AbortController. note: env.AI.run / IMAGES
+// transform do not accept an AbortSignal, so the underlying call may keep running on
+// cloudflare's side — we just stop waiting and let the validator return a retry message
+async function withAITimeout<T>(kind: string, fn: () => Promise<T>): Promise<T> {
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), AI_VALIDATION_TIMEOUT_MS);
+	try {
+		return await new Promise<T>((resolve, reject) => {
+			controller.signal.addEventListener(
+				'abort',
+				() => reject(new AIValidationTimeoutError(kind)),
+				{ once: true }
+			);
+			fn().then(resolve, reject);
+		});
+	} finally {
+		clearTimeout(timer);
+	}
+}
 
 export const API_DEVICE_METADATA: QuestDeviceMetadata = {
 	make: 'unknown',
@@ -794,18 +825,32 @@ async function validateStepAudio(
 		};
 	}
 
-	const [_, score] = await scoreAudio(bindings, audio, prompt, [
-		{
-			id: 'relevance',
-			weight: 0.7,
-			ideal: `The audio clearly discusses and is relevant to: ${prompt}`
-		},
-		{
-			id: 'clarity',
-			weight: 0.3,
-			ideal: 'The audio is clear, intelligible, and demonstrates understanding of the topic'
+	let score: ScoreResult;
+	try {
+		const [, scored] = await withAITimeout('scoreAudio', () =>
+			scoreAudio(bindings, audio, prompt, [
+				{
+					id: 'relevance',
+					weight: 0.7,
+					ideal: `The audio clearly discusses and is relevant to: ${prompt}`
+				},
+				{
+					id: 'clarity',
+					weight: 0.3,
+					ideal: 'The audio is clear, intelligible, and demonstrates understanding of the topic'
+				}
+			])
+		);
+		score = scored;
+	} catch (err) {
+		if (err instanceof AIValidationTimeoutError) {
+			return {
+				success: false,
+				message: 'Audio validation timed out — please retry.'
+			};
 		}
-	]);
+		throw err;
+	}
 
 	if (score.score < normalizedThreshold.value) {
 		return {
@@ -1223,7 +1268,20 @@ async function validateStepPhoto(
 				};
 			}
 
-			const classifications = await classifyImage(bindings, image);
+			let classifications: { label: string; confidence: number }[];
+			try {
+				classifications = await withAITimeout('classifyImage', () =>
+					classifyImage(bindings, image)
+				);
+			} catch (err) {
+				if (err instanceof AIValidationTimeoutError) {
+					return {
+						success: false,
+						message: 'Photo validation timed out — please retry.'
+					};
+				}
+				throw err;
+			}
 			const classification = findBestLabelConfidence(classifications, normalizedLabel);
 
 			if (!classification || classification.confidence < score) {
@@ -1250,7 +1308,18 @@ async function validateStepPhoto(
 			};
 		}
 
-		const detections = await detectObjects(bindings, image);
+		let detections: { label: string; confidence: number; box: [number, number, number, number] }[];
+		try {
+			detections = await withAITimeout('detectObjects', () => detectObjects(bindings, image));
+		} catch (err) {
+			if (err instanceof AIValidationTimeoutError) {
+				return {
+					success: false,
+					message: 'Photo validation timed out — please retry.'
+				};
+			}
+			throw err;
+		}
 		const requiredScores: number[] = [];
 
 		for (const [labelRaw, scoreRaw] of labelsAndScores) {
@@ -1297,7 +1366,21 @@ async function validateStepPhoto(
 		}
 
 		const captionPrompt = `Describe this photo in detail: what is the main subject, what is the setting, and what context is visible? The photo is expected to show: ${prompt}.`;
-		const [caption, score] = await scoreImage(bindings, image, captionPrompt, criteria);
+		let caption: string;
+		let score: ScoreResult;
+		try {
+			[caption, score] = await withAITimeout('scoreImage:caption', () =>
+				scoreImage(bindings, image, captionPrompt, criteria)
+			);
+		} catch (err) {
+			if (err instanceof AIValidationTimeoutError) {
+				return {
+					success: false,
+					message: 'Photo validation timed out — please retry.'
+				};
+			}
+			throw err;
+		}
 		if (score.score < normalizedThreshold.value) {
 			return {
 				success: false,
@@ -1319,13 +1402,27 @@ async function validateStepPhoto(
 		}
 
 		const captionPrompt = `Describe this photo in detail: what is the main subject, what is the setting, and what context is visible? The photo is expected to show: ${prompt}. Describe whether the photo clearly shows the expected subject with good quality and relevance.`;
-		const [caption, score] = await scoreImage(bindings, image, captionPrompt, [
-			{
-				id: 'validation',
-				weight: 1,
-				ideal: `The photo clearly shows ${prompt} with good quality and relevance.`
+		let caption: string;
+		let score: ScoreResult;
+		try {
+			[caption, score] = await withAITimeout('scoreImage:validation', () =>
+				scoreImage(bindings, image, captionPrompt, [
+					{
+						id: 'validation',
+						weight: 1,
+						ideal: `The photo clearly shows ${prompt} with good quality and relevance.`
+					}
+				])
+			);
+		} catch (err) {
+			if (err instanceof AIValidationTimeoutError) {
+				return {
+					success: false,
+					message: 'Photo validation timed out — please retry.'
+				};
 			}
-		]);
+			throw err;
+		}
 
 		if (score.score < normalizedThreshold.value) {
 			return {
@@ -1361,13 +1458,27 @@ async function validateStepPhoto(
 
 		const itemsList = items.join(', ');
 		const captionPrompt = `List the main objects, subjects, and context visible in this photo in detail. The photo is expected to show the following items: ${itemsList}. Describe whether these items are clearly visible.`;
-		const [caption, score] = await scoreImage(bindings, image, captionPrompt, [
-			{
-				id: 'list',
-				weight: 1,
-				ideal: `The photo clearly shows the following items: ${itemsList}.`
+		let caption: string;
+		let score: ScoreResult;
+		try {
+			[caption, score] = await withAITimeout('scoreImage:list', () =>
+				scoreImage(bindings, image, captionPrompt, [
+					{
+						id: 'list',
+						weight: 1,
+						ideal: `The photo clearly shows the following items: ${itemsList}.`
+					}
+				])
+			);
+		} catch (err) {
+			if (err instanceof AIValidationTimeoutError) {
+				return {
+					success: false,
+					message: 'Photo validation timed out — please retry.'
+				};
 			}
-		]);
+			throw err;
+		}
 
 		if (score.score < normalizedThreshold.value) {
 			return {
@@ -1427,18 +1538,32 @@ async function validateDrawing(
 
 	// ask the model to describe what is drawn so we can score accuracy against the prompt
 	const captionPrompt = 'Describe the main object or subject that is drawn in this image.';
-	const [_, score] = await scoreImage(bindings, image, captionPrompt, [
-		{
-			id: 'accuracy',
-			weight: 0.7,
-			ideal: `The image clearly shows a drawing of a ${prompt}`
-		},
-		{
-			id: 'effort',
-			weight: 0.3,
-			ideal: 'The drawing shows recognizable detail and clear intent in depicting the subject'
+	let score: ScoreResult;
+	try {
+		const [, scored] = await withAITimeout('scoreImage:drawing', () =>
+			scoreImage(bindings, image, captionPrompt, [
+				{
+					id: 'accuracy',
+					weight: 0.7,
+					ideal: `The image clearly shows a drawing of a ${prompt}`
+				},
+				{
+					id: 'effort',
+					weight: 0.3,
+					ideal: 'The drawing shows recognizable detail and clear intent in depicting the subject'
+				}
+			])
+		);
+		score = scored;
+	} catch (err) {
+		if (err instanceof AIValidationTimeoutError) {
+			return {
+				success: false,
+				message: 'Drawing validation timed out — please retry.'
+			};
 		}
-	]);
+		throw err;
+	}
 	if (score.score < normalizedThreshold.value) {
 		return {
 			success: false,
@@ -1509,7 +1634,18 @@ async function validateDescribeText(
 		};
 	}
 
-	const score = await scoreText(bindings, normalizedText, criteria);
+	let score: ScoreResult;
+	try {
+		score = await withAITimeout('scoreText', () => scoreText(bindings, normalizedText, criteria));
+	} catch (err) {
+		if (err instanceof AIValidationTimeoutError) {
+			return {
+				success: false,
+				message: 'Text validation timed out — please retry.'
+			};
+		}
+		throw err;
+	}
 	if (score.score < normalizedThreshold.value) {
 		return {
 			success: false,

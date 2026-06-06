@@ -895,13 +895,18 @@ export async function resetQuestProgress(userId: string, bindings: Bindings) {
 	console.log(`User ${userId} reset their active quest progress`);
 }
 
+// phase markers consumed by Server-Timing in the quest-submit handler. opt-in so other
+// call sites (timer.ts, event submissions) don't need to know about timing diagnostics
+export type QuestPhaseRecorder = (phase: string) => void;
+
 export async function updateQuestProgress(
 	userId: string,
 	stepResponse: QuestStepResponse,
 	device: QuestDeviceMetadata,
 	bindings: Bindings,
 	ctx: ExecutionCtxLike,
-	rank?: string | null
+	rank?: string | null,
+	recordPhase?: QuestPhaseRecorder
 ) {
 	const userId0 = normalizeId(userId);
 	const res = await bindings.KV.getWithMetadata<
@@ -999,6 +1004,7 @@ export async function updateQuestProgress(
 
 	// validate step response against step requirements (uses binary data for ai models)
 	const validation = await validateStep(stepForValidation, stepResponse, bindings, device);
+	recordPhase?.('validate');
 	if (!validation.success) {
 		throw new HTTPException(400, { message: `Step validation failed: ${validation.message}` });
 	}
@@ -1017,6 +1023,7 @@ export async function updateQuestProgress(
 		validation.title,
 		validation.metadata
 	);
+	recordPhase?.('upload');
 
 	// update progress array
 	const updatedProgress = [...progress] as (QuestStepProgressEntry | QuestStepProgressEntry[])[];
@@ -1047,6 +1054,7 @@ export async function updateQuestProgress(
 			hashes: persistedHashes
 		} satisfies QuestProgress
 	});
+	recordPhase?.('persist');
 
 	console.log(
 		`User ${userId} submitted step ${idx}${isAltStep ? ` alt ${stepResponse.altIndex}` : ''} for quest "${quest.title}" - validation: ${validation.success}, completed: ${completed}`
