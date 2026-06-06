@@ -1276,7 +1276,7 @@ async function validateStepPhoto(
 			if (!bestDetection || bestDetection.confidence < normalizedThreshold.value) {
 				return {
 					success: false,
-					message: `Photo does not contain the required object "${label}" with confidence ${normalizedThreshold.value}.`
+					message: `Photo does not contain the required object "${label}" with confidence ${normalizedThreshold.value} (${bestDetection?.confidence.toFixed(2) || 'failed to detect'}).`
 				};
 			}
 
