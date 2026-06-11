@@ -7,9 +7,9 @@ import {
 	postEvent,
 	retrieveEvents
 } from './content/boat';
-import { postArticle } from './util/mantle2';
-import { postPrompt } from './util/mantle2';
+import { postArticle, postPrompt } from './util/mantle2';
 import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
+import { retrievePointsLeaderboard, TOP_POINTS_LEADERBOARD_COUNT } from './user/points';
 import { Bindings } from './util/types';
 import { repairDuplicateBadgeProgress } from './user/badges';
 
@@ -81,6 +81,10 @@ export default async function scheduled(
 				console.log(`Cached leaderboard for journey type: ${type}`);
 			})
 		);
+
+		console.log('Running scheduled task: Cache points leaderboard');
+		await retrievePointsLeaderboard(TOP_POINTS_LEADERBOARD_COUNT, env.KV, env.CACHE);
+		console.log('Cached impact points leaderboard');
 
 		console.log('Finished at', new Date().toISOString());
 		return;
