@@ -81,8 +81,17 @@ import {
 	getImpactPoints,
 	addImpactPoints,
 	removeImpactPoints,
-	setImpactPoints
+	setImpactPoints,
+	retrievePointsLeaderboard,
+	retrievePointsLeaderboardRank,
+	TOP_POINTS_LEADERBOARD_COUNT
 } from './user/points';
+import {
+	createOrGetCode,
+	getStats as getReferralStats,
+	recordClick as recordReferralClick,
+	recordConversion
+} from './user/referrals';
 import { scoreImage, ScoreResult, scoreText } from './content/ferry';
 import { sendUserNotification } from './user/notifications';
 import { getAllQuests, getQuest, QuestStep } from './user/quests';
@@ -1896,7 +1905,111 @@ app.get('/users/:id/badges/masteries', async (c) => {
 	}
 });
 
+/// User Referrals
+
+app.get('/users/referral/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id || !/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	try {
+		const code = await createOrGetCode(c.env, id);
+		return c.json({ code }, 200);
+	} catch (err) {
+		console.error(`Error getting referral code for user '${id}':`, err);
+		return c.text('Failed to get referral code', 500);
+	}
+});
+
+app.get('/users/referral/:id/stats', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id || !/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	try {
+		const stats = await getReferralStats(c.env, id);
+		return c.json(stats, 200);
+	} catch (err) {
+		console.error(`Error getting referral stats for user '${id}':`, err);
+		return c.text('Failed to get referral stats', 500);
+	}
+});
+
+app.post('/users/referral/click', async (c) => {
+	const body = await c.req.json<{ code?: string }>().catch(() => ({}) as { code?: string });
+	const code = body.code?.trim();
+	if (!code) return c.json({ ok: false }, 200);
+
+	// best-effort; never block the caller
+	c.executionCtx.waitUntil(recordReferralClick(c.env, code));
+	return c.json({ ok: true }, 200);
+});
+
+app.post('/users/referral/convert', async (c) => {
+	const body = await c.req
+		.json<{ code?: string; user_id?: string }>()
+		.catch(() => ({}) as { code?: string; user_id?: string });
+	const code = body.code?.trim();
+	const userId = body.user_id?.trim();
+
+	// always 200 so a bad code never breaks the caller's signup flow
+	if (!code || !userId || !/^\d+$/.test(userId)) {
+		return c.json({ ok: false, reason: 'invalid_code' }, 200);
+	}
+
+	try {
+		const result = await recordConversion(c.env, code, userId, c.executionCtx);
+		return c.json(result, 200);
+	} catch (err) {
+		console.error(`Error recording referral conversion for user '${userId}':`, err);
+		return c.json({ ok: false }, 200);
+	}
+});
+
 /// User Impact Points
+
+app.get('/users/impact_points/leaderboard', async (c) => {
+	const limit = c.req.query('limit');
+	let limit0 = limit ? parseInt(limit, 10) : TOP_POINTS_LEADERBOARD_COUNT;
+	if (isNaN(limit0) || limit0 <= 0) {
+		limit0 = TOP_POINTS_LEADERBOARD_COUNT;
+	} else if (limit0 > TOP_POINTS_LEADERBOARD_COUNT) {
+		limit0 = TOP_POINTS_LEADERBOARD_COUNT;
+	}
+
+	try {
+		const leaderboard = await retrievePointsLeaderboard(limit0, c.env.KV, c.env.CACHE);
+		return c.json(leaderboard, 200);
+	} catch (err) {
+		console.error('Error retrieving impact points leaderboard:', err);
+		return c.text('Failed to retrieve leaderboard', 500);
+	}
+});
+
+app.get('/users/impact_points/:id/rank', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (!/^\d+$/.test(id)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	if (id.length < 3 || id.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	try {
+		const rank = await retrievePointsLeaderboardRank(id, c.env.KV, c.env.CACHE);
+		return c.json({ rank }, 200);
+	} catch (err) {
+		console.error(`Error retrieving impact points rank for user '${id}':`, err);
+		return c.text('Failed to retrieve leaderboard rank', 500);
+	}
+});
 
 app.get('/users/impact_points/:id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
