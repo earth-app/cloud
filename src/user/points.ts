@@ -1,3 +1,4 @@
+import { clearCache, tryCache } from '../util/cache';
 import { normalizeId } from '../util/util';
 
 export type ImpactPointsChange = {
@@ -117,4 +118,74 @@ export async function setImpactPoints(
 	});
 
 	return [points0, newHistory];
+}
+
+export const POINTS_LEADERBOARD_CACHE_KEY = 'leaderboard:points';
+export const TOP_POINTS_LEADERBOARD_COUNT = 250;
+
+// 0 = unranked/outside top, 1 = first place, etc.
+export async function retrievePointsLeaderboardRank(
+	id: string,
+	kv: KVNamespace,
+	cacheKv: KVNamespace
+): Promise<number> {
+	const normalizedId = normalizeId(id);
+	const result = await kv.getWithMetadata<{ total: number }>(`user:impact_points:${normalizedId}`);
+	const userPoints = result.metadata?.total || 0;
+	if (userPoints <= 0) return 0;
+
+	let leaderboard = await retrievePointsLeaderboard(TOP_POINTS_LEADERBOARD_COUNT, kv, cacheKv);
+	let rank = leaderboard.findIndex((entry) => entry.id === normalizedId);
+	if (rank >= 0) return rank + 1;
+
+	// outside the cached top; if the user out-scores the floor, the cache is stale
+	if (leaderboard.length === TOP_POINTS_LEADERBOARD_COUNT) {
+		const lowestInTop = leaderboard[TOP_POINTS_LEADERBOARD_COUNT - 1].points;
+		if (userPoints >= lowestInTop) {
+			await clearCache(POINTS_LEADERBOARD_CACHE_KEY, cacheKv);
+			leaderboard = await retrievePointsLeaderboard(TOP_POINTS_LEADERBOARD_COUNT, kv, cacheKv);
+			rank = leaderboard.findIndex((entry) => entry.id === normalizedId);
+			if (rank >= 0) return rank + 1;
+		}
+	}
+
+	return 0;
+}
+
+// mirrors retrieveLeaderboard in journies.ts but scans impact-points totals
+export async function retrievePointsLeaderboard(
+	limit: number,
+	kv: KVNamespace,
+	cacheKv: KVNamespace
+): Promise<Array<{ id: string; points: number }>> {
+	return await tryCache(
+		POINTS_LEADERBOARD_CACHE_KEY,
+		cacheKv,
+		async () => {
+			const leaderboard: Array<{ id: string; points: number }> = [];
+			const prefix = 'user:impact_points:';
+
+			let page = await kv.list<{ total: number }>({ prefix, limit: 1000 });
+
+			for (const key of page.keys) {
+				const id = normalizeId(key.name.replace(prefix, ''));
+				const points = key.metadata?.total || 0;
+				if (points > 0) leaderboard.push({ id, points });
+			}
+
+			while (!page.list_complete && page.cursor) {
+				page = await kv.list<{ total: number }>({ prefix, limit: 1000, cursor: page.cursor });
+
+				for (const key of page.keys) {
+					const id = normalizeId(key.name.replace(prefix, ''));
+					const points = key.metadata?.total || 0;
+					if (points > 0) leaderboard.push({ id, points });
+				}
+			}
+
+			leaderboard.sort((a, b) => b.points - a.points);
+			return leaderboard.slice(0, Math.min(limit, TOP_POINTS_LEADERBOARD_COUNT));
+		},
+		14400 // cache for 4 hours
+	);
 }

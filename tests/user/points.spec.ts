@@ -3,6 +3,8 @@ import {
 	addImpactPoints,
 	getImpactPoints,
 	removeImpactPoints,
+	retrievePointsLeaderboard,
+	retrievePointsLeaderboardRank,
 	setImpactPoints
 } from '../../src/user/points';
 import { MockKVNamespace } from '../helpers/mock-kv';
@@ -69,5 +71,53 @@ describe('setImpactPoints', () => {
 		const [points, history] = await setImpactPoints('12', 7, 'admin reset', kv as any);
 		expect(points).toBe(7);
 		expect(history[history.length - 1].difference).toBe(-13);
+	});
+});
+
+async function seed(kv: MockKVNamespace, id: string, total: number) {
+	await kv.put(`user:impact_points:${id}`, JSON.stringify([]), { metadata: { total } });
+}
+
+describe('retrievePointsLeaderboard', () => {
+	let kv: MockKVNamespace;
+	let cache: MockKVNamespace;
+
+	beforeEach(() => {
+		kv = new MockKVNamespace();
+		cache = new MockKVNamespace();
+	});
+
+	it('ranks users by points descending and excludes zero totals', async () => {
+		await seed(kv, '1', 100);
+		await seed(kv, '2', 300);
+		await seed(kv, '3', 0);
+		await seed(kv, '4', 50);
+
+		const board = await retrievePointsLeaderboard(
+			10,
+			kv as unknown as KVNamespace,
+			cache as unknown as KVNamespace
+		);
+		expect(board.map((e) => e.id)).toEqual(['2', '1', '4']);
+		expect(board[0].points).toBe(300);
+	});
+
+	it('serves the cached result on the second call', async () => {
+		await seed(kv, '1', 10);
+		await retrievePointsLeaderboard(10, kv as any, cache as any);
+
+		// mutate KV after caching; a cached read should not reflect it
+		await seed(kv, '2', 9999);
+		const cached = await retrievePointsLeaderboard(10, kv as any, cache as any);
+		expect(cached.map((e) => e.id)).toEqual(['1']);
+	});
+
+	it('returns a 1-based rank, or 0 when unranked', async () => {
+		await seed(kv, '1', 300);
+		await seed(kv, '2', 200);
+		await seed(kv, '3', 100);
+
+		expect(await retrievePointsLeaderboardRank('2', kv as any, cache as any)).toBe(2);
+		expect(await retrievePointsLeaderboardRank('999', kv as any, cache as any)).toBe(0);
 	});
 });
