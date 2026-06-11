@@ -23,11 +23,12 @@ export const MASTERY_EXEMPT_BADGE_IDS: ReadonlySet<string> = new Set([
 // trackers whose badges are counterproductive to gate behind a mastery quest:
 // unbounded counters that mastery itself feeds (impact_points_earned,
 // quest_steps_completed{_green}) or social/profile growth metrics that a per-user
-// quest cannot meaningfully unlock (activities_added, friends_added).
+// quest cannot meaningfully unlock (activities_added, friends_added, referrals_converted).
 export const MASTERY_EXEMPT_TRACKERS: ReadonlySet<BadgeTracker> = new Set<BadgeTracker>([
 	'impact_points_earned',
 	'activities_added',
 	'friends_added',
+	'referrals_converted',
 	'quest_steps_completed',
 	'quest_steps_completed_green'
 ]);

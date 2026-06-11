@@ -23,7 +23,8 @@ export type BadgeTracker =
 	| 'article_quizzes_completed_perfect_score'
 	| 'activity_read_time'
 	| 'quest_steps_completed' // pushed but no badges currently use this; future expansion
-	| 'quest_steps_completed_green'; // pushed but no badges currently use this; future expansion
+	| 'quest_steps_completed_green' // pushed but no badges currently use this; future expansion
+	| 'referrals_converted';
 
 export type Badge = {
 	id: string;
@@ -148,6 +149,30 @@ export const badges = (
 			rarity: 'normal',
 			progress: (...args: any[]) => min(args, 1),
 			tracker_id: 'friends_added'
+		},
+		{
+			id: 'recruiter',
+			description: 'Invite a friend who joins The Earth App',
+			icon: 'mdi:account-arrow-right',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'referrals_converted'
+		},
+		{
+			id: 'super_recruiter',
+			description: 'Invite 5 friends who join The Earth App',
+			icon: 'mdi:account-multiple-check',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 5),
+			tracker_id: 'referrals_converted'
+		},
+		{
+			id: 'master_recruiter',
+			description: 'Invite 25 friends who join The Earth App',
+			icon: 'mdi:crown',
+			rarity: 'green',
+			progress: (...args: any[]) => min(args, 25),
+			tracker_id: 'referrals_converted'
 		},
 		{
 			id: 'super_philosopher',
