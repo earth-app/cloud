@@ -28,6 +28,7 @@ The Cloud service is the Earth App's Cloudflare Workers backend. It is built wit
 - Use `apply_patch` for manual file edits.
 - After edits, validate with the narrowest useful command first, usually a focused test or formatting check.
 - Do not make unrelated cleanup changes while working on a targeted fix.
+- Consolidate a domain's logic (and its tests) into that domain's file rather than splitting it out — e.g. the impact-points leaderboard lives in `src/user/points.ts` / `tests/user/points.spec.ts`, not a separate `leaderboard.ts`. Genuinely distinct domains (quests, badge mastery) keep their own files.
 
 ## Common Commands
 
