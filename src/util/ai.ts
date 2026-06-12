@@ -2053,6 +2053,7 @@ You are an expert science writer specializing in accessible article summaries.
 TASK: Write an engaging summary of the provided scientific article.
 
 REQUIREMENTS:
+- Language: ALWAYS write the summary in English, even when the source article is in another language. Translate the ideas faithfully into clear English; never emit non-English text.
 - Incorporate the provided tags naturally into the summary
 - Length: 250-600 words, ensure cohesive flow and minimum is met
 - Tone: Informative yet accessible to general audiences
@@ -2072,6 +2073,7 @@ Source: ${article.source}
 Related Tags: ${tags.join(', ')}
 
 REQUIREMENTS:
+- ALWAYS write the title in English, regardless of the source article's language
 - Maximum 10 words
 - Engaging and accessible tone
 - Reflect the article's content and the provided tags
@@ -2100,6 +2102,7 @@ Abstract:
 ${article.abstract}
 
 INSTRUCTIONS:
+- ALWAYS write the summary in English, regardless of the source article's language
 - Write an engaging summary that incorporates the provided tags
 - Focus on key findings and their significance
 - Make it accessible to a general audience
@@ -2144,6 +2147,7 @@ You are an expert quiz designer creating engaging, educational assessments.
 TASK: Generate an interactive quiz that tests genuine understanding of the provided article — not just surface-level recall.
 
 PRINCIPLES:
+- Language: ALWAYS write the entire quiz — every question, every option, and every answer — in English, even when the source article is written in another language. Translate the underlying ideas faithfully into clear English; never emit non-English text.
 - Depth: Span cognitive levels — recall, comprehension, application, and analysis. Favor "why", "how", "what would happen if", compare/contrast, and scenario-based questions over simple fact lookups.
 - Interactivity: Use a mix of formats. Prefer multi_select and order questions when the content supports them — they are more engaging than plain multiple choice.
 - Clarity: Clear, self-contained wording. Every question must be answerable from the article alone.
@@ -2163,6 +2167,7 @@ ALLOWED TYPES:
 - "order"           — 3-6 short items the reader sequences correctly. Provide "items" as the CANONICAL correct order (the client shuffles for display). Use when the article describes steps, a process, a timeline, or relative magnitudes.
 
 REQUIREMENTS:
+- Language: write every question, option, and answer in English, regardless of the article's language.
 - Depth: at least half the questions should test application or analysis, not just recall.
 - Interactivity: include at least one "multi_select" or "order" question whenever the article supports it.
 - Concise: max 100 chars per question, 60 per option/item.
