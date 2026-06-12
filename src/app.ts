@@ -92,6 +92,15 @@ import {
 	recordClick as recordReferralClick,
 	recordConversion
 } from './user/referrals';
+import {
+	createChallenge,
+	acceptChallenge,
+	declineChallenge,
+	getActiveChallengeFor,
+	getChallengeFor,
+	getChallenge,
+	listChallengesForUser
+} from './user/challenges';
 import { scoreImage, ScoreResult, scoreText } from './content/ferry';
 import { sendUserNotification } from './user/notifications';
 import { getAllQuests, getQuest, QuestStep } from './user/quests';
@@ -1966,6 +1975,83 @@ app.post('/users/referral/convert', async (c) => {
 		console.error(`Error recording referral conversion for user '${userId}':`, err);
 		return c.json({ ok: false }, 200);
 	}
+});
+
+/// Quest Challenges
+
+app.post('/users/challenge', async (c) => {
+	const body = await c.req
+		.json<{
+			quest_id?: string;
+			quest_title?: string;
+			challenger_id?: string;
+			challenger_name?: string;
+			recipient_id?: string;
+			recipient_name?: string;
+		}>()
+		.catch(() => null);
+	if (!body || !body.quest_id || !body.challenger_id || !body.recipient_id) {
+		return c.text('quest_id, challenger_id and recipient_id are required', 400);
+	}
+
+	try {
+		const challenge = await createChallenge(c.env, {
+			quest_id: body.quest_id,
+			quest_title: body.quest_title || 'a quest',
+			challenger_id: body.challenger_id,
+			challenger_name: body.challenger_name || 'A friend',
+			recipient_id: body.recipient_id,
+			recipient_name: body.recipient_name || 'A friend'
+		});
+		return c.json(challenge, 201);
+	} catch (err) {
+		console.error('Error creating challenge:', err);
+		return c.text('Failed to create challenge', 500);
+	}
+});
+
+// literal routes must precede the /:id matcher
+app.get('/users/challenge/active', async (c) => {
+	const userId = c.req.query('user_id');
+	const questId = c.req.query('quest_id');
+	if (!userId || !questId) return c.text('user_id and quest_id are required', 400);
+	const challenge = await getActiveChallengeFor(c.env, userId, questId);
+	return c.json(challenge, 200);
+});
+
+// the challenge to show in the quest modal (active or pending) for this user+quest
+app.get('/users/challenge/for', async (c) => {
+	const userId = c.req.query('user_id');
+	const questId = c.req.query('quest_id');
+	if (!userId || !questId) return c.text('user_id and quest_id are required', 400);
+	const challenge = await getChallengeFor(c.env, userId, questId);
+	return c.json(challenge, 200);
+});
+
+app.get('/users/challenge/list', async (c) => {
+	const userId = c.req.query('user_id');
+	if (!userId) return c.text('user_id is required', 400);
+	return c.json(await listChallengesForUser(c.env, userId), 200);
+});
+
+app.post('/users/challenge/:id/accept', async (c) => {
+	const body = await c.req.json<{ user_id?: string }>().catch(() => ({}) as { user_id?: string });
+	if (!body.user_id) return c.text('user_id is required', 400);
+	const result = await acceptChallenge(c.env, c.req.param('id'), body.user_id, c.executionCtx);
+	return c.json(result, result.ok ? 200 : result.reason === 'not_found' ? 404 : 409);
+});
+
+app.post('/users/challenge/:id/decline', async (c) => {
+	const body = await c.req.json<{ user_id?: string }>().catch(() => ({}) as { user_id?: string });
+	if (!body.user_id) return c.text('user_id is required', 400);
+	const result = await declineChallenge(c.env, c.req.param('id'), body.user_id, c.executionCtx);
+	return c.json(result, result.ok ? 200 : result.reason === 'not_found' ? 404 : 409);
+});
+
+app.get('/users/challenge/:id', async (c) => {
+	const challenge = await getChallenge(c.env, c.req.param('id'));
+	if (!challenge) return c.text('Challenge not found', 404);
+	return c.json(challenge, 200);
 });
 
 /// User Impact Points

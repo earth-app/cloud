@@ -5,6 +5,7 @@ import type { CustomQuest } from './custom';
 import { ActivityType, Bindings, ExecutionCtxLike } from '../../util/types';
 import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util';
 import { addImpactPoints } from '../points';
+import { notifyChallengeStep } from '../challenges';
 import { pushLiveMessage, sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
 import {
@@ -1087,6 +1088,11 @@ export async function updateQuestProgress(
 				stepReward: submittingStep.reward ?? 0,
 				questReward: completed ? quest.reward : 0
 			}),
+			// nudge a challenge partner when this completion advances the quest
+			advancesStep
+				? notifyChallengeStep(bindings, userId0, quest.id, idx, completed, ctx)
+				: Promise.resolve(),
+
 			// award step reward and/or quest completion points, then notify
 			(async () => {
 				if (submittingStep.reward) {
