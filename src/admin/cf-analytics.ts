@@ -35,9 +35,16 @@ type GqlFetchOptions = {
 	until?: string; // ISO datetime
 };
 
+function isValidDate(d: Date): boolean {
+	return !Number.isNaN(d.getTime());
+}
+
 function defaultRange(since?: string, until?: string): { since: string; until: string } {
-	const now = until ? new Date(until) : new Date();
-	const start = since ? new Date(since) : new Date(now.getTime() - 24 * 60 * 60 * 1000);
+	const untilParsed = until ? new Date(until) : new Date();
+	const now = isValidDate(untilParsed) ? untilParsed : new Date();
+	const dayAgo = () => new Date(now.getTime() - 24 * 60 * 60 * 1000);
+	const sinceParsed = since ? new Date(since) : dayAgo();
+	const start = isValidDate(sinceParsed) ? sinceParsed : dayAgo();
 	return { since: start.toISOString(), until: now.toISOString() };
 }
 
