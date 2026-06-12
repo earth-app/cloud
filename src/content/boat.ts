@@ -453,56 +453,6 @@ export type ArticleQuizQuestion = {
 	  }
 );
 
-const articleQuizAiSchema = {
-	type: 'object',
-	properties: {
-		questions: {
-			type: 'array',
-			minItems: 2,
-			maxItems: 5,
-			items: {
-				type: 'object',
-				properties: {
-					question: {
-						type: 'string',
-						maxLength: 100
-					},
-					type: {
-						type: 'string',
-						enum: ['multiple_choice', 'multi_select', 'true_false', 'order']
-					},
-					// multiple_choice / multi_select / true_false
-					options: {
-						type: 'array',
-						maxItems: 4,
-						items: {
-							type: 'string',
-							maxLength: 60
-						}
-					},
-					correct_answer: { type: 'string' },
-					correct_answer_index: { type: 'number' },
-					// multi_select
-					correct_answers: { type: 'array', items: { type: 'string' } },
-					correct_answer_indices: { type: 'array', items: { type: 'number' } },
-					// true_false
-					is_true: { type: 'boolean' },
-					is_false: { type: 'boolean' },
-					// order
-					items: {
-						type: 'array',
-						minItems: 3,
-						maxItems: 6,
-						items: { type: 'string', maxLength: 60 }
-					}
-				},
-				required: ['question', 'type']
-			}
-		}
-	},
-	required: ['questions']
-};
-
 const QUIZ_CUTOFF = 300;
 
 export async function createArticleQuiz(
@@ -533,24 +483,22 @@ export async function createArticleQuiz(
 					role: 'user',
 					content:
 						prompts.articleQuizPrompt.trim() +
-						'\n\nReturn ONLY a single JSON object matching this JSON schema — no markdown ' +
-						'fences, no commentary:\n' +
-						JSON.stringify(articleQuizAiSchema)
+						'\n\nReturn ONLY a JSON object of the form {"questions": [ ... ]} with 2-5 questions. No markdown, no prose.'
 				}
 			],
 			max_tokens: 2048,
 			temperature: 0.3
-		} as any)) as { response?: string };
+		} as any)) as { response?: unknown };
 
-		const responseText = quizResult?.response?.trim();
-		if (!responseText) {
-			console.error('createArticleQuiz: model returned an empty response', {
+		const parsedResult = coerceQuizResult(quizResult?.response);
+		if (!parsedResult) {
+			console.error('createArticleQuiz: model returned no usable quiz', {
+				responseType: typeof quizResult?.response,
 				resultKeys: quizResult ? Object.keys(quizResult) : null
 			});
 			return [];
 		}
 
-		const parsedResult = parseQuizResponse(responseText);
 		const quizData = (parsedResult.questions || []) as ArticleQuizQuestion[];
 		return quizData;
 	} catch (error) {
@@ -559,19 +507,24 @@ export async function createArticleQuiz(
 	}
 }
 
-// the quiz model returns plain text; usually clean JSON, occasionally fenced or wrapped in
-// a sentence. strip fences first, then fall back to slicing the outermost { ... } object.
-function parseQuizResponse(responseText: string): { questions?: ArticleQuizQuestion[] } {
-	const cleaned = stripMarkdownCodeFence(responseText);
+function coerceQuizResult(response: unknown): { questions?: ArticleQuizQuestion[] } | null {
+	if (response && typeof response === 'object') {
+		return response as { questions?: ArticleQuizQuestion[] };
+	}
+	if (typeof response !== 'string' || !response.trim()) return null;
+
+	const cleaned = stripMarkdownCodeFence(response);
 	try {
 		return JSON.parse(cleaned);
 	} catch {
 		const start = cleaned.indexOf('{');
 		const end = cleaned.lastIndexOf('}');
-		if (start < 0 || end <= start) {
-			throw new Error('quiz response contained no JSON object');
+		if (start < 0 || end <= start) return null;
+		try {
+			return JSON.parse(cleaned.slice(start, end + 1));
+		} catch {
+			return null;
 		}
-		return JSON.parse(cleaned.slice(start, end + 1));
 	}
 }
 
