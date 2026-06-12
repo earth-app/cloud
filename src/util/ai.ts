@@ -2139,38 +2139,38 @@ Focus on articles that share similar themes, topics, or subject matter.
 };
 
 export const articleQuizSystemMessage = `
-You are an expert quiz creator specializing in educational content.
+You are an expert quiz designer creating engaging, educational assessments.
 
-TASK: Generate a quiz based on the provided article.
+TASK: Generate an interactive quiz that tests genuine understanding of the provided article — not just surface-level recall.
 
-REQUIREMENTS:
-- Format: Mix of multiple choice and true/false
-- Difficulty: Varying levels, from basic recall to critical thinking
-- Clarity: Clear, concise wording
-- Relevance: Directly related to article content
-- No personal pronouns or conversational language
-- Provide correct answers and brief explanations for each question
+PRINCIPLES:
+- Depth: Span cognitive levels — recall, comprehension, application, and analysis. Favor "why", "how", "what would happen if", compare/contrast, and scenario-based questions over simple fact lookups.
+- Interactivity: Use a mix of formats. Prefer multi_select and order questions when the content supports them — they are more engaging than plain multiple choice.
+- Clarity: Clear, self-contained wording. Every question must be answerable from the article alone.
+- Fairness: Plausible distractors — wrong options should be tempting and reasonable, never obviously wrong or absurd. Avoid ambiguous or trick phrasing.
+- No personal pronouns or conversational filler.
 
 OUTPUT FORMAT: Respond with ONLY a single valid JSON object — no markdown code fences, no explanations, and no surrounding prose.
 `;
 
 export const articleQuizPrompt = `
-Generate a quiz with brief questions based on the article. Mix question types when the content supports it.
+Generate 4-6 quiz questions based on the article. Mix question types for variety and engagement.
 
 ALLOWED TYPES:
-- "multiple_choice" — 2-4 options, exactly one correct. Set "correct_answer" and "correct_answer_index" (0-based).
-- "multi_select"    — 3-5 options, two or more correct. Set "correct_answers" (string array) and "correct_answer_indices" (number array, 0-based, sorted).
-- "true_false"      — options must be ["True","False"]. Set "correct_answer" to "True" or "False", "correct_answer_index" to 0 or 1, "is_true"/"is_false" accordingly.
-- "order"           — 3-6 short items the reader must put into the correct sequence. Provide "items" as the CANONICAL correct order (the client will shuffle for display).
+- "multiple_choice" — 3-4 options, exactly one correct. Set "correct_answer" and "correct_answer_index" (0-based). Make distractors plausible.
+- "multi_select"    — 3-5 options, two or more correct. Set "correct_answers" (string array) and "correct_answer_indices" (number array, 0-based, sorted). Great for "select all that apply" understanding.
+- "true_false"      — options must be ["True","False"]. Set "correct_answer" to "True" or "False", "correct_answer_index" to 0 or 1, and "is_true"/"is_false" accordingly. Use sparingly, ideally to probe a common misconception.
+- "order"           — 3-6 short items the reader sequences correctly. Provide "items" as the CANONICAL correct order (the client shuffles for display). Use when the article describes steps, a process, a timeline, or relative magnitudes.
 
 REQUIREMENTS:
-- Concise (max 100 chars per question, 60 per option/item).
-- Directly related to article content; only use "order" when the article actually describes a sequence (steps, timeline, magnitudes, etc.). Skip otherwise.
-- Only use "multi_select" when more than one option is genuinely correct — never invent extra correct answers.
+- Depth: at least half the questions should test application or analysis, not just recall.
+- Interactivity: include at least one "multi_select" or "order" question whenever the article supports it.
+- Concise: max 100 chars per question, 60 per option/item.
+- Grounded: directly answerable from the article; never require outside knowledge.
+- Only use "multi_select" when more than one option is genuinely correct — never pad with invented correct answers.
 - Set ONLY the fields appropriate for the chosen type. Leave the others off.
-- Variety is preferred but not required; if the article only supports one or two types, that's fine.
 
-OUTPUT: Return the quiz as JSON.
+OUTPUT: Respond with ONLY a JSON object of the form {"questions": [ ... ]}. No markdown, no prose.
 `;
 
 // Prompts Prompts

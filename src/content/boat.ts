@@ -483,7 +483,7 @@ export async function createArticleQuiz(
 					role: 'user',
 					content:
 						prompts.articleQuizPrompt.trim() +
-						'\n\nReturn ONLY a JSON object of the form {"questions": [ ... ]} with 2-5 questions. No markdown, no prose.'
+						'\n\nReturn ONLY a JSON object of the form {"questions": [ ... ]}. No markdown, no prose.'
 				}
 			],
 			max_tokens: 2048,

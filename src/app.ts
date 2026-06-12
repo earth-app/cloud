@@ -794,9 +794,7 @@ app.post('/articles/quiz/create', async (c) => {
 	}
 
 	const key = `article:quiz:${normalizeId(body.article.id)}`;
-	c.executionCtx.waitUntil(
-		c.env.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 24 * 14 })
-	); // cache for 14 days
+	await c.env.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 24 * 14 }); // cache for 14 days
 
 	// Convert correct_answer_index for true/false questions with -1 index
 	const processedQuiz = quiz.map((question) => {
