@@ -2573,7 +2573,7 @@ describe('POST /articles/quiz/create', () => {
 		expect(json[0]?.correct_answer).toBe('False');
 	});
 
-	it('returns 500 when quiz generation returns no questions', async () => {
+	it('returns 422 when quiz generation returns no questions', async () => {
 		const failedCreate = await callApp(
 			'/articles/quiz/create',
 			{ method: 'POST', body: JSON.stringify({ article: sampleArticle }) },
@@ -2584,7 +2584,7 @@ describe('POST /articles/quiz/create', () => {
 				} as any
 			})
 		);
-		expect(failedCreate.status).toBe(500);
+		expect(failedCreate.status).toBe(422);
 	});
 });
 
