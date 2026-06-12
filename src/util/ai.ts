@@ -2151,7 +2151,7 @@ REQUIREMENTS:
 - No personal pronouns or conversational language
 - Provide correct answers and brief explanations for each question
 
-OUTPUT FORMAT: Return only the quiz questions, answer choices, correct answers, and explanations.
+OUTPUT FORMAT: Respond with ONLY a single valid JSON object — no markdown code fences, no explanations, and no surrounding prose.
 `;
 
 export const articleQuizPrompt = `

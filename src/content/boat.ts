@@ -519,13 +519,6 @@ export async function createArticleQuiz(
 		const firstPart = content.substring(0, QUIZ_CUTOFF);
 		const lastPart = content.substring(content.length - QUIZ_CUTOFF);
 
-		// newer models (llama-4) return the OpenAI chat-completions shape; legacy bindings
-		// return `response`. read both so a runtime shape change doesn't silently yield an
-		// empty quiz (which the create route then surfaces as a 500).
-		type QuizAiResult = {
-			response?: string;
-			choices?: { finish_reason?: string; message?: { content?: string | null } }[];
-		};
 		const quizResult = (await ai.run(quizModel, {
 			messages: [
 				{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
@@ -536,45 +529,49 @@ export async function createArticleQuiz(
 							? firstPart + '... (truncated) ...' + lastPart
 							: content
 				},
-				{ role: 'user', content: prompts.articleQuizPrompt.trim() }
+				{
+					role: 'user',
+					content:
+						prompts.articleQuizPrompt.trim() +
+						'\n\nReturn ONLY a single JSON object matching this JSON schema — no markdown ' +
+						'fences, no commentary:\n' +
+						JSON.stringify(articleQuizAiSchema)
+				}
 			],
 			max_tokens: 2048,
-			temperature: 0.3,
-			// json_schema response_format is honored by the current models; the older
-			// guided_json param is silently ignored by some, leaving free-form prose that
-			// fails to parse. strict:false keeps the permissive schema (validate clamps later).
-			response_format: {
-				type: 'json_schema',
-				json_schema: {
-					name: 'article_quiz',
-					schema: articleQuizAiSchema,
-					strict: false
-				}
-			}
-		} as any)) as QuizAiResult;
+			temperature: 0.3
+		} as any)) as { response?: string };
 
-		const rawText =
-			typeof quizResult?.response === 'string'
-				? quizResult.response
-				: typeof quizResult?.choices?.[0]?.message?.content === 'string'
-					? quizResult.choices[0]!.message!.content!
-					: '';
-
-		if (!rawText.trim()) {
-			// finish_reason='length' + empty content means the token budget was exhausted
+		const responseText = quizResult?.response?.trim();
+		if (!responseText) {
 			console.error('createArticleQuiz: model returned an empty response', {
-				finishReason: quizResult?.choices?.[0]?.finish_reason,
 				resultKeys: quizResult ? Object.keys(quizResult) : null
 			});
 			return [];
 		}
 
-		const parsedResult = JSON.parse(stripMarkdownCodeFence(rawText));
+		const parsedResult = parseQuizResponse(responseText);
 		const quizData = (parsedResult.questions || []) as ArticleQuizQuestion[];
 		return quizData;
 	} catch (error) {
 		console.error('Quiz generation failed, continuing without quiz:', error);
 		return []; // Return empty quiz rather than failing article creation
+	}
+}
+
+// the quiz model returns plain text; usually clean JSON, occasionally fenced or wrapped in
+// a sentence. strip fences first, then fall back to slicing the outermost { ... } object.
+function parseQuizResponse(responseText: string): { questions?: ArticleQuizQuestion[] } {
+	const cleaned = stripMarkdownCodeFence(responseText);
+	try {
+		return JSON.parse(cleaned);
+	} catch {
+		const start = cleaned.indexOf('{');
+		const end = cleaned.lastIndexOf('}');
+		if (start < 0 || end <= start) {
+			throw new Error('quiz response contained no JSON object');
+		}
+		return JSON.parse(cleaned.slice(start, end + 1));
 	}
 }
 
