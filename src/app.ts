@@ -772,9 +772,12 @@ app.post('/articles/quiz/submit', async (c) => {
 });
 
 app.post('/articles/quiz/create', async (c) => {
-	const body = await c.req.json<{
-		article: Article;
-	}>();
+	let body: { article: Article };
+	try {
+		body = await c.req.json<{ article: Article }>();
+	} catch {
+		return c.text('Invalid JSON body', 400);
+	}
 
 	if (!body.article) {
 		return c.text('Article is required', 400);
@@ -782,7 +785,12 @@ app.post('/articles/quiz/create', async (c) => {
 
 	const quiz = await createArticleQuiz(body.article, c.env.AI);
 	if (!quiz || quiz.length === 0) {
-		return c.text('Failed to create quiz for the article', 500);
+		// not a server fault — the model produced no quiz (usually too little usable content).
+		// 422 so the caller can distinguish "couldn't generate" from a crash and message accordingly.
+		return c.text(
+			'Could not generate a quiz from this article. The content may be too short.',
+			422
+		);
 	}
 
 	const key = `article:quiz:${normalizeId(body.article.id)}`;

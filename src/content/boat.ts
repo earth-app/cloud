@@ -518,6 +518,14 @@ export async function createArticleQuiz(
 		}
 		const firstPart = content.substring(0, QUIZ_CUTOFF);
 		const lastPart = content.substring(content.length - QUIZ_CUTOFF);
+
+		// newer models (llama-4) return the OpenAI chat-completions shape; legacy bindings
+		// return `response`. read both so a runtime shape change doesn't silently yield an
+		// empty quiz (which the create route then surfaces as a 500).
+		type QuizAiResult = {
+			response?: string;
+			choices?: { finish_reason?: string; message?: { content?: string | null } }[];
+		};
 		const quizResult = (await ai.run(quizModel, {
 			messages: [
 				{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
@@ -530,13 +538,38 @@ export async function createArticleQuiz(
 				},
 				{ role: 'user', content: prompts.articleQuizPrompt.trim() }
 			],
-			max_tokens: 1280,
+			max_tokens: 2048,
 			temperature: 0.3,
-			guided_json: articleQuizAiSchema
-		} as any)) as { response?: string };
+			// json_schema response_format is honored by the current models; the older
+			// guided_json param is silently ignored by some, leaving free-form prose that
+			// fails to parse. strict:false keeps the permissive schema (validate clamps later).
+			response_format: {
+				type: 'json_schema',
+				json_schema: {
+					name: 'article_quiz',
+					schema: articleQuizAiSchema,
+					strict: false
+				}
+			}
+		} as any)) as QuizAiResult;
 
-		const responseText = stripMarkdownCodeFence(quizResult.response || '{"questions":[]}');
-		const parsedResult = JSON.parse(responseText);
+		const rawText =
+			typeof quizResult?.response === 'string'
+				? quizResult.response
+				: typeof quizResult?.choices?.[0]?.message?.content === 'string'
+					? quizResult.choices[0]!.message!.content!
+					: '';
+
+		if (!rawText.trim()) {
+			// finish_reason='length' + empty content means the token budget was exhausted
+			console.error('createArticleQuiz: model returned an empty response', {
+				finishReason: quizResult?.choices?.[0]?.finish_reason,
+				resultKeys: quizResult ? Object.keys(quizResult) : null
+			});
+			return [];
+		}
+
+		const parsedResult = JSON.parse(stripMarkdownCodeFence(rawText));
 		const quizData = (parsedResult.questions || []) as ArticleQuizQuestion[];
 		return quizData;
 	} catch (error) {

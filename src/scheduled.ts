@@ -55,20 +55,33 @@ export default async function scheduled(
 		for (let i = 0; i < oceans.length; i++) {
 			const ocean = oceans[i];
 			const rankLabel = i === 0 ? 'top-ranked' : 'bottom-ranked';
-			console.log(`Processing ${rankLabel} article: ${ocean.title}`);
+			// per-article guard so one failure (AI hiccup, mantle2 down) doesn't abort the rest
+			// of the batch or the leaderboard caching below.
+			try {
+				console.log(`Processing ${rankLabel} article: ${ocean.title}`);
 
-			const article = await createArticle(ocean, env.AI, tags);
-			console.log('Created article content:', article.content?.slice(0, 100) + '...');
+				const article = await createArticle(ocean, env.AI, tags);
+				console.log('Created article content:', article.content?.slice(0, 100) + '...');
 
-			const quiz = await createArticleQuiz(article, env.AI);
-			console.log('Created article quiz with questions:', quiz);
+				// quiz is best-effort — createArticleQuiz returns [] on failure, and the article
+				// is still posted (without a quiz) rather than dropped.
+				const quiz = await createArticleQuiz(article, env.AI);
+				if (quiz.length === 0) {
+					console.warn(`No quiz generated for "${article.title}"; posting article without one.`);
+				}
 
-			await postArticle(article, quiz.length > 0 ? quiz : null, env);
+				await postArticle(article, quiz.length > 0 ? quiz : null, env);
 
-			console.log(
-				`Created new ${rankLabel} article and quiz: "${article.title}" | `,
-				article.content?.slice(0, 100) + '...'
-			);
+				console.log(
+					`Created new ${rankLabel} article and quiz: "${article.title}" | `,
+					article.content?.slice(0, 100) + '...'
+				);
+			} catch (err) {
+				console.error(`Failed to create/post ${rankLabel} article; continuing`, {
+					title: ocean?.title,
+					err
+				});
+			}
 		}
 
 		console.log('Running scheduled task: Cache leaderboards');
