@@ -2162,7 +2162,7 @@ Generate 4-6 quiz questions based on the article. Mix question types for variety
 
 ALLOWED TYPES:
 - "multiple_choice" — 3-4 options, exactly one correct. Set "correct_answer" and "correct_answer_index" (0-based). Make distractors plausible.
-- "multi_select"    — 3-5 options, two or more correct. Set "correct_answers" (string array) and "correct_answer_indices" (number array, 0-based, sorted). Great for "select all that apply" understanding.
+- "multi_select"    — 3-5 options with AT LEAST TWO correct (and at least one incorrect). Set "correct_answers" (string array) and "correct_answer_indices" (number array, 0-based, sorted). Great for "select all that apply" understanding. NEVER use catch-all options like "All of the above", "None of the above", or "Both of these" — they give the answer away.
 - "true_false"      — options must be ["True","False"]. Set "correct_answer" to "True" or "False", "correct_answer_index" to 0 or 1, and "is_true"/"is_false" accordingly. Use sparingly, ideally to probe a common misconception.
 - "order"           — 3-6 short items the reader sequences correctly. Provide "items" as the CANONICAL correct order (the client shuffles for display). Use when the article describes steps, a process, a timeline, or relative magnitudes.
 
@@ -2172,7 +2172,7 @@ REQUIREMENTS:
 - Interactivity: include at least one "multi_select" or "order" question whenever the article supports it.
 - Concise: max 100 chars per question, 60 per option/item.
 - Grounded: directly answerable from the article; never require outside knowledge.
-- Only use "multi_select" when more than one option is genuinely correct — never pad with invented correct answers.
+- "multi_select" must have at least two genuinely correct options and at least one incorrect one — never pad with invented correct answers, and never include "All of the above"-style catch-alls.
 - Set ONLY the fields appropriate for the chosen type. Leave the others off.
 
 OUTPUT: Respond with ONLY a JSON object of the form {"questions": [ ... ]}. No markdown, no prose.

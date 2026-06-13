@@ -500,11 +500,65 @@ export async function createArticleQuiz(
 		}
 
 		const quizData = (parsedResult.questions || []) as ArticleQuizQuestion[];
-		return quizData;
+		return sanitizeQuizQuestions(quizData);
 	} catch (error) {
 		console.error('Quiz generation failed, continuing without quiz:', error);
 		return []; // Return empty quiz rather than failing article creation
 	}
+}
+
+// "all/none/both of the above"-style options give the answer away — reject them.
+const GIVEAWAY_OPTION =
+	/\b(all|none|both)\s+of\s+(the\s+)?(above|following|these|those|options|choices)\b/i;
+
+function sanitizeQuizQuestions(questions: ArticleQuizQuestion[]): ArticleQuizQuestion[] {
+	const cleaned: ArticleQuizQuestion[] = [];
+
+	for (const q of questions) {
+		if (!q || typeof q !== 'object' || typeof q.question !== 'string') continue;
+		if (q.type !== 'multi_select') {
+			cleaned.push(q);
+			continue;
+		}
+
+		const options = Array.isArray(q.options) ? q.options : [];
+		const correct = new Set(
+			Array.isArray(q.correct_answer_indices) ? q.correct_answer_indices : []
+		);
+
+		// keep non-empty, non-giveaway options and remap old → new indices
+		const keptOptions: string[] = [];
+		const remap = new Map<number, number>();
+		for (let i = 0; i < options.length; i++) {
+			const opt = options[i];
+			if (typeof opt !== 'string' || !opt.trim() || GIVEAWAY_OPTION.test(opt)) continue;
+			remap.set(i, keptOptions.length);
+			keptOptions.push(opt);
+		}
+
+		const newIndices = [...correct]
+			.filter((i) => remap.has(i))
+			.map((i) => remap.get(i)!)
+			.sort((a, b) => a - b);
+
+		// need a genuine multi-answer question: 3+ options, 2+ correct, at least one incorrect
+		if (
+			keptOptions.length < 3 ||
+			newIndices.length < 2 ||
+			newIndices.length >= keptOptions.length
+		) {
+			continue;
+		}
+
+		cleaned.push({
+			...q,
+			options: keptOptions,
+			correct_answer_indices: newIndices,
+			correct_answers: newIndices.map((i) => keptOptions[i])
+		});
+	}
+
+	return cleaned;
 }
 
 function coerceQuizResult(response: unknown): { questions?: ArticleQuizQuestion[] } | null {
