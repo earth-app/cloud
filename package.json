@@ -28,7 +28,7 @@
     "@cloudflare/vitest-pool-workers": "^0.16.10",
     "@vitest/coverage-istanbul": "4.1.7",
     "husky": "^9.1.7",
-    "lint-staged": "^16.4.0",
+    "lint-staged": "^17.0.0",
     "prettier": "^3.8.3",
     "vitest": "^4.1.7",
     "wrangler": "^4.95.0"
