@@ -7,6 +7,9 @@ export type StrikeHistoryEntry = {
 	reason: ReportReason;
 	source: ReportSource;
 	at: number;
+	report_id?: string; // links to the ContentReport that triggered this strike
+	action_notes?: string; // moderator note / ai label summary explaining the removal
+	preview?: string; // short snippet of the removed content, captured at removal time
 };
 
 export type UserStrikes = {

@@ -314,7 +314,15 @@ app.post('/users/:id/strikes', async (c) => {
 		return c.text('User ID is required', 400);
 	}
 
-	let body: { content_type?: string; content_id?: string; reason?: string; source?: string };
+	let body: {
+		content_type?: string;
+		content_id?: string;
+		reason?: string;
+		source?: string;
+		report_id?: string;
+		action_notes?: string;
+		preview?: string;
+	};
 	try {
 		body = await c.req.json();
 	} catch {
@@ -335,7 +343,10 @@ app.post('/users/:id/strikes', async (c) => {
 		content_type: body.content_type,
 		content_id: String(body.content_id),
 		reason: body.reason,
-		source: body.source === 'ai' ? 'ai' : 'user'
+		source: body.source === 'ai' ? 'ai' : 'user',
+		...(body.report_id ? { report_id: String(body.report_id) } : {}),
+		...(body.action_notes ? { action_notes: String(body.action_notes) } : {}),
+		...(body.preview ? { preview: String(body.preview) } : {})
 	});
 
 	return c.json({ strikes, action }, 200);
