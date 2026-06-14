@@ -152,6 +152,7 @@ describe('listReports', () => {
 		const page1 = await listReports(env, 'pending', 2);
 		expect(page1.reports.map((r) => r.content_id)).toEqual(['c-4', 'c-3']);
 		expect(page1.cursor).toBe('2');
+		expect(page1.total).toBe(5);
 
 		const page2 = await listReports(env, 'pending', 2, page1.cursor);
 		expect(page2.reports.map((r) => r.content_id)).toEqual(['c-2', 'c-1']);
@@ -163,9 +164,10 @@ describe('listReports', () => {
 	});
 
 	it('returns an empty list for a status with no reports', async () => {
-		const { reports, cursor } = await listReports(env, 'actioned');
+		const { reports, cursor, total } = await listReports(env, 'actioned');
 		expect(reports).toEqual([]);
 		expect(cursor).toBeUndefined();
+		expect(total).toBe(0);
 	});
 
 	it('skips ids whose item was deleted out from under the index', async () => {

@@ -197,7 +197,7 @@ export async function listReports(
 	status: ReportStatus,
 	limit: number = 50,
 	cursor?: string
-): Promise<{ reports: ContentReport[]; cursor?: string }> {
+): Promise<{ reports: ContentReport[]; total: number; cursor?: string }> {
 	const ids = await readIndex(env, status);
 	// the index is append-order (oldest first), so walk it in reverse to page newest-first
 	const ordered = ids.slice().reverse();
@@ -214,6 +214,7 @@ export async function listReports(
 	const next = start + limit;
 	return {
 		reports,
+		total: ids.length,
 		cursor: next < ids.length ? String(next) : undefined
 	};
 }
