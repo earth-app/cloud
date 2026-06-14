@@ -2741,3 +2741,231 @@ describe('POST /articles/grade', () => {
 		expect(response.status).toBe(200);
 	});
 });
+
+describe('content reports + strikes routes', () => {
+	function reportBody(overrides: Record<string, unknown> = {}) {
+		return JSON.stringify({
+			content_type: 'prompt',
+			content_id: 'c-1',
+			reason: 'spam',
+			reporter_id: '42',
+			...overrides
+		});
+	}
+
+	// the POST /reports handler kicks off background moderation that fetches content from mantle2;
+	// stub fetch so it resolves to empty content and the request stays self-contained
+	function stubModerationFetch() {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{}', { status: 200 }));
+	}
+
+	describe('POST /reports', () => {
+		it('creates a report and returns 201 with deduped flag', async () => {
+			stubModerationFetch();
+			const response = await callApp('/reports', { method: 'POST', body: reportBody() });
+			expect(response.status).toBe(201);
+			const json = (await response.json()) as { report: { status: string }; deduped: boolean };
+			expect(json.deduped).toBe(false);
+			expect(json.report.status).toBe('pending');
+		});
+
+		it('folds a duplicate report on the same content into the existing one', async () => {
+			stubModerationFetch();
+			const bindings = createMockBindings();
+			await callApp('/reports', { method: 'POST', body: reportBody() }, true, bindings);
+			const second = await callApp(
+				'/reports',
+				{ method: 'POST', body: reportBody() },
+				true,
+				bindings
+			);
+			const json = (await second.json()) as { deduped: boolean; report: { report_count: number } };
+			expect(json.deduped).toBe(true);
+			expect(json.report.report_count).toBe(2);
+		});
+
+		it('rejects an invalid content_type', async () => {
+			const response = await callApp('/reports', {
+				method: 'POST',
+				body: reportBody({ content_type: 'comment' })
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('rejects a missing content_id', async () => {
+			const response = await callApp('/reports', {
+				method: 'POST',
+				body: reportBody({ content_id: '' })
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('rejects an invalid reason', async () => {
+			const response = await callApp('/reports', {
+				method: 'POST',
+				body: reportBody({ reason: 'nonsense' })
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('rejects an unparseable body', async () => {
+			const response = await callApp('/reports', { method: 'POST', body: 'not json' });
+			expect(response.status).toBe(400);
+		});
+
+		it('requires authentication', async () => {
+			const response = await callApp('/reports', { method: 'POST', body: reportBody() }, false);
+			expect(response.status).toBe(401);
+		});
+	});
+
+	describe('GET /reports', () => {
+		it('lists pending reports by default', async () => {
+			stubModerationFetch();
+			const bindings = createMockBindings();
+			await callApp('/reports', { method: 'POST', body: reportBody() }, true, bindings);
+
+			const response = await callApp('/reports', {}, true, bindings);
+			expect(response.status).toBe(200);
+			const json = (await response.json()) as { reports: unknown[] };
+			expect(json.reports).toHaveLength(1);
+		});
+
+		it('rejects an invalid status filter', async () => {
+			const response = await callApp('/reports?status=bogus');
+			expect(response.status).toBe(400);
+		});
+	});
+
+	describe('GET /reports/:id', () => {
+		it('returns a stored report', async () => {
+			stubModerationFetch();
+			const bindings = createMockBindings();
+			const created = await callApp(
+				'/reports',
+				{ method: 'POST', body: reportBody() },
+				true,
+				bindings
+			);
+			const { report } = (await created.json()) as { report: { id: string } };
+
+			const response = await callApp(`/reports/${report.id}`, {}, true, bindings);
+			expect(response.status).toBe(200);
+		});
+
+		it('returns 404 for a missing report', async () => {
+			const response = await callApp('/reports/nope');
+			expect(response.status).toBe(404);
+		});
+	});
+
+	describe('PATCH /reports/:id', () => {
+		it('updates a report status', async () => {
+			stubModerationFetch();
+			const bindings = createMockBindings();
+			const created = await callApp(
+				'/reports',
+				{ method: 'POST', body: reportBody() },
+				true,
+				bindings
+			);
+			const { report } = (await created.json()) as { report: { id: string } };
+
+			const response = await callApp(
+				`/reports/${report.id}`,
+				{ method: 'PATCH', body: JSON.stringify({ status: 'dismissed', reviewed_by: 'admin' }) },
+				true,
+				bindings
+			);
+			expect(response.status).toBe(200);
+			const json = (await response.json()) as { status: string; reviewed_by: string };
+			expect(json.status).toBe('dismissed');
+			expect(json.reviewed_by).toBe('admin');
+		});
+
+		it('rejects an invalid status', async () => {
+			const response = await callApp('/reports/x', {
+				method: 'PATCH',
+				body: JSON.stringify({ status: 'bogus' })
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('returns 404 for a missing report', async () => {
+			const response = await callApp('/reports/nope', {
+				method: 'PATCH',
+				body: JSON.stringify({ status: 'dismissed' })
+			});
+			expect(response.status).toBe(404);
+		});
+	});
+
+	describe('DELETE /reports/:id', () => {
+		it('deletes a report and returns 204', async () => {
+			stubModerationFetch();
+			const bindings = createMockBindings();
+			const created = await callApp(
+				'/reports',
+				{ method: 'POST', body: reportBody() },
+				true,
+				bindings
+			);
+			const { report } = (await created.json()) as { report: { id: string } };
+
+			const response = await callApp(`/reports/${report.id}`, { method: 'DELETE' }, true, bindings);
+			expect(response.status).toBe(204);
+		});
+
+		it('returns 404 for a missing report', async () => {
+			const response = await callApp('/reports/nope', { method: 'DELETE' });
+			expect(response.status).toBe(404);
+		});
+	});
+
+	describe('user strikes routes', () => {
+		it('returns a zeroed record for a user with no strikes', async () => {
+			const response = await callApp('/users/42/strikes');
+			expect(response.status).toBe(200);
+			const json = (await response.json()) as { count: number; banned: boolean };
+			expect(json.count).toBe(0);
+			expect(json.banned).toBe(false);
+		});
+
+		it('adds a strike and returns the action', async () => {
+			const response = await callApp('/users/42/strikes', {
+				method: 'POST',
+				body: JSON.stringify({ content_type: 'prompt', content_id: 'c-1', reason: 'spam' })
+			});
+			expect(response.status).toBe(200);
+			const json = (await response.json()) as { strikes: { count: number }; action: string };
+			expect(json.strikes.count).toBe(1);
+			expect(json.action).toBe('none');
+		});
+
+		it('rejects an invalid reason when adding a strike', async () => {
+			const response = await callApp('/users/42/strikes', {
+				method: 'POST',
+				body: JSON.stringify({ content_type: 'prompt', content_id: 'c-1', reason: 'bad' })
+			});
+			expect(response.status).toBe(400);
+		});
+
+		it('resets strikes for a user', async () => {
+			const bindings = createMockBindings();
+			await callApp(
+				'/users/42/strikes',
+				{
+					method: 'POST',
+					body: JSON.stringify({ content_type: 'prompt', content_id: 'c-1', reason: 'spam' })
+				},
+				true,
+				bindings
+			);
+
+			const response = await callApp('/users/42/strikes/reset', { method: 'POST' }, true, bindings);
+			expect(response.status).toBe(200);
+			const json = (await response.json()) as { count: number };
+			expect(json.count).toBe(0);
+		});
+	});
+});

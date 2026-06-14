@@ -297,6 +297,38 @@ describe('scheduled', () => {
 		);
 	});
 
+	it('expires stale pending content reports on the daily cron', async () => {
+		const bindings = createMockBindings();
+		const kv = bindings.KV as any;
+
+		const eightDaysAgo = Date.now() - 8 * 24 * 60 * 60 * 1000;
+		await kv.put('report:index:pending', JSON.stringify(['rid1']));
+		await kv.put(
+			'report:item:rid1',
+			JSON.stringify({
+				id: 'rid1',
+				content_type: 'prompt',
+				content_id: 'c1',
+				reason: 'spam',
+				source: 'user',
+				status: 'pending',
+				report_count: 1,
+				created_at: eightDaysAgo,
+				updated_at: eightDaysAgo
+			})
+		);
+		await kv.put('report:content:prompt:c1', 'rid1');
+
+		await scheduled({ cron: '0 2 * * *' } as ScheduledController, bindings, {
+			waitUntil: () => {}
+		} as any);
+
+		expect((await kv.get('report:item:rid1', 'json')).status).toBe('expired');
+		expect(await kv.get('report:index:pending')).toBeNull();
+		expect(await kv.get('report:content:prompt:c1')).toBeNull();
+		expect(await kv.get('report:index:expired')).toBe(JSON.stringify(['rid1']));
+	});
+
 	it('logs when no cron branch matches', async () => {
 		const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
