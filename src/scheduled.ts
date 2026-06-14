@@ -12,6 +12,7 @@ import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
 import { retrievePointsLeaderboard, TOP_POINTS_LEADERBOARD_COUNT } from './user/points';
 import { Bindings } from './util/types';
 import { repairDuplicateBadgeProgress } from './user/badges';
+import { expireStaleReports } from './content/reports';
 
 export default async function scheduled(
 	controller: ScheduledController,
@@ -136,6 +137,18 @@ export default async function scheduled(
 
 			console.log('Created new event:', `"${name}" | `, description.slice(0, 100) + '...');
 		}
+
+		console.log('Finished at', new Date().toISOString());
+		return;
+	}
+
+	if (cron === '0 2 * * *') {
+		console.log('Running scheduled task: Expire stale content reports');
+		console.log('Started at', new Date().toISOString());
+
+		// pending reports with no admin action for 7 days auto-unflag so content passes as normal
+		const expired = await expireStaleReports(env);
+		console.log(`Expired ${expired} stale content reports`);
 
 		console.log('Finished at', new Date().toISOString());
 		return;

@@ -27,7 +27,8 @@
 		"crons": [
 			"0 * * * *", // Every hour (prompts)
 			"0 */4 * * *", // Every 4 hours (articles x2, leaderboard caching)
-			"0 0 */4 * *" // Every 4 days (events)
+			"0 0 */4 * *", // Every 4 days (events)
+			"0 2 * * *" // Daily (expire stale content reports)
 		]
 	},
 	"limits": {
