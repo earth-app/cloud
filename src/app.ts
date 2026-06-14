@@ -164,6 +164,19 @@ import {
 	EMOJIS
 } from './user/mood';
 import { bumpSignupFunnel, getAnalyticsSnapshot } from './admin/cf-analytics';
+import {
+	createReport,
+	getReport,
+	listReports,
+	patchReportStatus,
+	deleteReport,
+	isReportableContentType,
+	isReportReason,
+	isReportStatus,
+	CreateReportInput
+} from './content/reports';
+import { getStrikes, addStrike, resetStrikes } from './content/moderation/strikes';
+import { moderateReport } from './content/moderation/ai';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -188,6 +201,153 @@ app.onError((err, c) => {
 });
 
 // Implementation
+
+// Content Reports + Moderation Strikes
+// internal endpoints — mantle2 proxies user/admin traffic here; all routes share the admin key
+
+app.post('/reports', async (c) => {
+	let body: CreateReportInput;
+	try {
+		body = await c.req.json<CreateReportInput>();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!isReportableContentType(body.content_type)) {
+		return c.text('Invalid content_type', 400);
+	}
+	if (body.content_id === undefined || body.content_id === null || `${body.content_id}` === '') {
+		return c.text('content_id is required', 400);
+	}
+	if (!isReportReason(body.reason)) {
+		return c.text('Invalid reason', 400);
+	}
+
+	const { report, deduped } = await createReport(c.env, {
+		content_type: body.content_type,
+		content_id: String(body.content_id),
+		parent_id: body.parent_id != null ? String(body.parent_id) : undefined,
+		content_owner_id: body.content_owner_id != null ? String(body.content_owner_id) : undefined,
+		reason: body.reason,
+		description: body.description,
+		reporter_id: body.reporter_id ?? null,
+		reporter_ip_hash: body.reporter_ip_hash,
+		source: body.source === 'ai' ? 'ai' : 'user',
+		ai: body.ai
+	});
+
+	// ai triage + best-effort auto-remove run in the background so the report POST stays fast
+	if (!deduped && report.source === 'user') {
+		c.executionCtx.waitUntil(moderateReport(c.env, report.id));
+	}
+
+	return c.json({ report, deduped }, 201);
+});
+
+app.get('/reports', async (c) => {
+	const statusParam = c.req.query('status') || 'pending';
+	if (!isReportStatus(statusParam)) {
+		return c.text('Invalid status', 400);
+	}
+
+	const limitRaw = parseInt(c.req.query('limit') || '50', 10);
+	const limit = isNaN(limitRaw) || limitRaw <= 0 ? 50 : Math.min(limitRaw, 100);
+	const cursor = c.req.query('cursor') || undefined;
+
+	const result = await listReports(c.env, statusParam, limit, cursor);
+	return c.json(result, 200);
+});
+
+app.get('/reports/:id', async (c) => {
+	const report = await getReport(c.env, c.req.param('id'));
+	if (!report) {
+		return c.text('Report not found', 404);
+	}
+	return c.json(report, 200);
+});
+
+app.patch('/reports/:id', async (c) => {
+	const id = c.req.param('id');
+	let body: { status?: string; reviewed_by?: string; action_notes?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!body.status || !isReportStatus(body.status)) {
+		return c.text('Invalid status', 400);
+	}
+
+	const updated = await patchReportStatus(
+		c.env,
+		id,
+		body.status,
+		body.reviewed_by,
+		body.action_notes
+	);
+	if (!updated) {
+		return c.text('Report not found', 404);
+	}
+	return c.json(updated, 200);
+});
+
+app.delete('/reports/:id', async (c) => {
+	const ok = await deleteReport(c.env, c.req.param('id'));
+	if (!ok) {
+		return c.text('Report not found', 404);
+	}
+	return c.body(null, 204);
+});
+
+app.get('/users/:id/strikes', async (c) => {
+	const id = normalizeId(c.req.param('id') || '');
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+	return c.json(await getStrikes(c.env, id), 200);
+});
+
+app.post('/users/:id/strikes', async (c) => {
+	const id = normalizeId(c.req.param('id') || '');
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+
+	let body: { content_type?: string; content_id?: string; reason?: string; source?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!isReportableContentType(body.content_type)) {
+		return c.text('Invalid content_type', 400);
+	}
+	if (!body.content_id) {
+		return c.text('content_id is required', 400);
+	}
+	if (!isReportReason(body.reason)) {
+		return c.text('Invalid reason', 400);
+	}
+
+	const { strikes, action } = await addStrike(c.env, id, {
+		content_type: body.content_type,
+		content_id: String(body.content_id),
+		reason: body.reason,
+		source: body.source === 'ai' ? 'ai' : 'user'
+	});
+
+	return c.json({ strikes, action }, 200);
+});
+
+app.post('/users/:id/strikes/reset', async (c) => {
+	const id = normalizeId(c.req.param('id') || '');
+	if (!id) {
+		return c.text('User ID is required', 400);
+	}
+	return c.json(await resetStrikes(c.env, id), 200);
+});
 
 // Admin Migration
 
