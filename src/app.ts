@@ -801,6 +801,7 @@ app.post('/articles/quiz/submit', async (c) => {
 		articleId: string;
 		articleTypes: ActivityType[];
 		userId: string;
+		rank?: string;
 		answers: {
 			question: string;
 			// single-pick: multiple_choice / true_false
@@ -928,8 +929,16 @@ app.post('/articles/quiz/submit', async (c) => {
 			// increment badge progress
 			addBadgeProgress(userId, 'article_quizzes_completed', id, c.env.KV),
 
-			// handle article_quiz quest steps
-			handleQuizQuestStep(userId, scoreKey, scorePercent, body.articleTypes, c.env, c.executionCtx)
+			// handle article_quiz quest steps (rank gates delay reduction/bypass for the auto-advance)
+			handleQuizQuestStep(
+				userId,
+				scoreKey,
+				scorePercent,
+				body.articleTypes,
+				c.env,
+				c.executionCtx,
+				normalizeQuestRank(body.rank)
+			)
 		])
 	);
 

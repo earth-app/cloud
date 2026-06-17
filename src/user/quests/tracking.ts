@@ -1142,7 +1142,8 @@ export async function handleQuizQuestStep(
 	scorePercent: number,
 	articleTypes: ActivityType[] | undefined,
 	bindings: Bindings,
-	ctx: ExecutionCtxLike
+	ctx: ExecutionCtxLike,
+	rank?: string | null
 ): Promise<{ handled: boolean; completed?: boolean; message?: string }> {
 	if (!articleTypes || articleTypes.length === 0) {
 		console.log(`handleQuizQuestStep: no article types provided for user ${userId}, skipping`);
@@ -1246,7 +1247,8 @@ export async function handleQuizQuestStep(
 			questResponse,
 			deviceMetadata,
 			bindings,
-			ctx
+			ctx,
+			rank
 		);
 
 		// send notifications
@@ -1274,6 +1276,15 @@ export async function handleQuizQuestStep(
 		);
 		return { handled: true, completed: questResult.completed, message: questResult.message };
 	} catch (err) {
+		// a step still inside its (rank-adjusted) delay window is expected throttling, not a failure —
+		// log it quietly so it doesn't read as a broken auto-advance
+		if (err instanceof HTTPException && err.status === 425) {
+			console.log(
+				`handleQuizQuestStep: article_quiz step still throttled for user ${userId}: ${err.message}`
+			);
+			return { handled: false };
+		}
+
 		console.error(
 			`handleQuizQuestStep: error auto-handling article_quiz quest step for user ${userId}:`,
 			err
