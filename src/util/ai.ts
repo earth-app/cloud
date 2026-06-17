@@ -2148,9 +2148,10 @@ TASK: Generate an interactive quiz that tests genuine understanding of the provi
 
 PRINCIPLES:
 - Language: ALWAYS write the entire quiz — every question, every option, and every answer — in English, even when the source article is written in another language. Translate the underlying ideas faithfully into clear English; never emit non-English text.
+- Sourcing: The ARTICLE SUMMARY is the primary basis for the quiz — most questions must be answerable from the summary alone. Any SOURCE MATERIAL is supporting context; only a minority of questions may rely on details found only there.
 - Depth: Span cognitive levels — recall, comprehension, application, and analysis. Favor "why", "how", "what would happen if", compare/contrast, and scenario-based questions over simple fact lookups.
-- Interactivity: Use a mix of formats. Prefer multi_select and order questions when the content supports them — they are more engaging than plain multiple choice.
-- Clarity: Clear, self-contained wording. Every question must be answerable from the article alone.
+- Interactivity: Use a mix of formats. Favor "multi_select" for engagement when the content supports it. Plain "multiple_choice" is a fine default; reach for "order" ONLY when the article genuinely describes a sequence (see the type rules).
+- Clarity: Clear, self-contained wording. Every question must be answerable from the summary or source material alone.
 - Fairness: Plausible distractors — wrong options should be tempting and reasonable, never obviously wrong or absurd. Avoid ambiguous or trick phrasing.
 - No personal pronouns or conversational filler.
 
@@ -2158,20 +2159,26 @@ OUTPUT FORMAT: Respond with ONLY a single valid JSON object — no markdown code
 `;
 
 export const articleQuizPrompt = `
-Generate 4-6 quiz questions based on the article. Mix question types for variety and engagement.
+Generate a quiz of 4 to 10 questions based on the material below. Aim high within that range: produce as many strong, distinct questions as the material genuinely supports — lean toward 7-10 for substantial articles, and only fall back toward 4 when the material is genuinely thin. Do NOT default to the minimum of 4. Mix question types for variety and engagement.
+
+SOURCING:
+- The ARTICLE SUMMARY is the primary source: the majority of questions (at least two-thirds) must be answerable from the summary alone.
+- Any SOURCE MATERIAL is supporting context: a minority of questions may draw on specific details found only there, but it must never be the main basis for the quiz.
+- Never require knowledge found in neither the summary nor the source material.
 
 ALLOWED TYPES:
-- "multiple_choice" — 3-4 options, exactly one correct. Set "correct_answer" and "correct_answer_index" (0-based). Make distractors plausible.
+- "multiple_choice" — 3-4 options, exactly one correct. Set "correct_answer" and "correct_answer_index" (0-based). Make distractors plausible. A safe default for most questions.
 - "multi_select"    — 3-5 options with AT LEAST TWO correct (and at least one incorrect). Set "correct_answers" (string array) and "correct_answer_indices" (number array, 0-based, sorted). Great for "select all that apply" understanding. NEVER use catch-all options like "All of the above", "None of the above", or "Both of these" — they give the answer away.
 - "true_false"      — options must be ["True","False"]. Set "correct_answer" to "True" or "False", "correct_answer_index" to 0 or 1, and "is_true"/"is_false" accordingly. Use sparingly, ideally to probe a common misconception.
-- "order"           — 3-6 short items the reader sequences correctly. Provide "items" as the CANONICAL correct order (the client shuffles for display). Use when the article describes steps, a process, a timeline, or relative magnitudes.
+- "order"           — OPTIONAL and situational. 3-6 short items the reader sequences correctly; provide "items" as the CANONICAL correct order (the client shuffles for display). Use ONLY when the article describes a genuine ordered sequence: a cause-and-effect chain, a step-by-step process or pipeline, a chronological timeline, or a ranking of quantitative/numeric values. If the article has no real sequence, DO NOT produce an order question — never force one onto general "what happens in this article" comprehension, where the correct order would be arbitrary or guessable.
 
 REQUIREMENTS:
-- Language: write every question, option, and answer in English, regardless of the article's language.
+- Count: between 4 and 10 questions, favoring the upper end whenever the material supports it.
+- Language: write every question, option, and answer in English, regardless of the source language.
 - Depth: at least half the questions should test application or analysis, not just recall.
-- Interactivity: include at least one "multi_select" or "order" question whenever the article supports it.
-- Concise: max 100 chars per question, 60 per option/item.
-- Grounded: directly answerable from the article; never require outside knowledge.
+- Interactivity: include at least one "multi_select" question whenever the content supports it. The "order" type is optional — include it only when the article truly describes a sequence (see above).
+- Concise: max 100 chars per question, and max 128 chars per option or item — every answer must read as a short, self-contained phrase.
+- Grounded: directly answerable from the summary or source material; never require outside knowledge.
 - "multi_select" must have at least two genuinely correct options and at least one incorrect one — never pad with invented correct answers, and never include "All of the above"-style catch-alls.
 - Set ONLY the fields appropriate for the chosen type. Leave the others off.
 
