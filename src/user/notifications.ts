@@ -312,6 +312,26 @@ export class LiveNotifier {
 				});
 			});
 
+			server.addEventListener('message', (event: MessageEvent) => {
+				if (typeof event.data !== 'string') return;
+				let parsed: { type?: string };
+				try {
+					parsed = JSON.parse(event.data);
+				} catch {
+					return; // ignore non-JSON / unexpected client frames
+				}
+				if (parsed?.type !== 'ping') return;
+				try {
+					server.send(JSON.stringify({ type: 'pong' }));
+				} catch (error) {
+					this.sockets.delete(server);
+					console.warn('[notifier.connect] dropped socket after failed pong', {
+						error: error instanceof Error ? error.message : String(error),
+						activeSockets: this.sockets.size
+					});
+				}
+			});
+
 			return new Response(null, {
 				status: 101,
 				webSocket: client

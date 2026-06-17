@@ -211,6 +211,83 @@ describe('LiveNotifier', () => {
 		expect((notifier as any).sockets.size).toBeLessThanOrEqual(1);
 	});
 
+	it('replies to a ping heartbeat with a pong', async () => {
+		if (typeof (globalThis as any).WebSocketPair !== 'function') {
+			return;
+		}
+
+		const notifier = new LiveNotifier(createDurableState());
+		const ticketRes = await notifier.fetch(
+			new Request('https://do/ticket', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId: '42' })
+			})
+		);
+		const { ticket } = await ticketRes.json<{ ticket: string }>();
+
+		const accepted = await notifier.fetch(
+			new Request(`https://do/connect?ticket=${ticket}&userId=42`, {
+				method: 'GET',
+				headers: { Upgrade: 'websocket' }
+			})
+		);
+		expect(accepted.status).toBe(101);
+
+		const serverSocket = [...(notifier as any).sockets][0] as any;
+		if (typeof serverSocket.dispatchEvent !== 'function') return;
+
+		const sent: string[] = [];
+		serverSocket.send = (data: string) => {
+			sent.push(data);
+		};
+
+		serverSocket.dispatchEvent(
+			new MessageEvent('message', { data: JSON.stringify({ type: 'ping' }) })
+		);
+
+		expect(sent).toContain(JSON.stringify({ type: 'pong' }));
+	});
+
+	it('does not reply to non-ping client frames', async () => {
+		if (typeof (globalThis as any).WebSocketPair !== 'function') {
+			return;
+		}
+
+		const notifier = new LiveNotifier(createDurableState());
+		const ticketRes = await notifier.fetch(
+			new Request('https://do/ticket', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ userId: '42' })
+			})
+		);
+		const { ticket } = await ticketRes.json<{ ticket: string }>();
+
+		const accepted = await notifier.fetch(
+			new Request(`https://do/connect?ticket=${ticket}&userId=42`, {
+				method: 'GET',
+				headers: { Upgrade: 'websocket' }
+			})
+		);
+		expect(accepted.status).toBe(101);
+
+		const serverSocket = [...(notifier as any).sockets][0] as any;
+		if (typeof serverSocket.dispatchEvent !== 'function') return;
+
+		const sent: string[] = [];
+		serverSocket.send = (data: string) => {
+			sent.push(data);
+		};
+
+		serverSocket.dispatchEvent(new MessageEvent('message', { data: 'not json' }));
+		serverSocket.dispatchEvent(
+			new MessageEvent('message', { data: JSON.stringify({ type: 'hello' }) })
+		);
+
+		expect(sent).toHaveLength(0);
+	});
+
 	it('rejects websocket upgrade when ticket user does not match and consumes the ticket', async () => {
 		const notifier = new LiveNotifier(createDurableState());
 		const ticketRes = await notifier.fetch(
