@@ -448,6 +448,94 @@ describe('createArticleQuiz', () => {
 		expect(result).toHaveLength(1);
 		expect(result[0].question).toBe('Q1');
 	});
+
+	it('sends the summary as the primary source and the scientific text as supporting context', async () => {
+		const run = vi.fn(async () => ({ response: JSON.stringify({ questions: [] }) }));
+		const ai = { run } as any;
+
+		await createArticleQuiz(
+			{
+				title: 'Title',
+				content: 'AI summary body text',
+				tags: [],
+				ocean: {
+					title: 'Title',
+					author: 'Author',
+					source: 'Source',
+					url: 'https://example.com/ocean',
+					content: 'Raw scientific source material',
+					keywords: [],
+					date: '2026-01-01',
+					links: {}
+				}
+			},
+			ai
+		);
+
+		const messages = run.mock.calls[0][1].messages as { role: string; content: string }[];
+		const summaryMsg = messages.find((m) => m.content.includes('AI summary body text'));
+		const sourceMsg = messages.find((m) => m.content.includes('Raw scientific source material'));
+
+		expect(summaryMsg?.content).toContain('ARTICLE SUMMARY (primary source');
+		expect(sourceMsg?.content).toContain('SOURCE MATERIAL (supporting context');
+		// the summary message must come before the supporting source message
+		expect(messages.indexOf(summaryMsg!)).toBeLessThan(messages.indexOf(sourceMsg!));
+	});
+
+	it('caps the quiz at 10 questions', async () => {
+		const questions: ArticleQuizQuestion[] = Array.from({ length: 14 }, (_, i) => ({
+			question: `Q${i}`,
+			type: 'multiple_choice' as const,
+			options: ['A', 'B', 'C', 'D'],
+			correct_answer: 'A',
+			correct_answer_index: 0
+		}));
+		const ai = { run: vi.fn(async () => ({ response: JSON.stringify({ questions }) })) } as any;
+
+		const result = await createArticleQuiz(
+			{ title: 'T', content: 'Body', tags: [], ocean: undefined as any },
+			ai
+		);
+
+		expect(result).toHaveLength(10);
+	});
+
+	it('drops questions whose answers exceed the character limit instead of trimming them', async () => {
+		const longOption = 'x'.repeat(150);
+		const questions: ArticleQuizQuestion[] = [
+			{
+				question: 'Too long',
+				type: 'multiple_choice',
+				options: ['A', longOption, 'C', 'D'],
+				correct_answer: 'A',
+				correct_answer_index: 0
+			},
+			{
+				question: 'Bad order',
+				type: 'order',
+				items: ['step one', 'y'.repeat(200), 'step three']
+			},
+			{
+				question: 'Fine',
+				type: 'multiple_choice',
+				options: ['A', 'B', 'C', 'D'],
+				correct_answer: 'A',
+				correct_answer_index: 0
+			}
+		];
+		const ai = { run: vi.fn(async () => ({ response: JSON.stringify({ questions }) })) } as any;
+
+		const result = await createArticleQuiz(
+			{ title: 'T', content: 'Body', tags: [], ocean: undefined as any },
+			ai
+		);
+
+		expect(result).toHaveLength(1);
+		expect(result[0].question).toBe('Fine');
+		// nothing was truncated with an ellipsis
+		expect(JSON.stringify(result)).not.toContain('…');
+		expect(JSON.stringify(result)).not.toContain('...');
+	});
 });
 
 describe('postArticle', () => {
