@@ -460,33 +460,52 @@ export async function createArticleQuiz(
 	ai: Ai
 ): Promise<ArticleQuizQuestion[]> {
 	try {
-		// user-authored articles have no ocean; fall back to article.content
-		const content = article.ocean?.content || article.ocean?.abstract || article.content || '';
-		if (!content.trim()) {
+		// the AI-generated summary is the primary basis for the quiz; the raw scientific
+		// source is supporting context that a minority of questions may draw on
+		const summary = (article.content || '').trim();
+		const sourceRaw = (article.ocean?.content || article.ocean?.abstract || '').trim();
+		if (!summary && !sourceRaw) {
 			console.warn('createArticleQuiz: no usable content for article, skipping');
 			return [];
 		}
-		const firstPart = content.substring(0, QUIZ_CUTOFF);
-		const lastPart = content.substring(content.length - QUIZ_CUTOFF);
+
+		// the source can be very long, so window it like before; the summary is already concise
+		const source =
+			sourceRaw.length > QUIZ_CUTOFF * 2
+				? sourceRaw.substring(0, QUIZ_CUTOFF) +
+					'... (truncated) ...' +
+					sourceRaw.substring(sourceRaw.length - QUIZ_CUTOFF)
+				: sourceRaw;
+
+		const messages: { role: string; content: string }[] = [
+			{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
+			{
+				role: 'user',
+				content:
+					'ARTICLE SUMMARY (primary source — most questions must come from here):\n' +
+					(summary || '(no summary available; base the quiz on the source material below)')
+			}
+		];
+
+		if (source) {
+			messages.push({
+				role: 'user',
+				content:
+					'SOURCE MATERIAL (supporting context — only a minority of questions may draw on details unique to it):\n' +
+					source
+			});
+		}
+
+		messages.push({
+			role: 'user',
+			content:
+				prompts.articleQuizPrompt.trim() +
+				'\n\nReturn ONLY a JSON object of the form {"questions": [ ... ]}. No markdown, no prose.'
+		});
 
 		const quizResult = (await ai.run(quizModel, {
-			messages: [
-				{ role: 'system', content: prompts.articleQuizSystemMessage.trim() },
-				{
-					role: 'user',
-					content:
-						content.length > QUIZ_CUTOFF * 2
-							? firstPart + '... (truncated) ...' + lastPart
-							: content
-				},
-				{
-					role: 'user',
-					content:
-						prompts.articleQuizPrompt.trim() +
-						'\n\nReturn ONLY a JSON object of the form {"questions": [ ... ]}. No markdown, no prose.'
-				}
-			],
-			max_tokens: 2048,
+			messages,
+			max_tokens: 4096, // room for up to 10 questions without truncating the JSON
 			temperature: 0.3
 		} as any)) as { response?: unknown };
 
@@ -511,12 +530,32 @@ export async function createArticleQuiz(
 const GIVEAWAY_OPTION =
 	/\b(all|none|both)\s+of\s+(the\s+)?(above|following|these|those|options|choices)\b/i;
 
+// a quiz holds 4-10 questions; the model is told the range, this is the hard ceiling (mantle2 also rejects >10)
+const MAX_QUIZ_QUESTIONS = 10;
+// answers (options / order items) must stay short and readable; we reject an over-long
+// answer rather than trimming it, since truncating with an ellipsis would mangle the meaning
+const ANSWER_MAX_CHARS = 128;
+
+function answersWithinLimit(values: unknown): boolean {
+	if (!Array.isArray(values)) return true;
+	return values.every((v) => typeof v !== 'string' || v.length <= ANSWER_MAX_CHARS);
+}
+
 function sanitizeQuizQuestions(questions: ArticleQuizQuestion[]): ArticleQuizQuestion[] {
 	const cleaned: ArticleQuizQuestion[] = [];
 
 	for (const q of questions) {
 		if (!q || typeof q !== 'object' || typeof q.question !== 'string') continue;
+
+		if (q.type === 'order') {
+			if (!answersWithinLimit(q.items)) continue;
+			cleaned.push(q);
+			continue;
+		}
+
 		if (q.type !== 'multi_select') {
+			// multiple_choice / true_false: drop the question if any answer overflows
+			if (!answersWithinLimit((q as { options?: unknown }).options)) continue;
 			cleaned.push(q);
 			continue;
 		}
@@ -545,7 +584,8 @@ function sanitizeQuizQuestions(questions: ArticleQuizQuestion[]): ArticleQuizQue
 		if (
 			keptOptions.length < 3 ||
 			newIndices.length < 2 ||
-			newIndices.length >= keptOptions.length
+			newIndices.length >= keptOptions.length ||
+			!answersWithinLimit(keptOptions)
 		) {
 			continue;
 		}
@@ -558,7 +598,7 @@ function sanitizeQuizQuestions(questions: ArticleQuizQuestion[]): ArticleQuizQue
 		});
 	}
 
-	return cleaned;
+	return cleaned.slice(0, MAX_QUIZ_QUESTIONS);
 }
 
 function coerceQuizResult(response: unknown): { questions?: ArticleQuizQuestion[] } | null {
