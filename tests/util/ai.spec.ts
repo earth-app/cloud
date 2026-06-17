@@ -77,6 +77,24 @@ describe('validateActivityTags', () => {
 	it('filters to known tags and falls back to OTHER', () => {
 		expect(validateActivityTags('UNKNOWN_TAG', 'test')).toEqual(['OTHER']);
 	});
+
+	it('salvages tags whose underscore the model dropped (COMMUNITYSERVICE -> COMMUNITY_SERVICE)', () => {
+		expect(validateActivityTags('COMMUNITYSERVICE', 'test')).toEqual(['COMMUNITY_SERVICE']);
+	});
+
+	it('keeps valid tags and drops unmatched ones rather than failing the whole set', () => {
+		// the exact production failure: one salvageable tag + one tag with no real category
+		expect(validateActivityTags('COMMUNITYSERVICE,ORGANISATIONALEVENT', 'test')).toEqual([
+			'COMMUNITY_SERVICE'
+		]);
+	});
+
+	it('normalizes spacing/hyphenation and de-duplicates', () => {
+		expect(validateActivityTags('PERSONAL GOAL, home-improvement, PERSONAL_GOAL', 'test')).toEqual([
+			'PERSONAL_GOAL',
+			'HOME_IMPROVEMENT'
+		]);
+	});
 });
 
 describe('validateArticleTopic', () => {

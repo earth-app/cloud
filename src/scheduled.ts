@@ -121,10 +121,13 @@ export default async function scheduled(
 				const created = await postEvent(event, env, ctx);
 				events.push(created as Record<string, unknown>);
 			} catch (err) {
+				// flatten the error so the actual cause is visible in logs (a bare Error object
+				// serializes to {} in the Workers log viewer, which hid the real reason here)
 				console.error('Failed to create/post scheduled event; continuing', {
 					entryName: entry.entry?.name,
 					date: entry.date?.toISOString?.(),
-					err
+					error: err instanceof Error ? err.message : String(err),
+					stack: err instanceof Error ? err.stack : undefined
 				});
 				events.push(null);
 			}

@@ -1492,12 +1492,20 @@ export function validateActivityTags(tagsResponse: string, activityName: string)
 			t.name.trim().toUpperCase()
 		);
 
+		const normalize = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+		const canonicalByNormalized = new Map(validTags.map((t) => [normalize(t), t]));
+
+		const seen = new Set<string>();
 		const tags = sanitized
 			.trim()
 			.split(',')
-			.map((tag) => tag.trim().toUpperCase())
-			.filter((tag) => tag.length > 0)
-			.filter((tag) => validTags.includes(tag));
+			.map((tag) => canonicalByNormalized.get(normalize(tag)))
+			.filter((tag): tag is string => !!tag)
+			.filter((tag) => {
+				if (seen.has(tag)) return false;
+				seen.add(tag);
+				return true;
+			});
 
 		if (tags.length === 0) {
 			logAIFailure('ActivityTags', activityName, sanitized, 'No valid tags found');
@@ -1677,9 +1685,6 @@ export function validatePromptQuestion(questionResponse: string): string {
 			throw new Error('Generated prompt question too long');
 		}
 
-		// Check for prohibited phrases. Use word boundaries so short tokens like 'i'/'my'
-		// do not match incidental substrings inside other words. 'what if' is allowed because
-		// it appears in the `prefixes` pool below; the system prompt also still discourages it.
 		const prohibitedWords = ['imagine', 'you', 'your', 'i', 'my', 'we', 'our'];
 		const lowerQuestion = question.toLowerCase();
 
@@ -2233,7 +2238,6 @@ const prefixes = [
 	'In',
 	'Does',
 	'Might',
-	'What if',
 	'To what extent',
 	'In what ways',
 	'How often',
