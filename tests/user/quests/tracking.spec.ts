@@ -914,4 +914,97 @@ describe('handleQuizQuestStep', () => {
 			firstStep.parameters[1] = originalThreshold;
 		}
 	});
+
+	it('does not auto-advance an article_quiz step still inside its delay window without a qualifying rank', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const pending: Promise<unknown>[] = [];
+		const ctx = {
+			waitUntil: (promise: Promise<unknown>) => {
+				pending.push(Promise.resolve(promise));
+			}
+		};
+
+		const funFacts = quests.find((q) => q.id === 'fun_facts')!;
+		const firstStep = funFacts.steps[0] as {
+			type: 'article_quiz';
+			parameters: [string, number];
+			delay?: number;
+		};
+		const originalDelay = firstStep.delay;
+		firstStep.delay = 600;
+
+		try {
+			await startQuest('710', 'fun_facts', bindings);
+			await kv.put(
+				'article:quiz_score:710:100',
+				JSON.stringify({ score: 9, scorePercent: 90, total: 10 })
+			);
+
+			// free user (no rank) is still inside the freshly-started 600s window -> step must not advance
+			const result = await handleQuizQuestStep(
+				'710',
+				'article:quiz_score:710:100',
+				90,
+				['HOME_IMPROVEMENT' as any],
+				bindings,
+				ctx as any
+			);
+
+			await Promise.all(pending);
+			expect(result.handled).toBe(false);
+
+			const current = await getCurrentQuestProgress('710', bindings);
+			expect(current.currentStepIndex).toBe(0);
+		} finally {
+			firstStep.delay = originalDelay;
+		}
+	});
+
+	it('bypasses the article_quiz step delay for administrators', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const pending: Promise<unknown>[] = [];
+		const ctx = {
+			waitUntil: (promise: Promise<unknown>) => {
+				pending.push(Promise.resolve(promise));
+			}
+		};
+
+		const funFacts = quests.find((q) => q.id === 'fun_facts')!;
+		const firstStep = funFacts.steps[0] as {
+			type: 'article_quiz';
+			parameters: [string, number];
+			delay?: number;
+		};
+		const originalDelay = firstStep.delay;
+		firstStep.delay = 600;
+
+		try {
+			await startQuest('711', 'fun_facts', bindings);
+			await kv.put(
+				'article:quiz_score:711:100',
+				JSON.stringify({ score: 9, scorePercent: 90, total: 10 })
+			);
+
+			// administrators get a full delay bypass even though the window has not elapsed
+			const result = await handleQuizQuestStep(
+				'711',
+				'article:quiz_score:711:100',
+				90,
+				['HOME_IMPROVEMENT' as any],
+				bindings,
+				ctx as any,
+				'administrator'
+			);
+
+			await Promise.all(pending);
+			expect(result.handled).toBe(true);
+
+			const current = await getCurrentQuestProgress('711', bindings);
+			expect(current.currentStepIndex).toBeGreaterThanOrEqual(1);
+		} finally {
+			firstStep.delay = originalDelay;
+		}
+	});
 });

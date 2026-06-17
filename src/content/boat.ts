@@ -773,51 +773,72 @@ export async function recommendSimilarArticles(
 // Prompt Endpoints
 
 export async function createPrompt(ai: Ai) {
-	let gen: {
-		output: {
-			id: string;
-			content: {
-				text: string;
-				type: 'output_text' | 'reasoning_text';
+	// each attempt draws a fresh random prefix/topic and re-validates, so a single refusal or
+	// off-spec generation doesn't fail the (hourly) cron run
+	const maxRetries = 3;
+	let lastError: Error | null = null;
+
+	for (let attempt = 1; attempt <= maxRetries; attempt++) {
+		let gen: {
+			output: {
+				id: string;
+				content: {
+					text: string;
+					type: 'output_text' | 'reasoning_text';
+				}[];
+				type: 'message' | 'reasoning';
 			}[];
-			type: 'message' | 'reasoning';
-		}[];
-	} | null = null;
+		} | null = null;
 
-	try {
-		gen = await ai.run(promptModel as any, {
-			instructions: prompts.promptsSystemMessage.trim(),
-			input: prompts.promptsQuestionPrompt().trim(),
-			reasoning: {
-				effort: 'medium',
-				summary: 'concise'
+		try {
+			gen = await ai.run(promptModel as any, {
+				instructions: prompts.promptsSystemMessage.trim(),
+				input: prompts.promptsQuestionPrompt().trim(),
+				reasoning: {
+					effort: 'medium',
+					summary: 'concise'
+				}
+			});
+		} catch (aiError) {
+			lastError = aiError instanceof Error ? aiError : new Error(String(aiError));
+			console.warn(
+				`Prompt generation attempt ${attempt}/${maxRetries} failed (model error):`,
+				lastError.message
+			);
+			continue;
+		}
+
+		try {
+			if (!gen || !gen.output || gen.output.length === 0) {
+				throw new Error('Failed to generate prompt: empty response');
 			}
-		});
-	} catch (aiError) {
-		console.error('AI model failed for prompt generation', { error: aiError });
-		throw new Error('Failed to generate prompt using AI model', { cause: aiError });
+
+			const message = gen.output.find((o) => o.type === 'message');
+			if (!message) {
+				throw new Error('No valid prompt message found in response');
+			}
+
+			const rawPromptText = message.content
+				.find((c) => c.type === 'output_text')
+				?.text?.trim()
+				?.replace(/\n/g, ' ');
+
+			return prompts.validatePromptQuestion(rawPromptText || '');
+		} catch (validationError) {
+			lastError =
+				validationError instanceof Error ? validationError : new Error(String(validationError));
+			console.warn(
+				`Prompt generation attempt ${attempt}/${maxRetries} produced an invalid question:`,
+				lastError.message
+			);
+		}
 	}
 
-	if (!gen || !gen.output || gen.output.length === 0) {
-		console.error('Failed to generate prompt: empty or invalid response', { gen });
-		throw new Error('Failed to generate prompt: empty response');
-	}
-
-	const message = gen.output.find((o) => o.type === 'message');
-
-	if (!message) {
-		console.error('No valid prompt message found in response', { output: gen.output });
-		throw new Error('No valid prompt message found in response');
-	}
-
-	const rawPromptText = message.content
-		.find((c) => c.type === 'output_text')
-		?.text?.trim()
-		?.replace(/\n/g, ' ');
-
-	const promptText = prompts.validatePromptQuestion(rawPromptText || '');
-
-	return promptText;
+	console.error(`Failed to generate a valid prompt after ${maxRetries} attempts`, {
+		error: lastError?.message
+	});
+	// surface the most recent specific failure so callers/logs keep the actionable reason
+	throw lastError ?? new Error('Failed to generate prompt');
 }
 
 export async function rankActivitiesForEvent(
@@ -838,10 +859,20 @@ export async function rankActivitiesForEvent(
 		original: activity
 	}));
 
-	const ranked = await ai.run(rankerModel, {
-		query: rankQuery,
-		contexts: contexts.map((c) => ({ text: c.text }))
-	});
+	let ranked;
+	try {
+		ranked = await ai.run(rankerModel, {
+			query: rankQuery,
+			contexts: contexts.map((c) => ({ text: c.text }))
+		});
+	} catch (err) {
+		// ranked activities are supplementary; a ranker hiccup must not abort event creation
+		console.warn('Failed to rank activities for event; continuing without ranked activities', {
+			eventName,
+			error: err instanceof Error ? err.message : String(err)
+		});
+		return [];
+	}
 
 	if (!ranked || !ranked.response) {
 		console.warn('Failed to rank activities for event');
@@ -979,30 +1010,56 @@ export async function createEvent(
 		}
 	}
 
-	let descriptionResult;
-	try {
-		descriptionResult = await ai.run(descriptionModel, {
-			messages: [
-				{ role: 'system', content: prompts.eventDescriptionSystemMessage.trim() },
-				{
-					role: 'user',
-					content: prompts.eventDescriptionPrompt(entry, date).trim()
-				}
-			],
-			max_tokens: 450,
-			temperature: 0.2 // lower temperature for factual, informative descriptions
-		});
-	} catch (aiError) {
-		console.error('AI model failed for event description generation', {
-			name: entry.name,
-			error: aiError
-		});
-		throw new Error('Failed to generate event description using AI model');
+	const eventKind = prompts.classifyEventEntry(entry);
+
+	// retry generation+validation so a transient model error or a truncated/short description
+	// doesn't abort the whole event; fall back to the deterministic description as a last resort
+	let validatedDescription: string | null = null;
+	let lastDescError: unknown = null;
+	const descTemperatureRamp = [0.2, 0.4, 0.6];
+
+	for (let attempt = 1; attempt <= descTemperatureRamp.length; attempt++) {
+		try {
+			const descriptionResult = await ai.run(descriptionModel, {
+				messages: [
+					{ role: 'system', content: prompts.eventDescriptionSystemMessage.trim() },
+					{
+						role: 'user',
+						content: prompts.eventDescriptionPrompt(entry, date).trim()
+					}
+				],
+				// headroom so descriptions aren't truncated mid-sentence (truncation fails the
+				// end-punctuation check in validateEventDescription)
+				max_tokens: 700,
+				temperature: descTemperatureRamp[attempt - 1]
+			});
+
+			// throwOnFailure=true so a short/truncated/refusal description retries instead of
+			// silently falling back on the first attempt
+			validatedDescription = prompts.validateEventDescription(
+				descriptionResult?.response || '',
+				name,
+				true,
+				entry
+			);
+			break;
+		} catch (descError) {
+			lastDescError = descError;
+			console.warn(
+				`Event description attempt ${attempt}/${descTemperatureRamp.length} failed for "${name}":`,
+				descError instanceof Error ? descError.message : String(descError)
+			);
+		}
 	}
 
-	const description = descriptionResult?.response || '';
-	const eventKind = prompts.classifyEventEntry(entry);
-	const validatedDescription = prompts.validateEventDescription(description, name, false, entry);
+	if (validatedDescription === null) {
+		console.error('All attempts to generate a valid event description failed; using fallback', {
+			name,
+			error: lastDescError instanceof Error ? lastDescError.message : String(lastDescError)
+		});
+		// throwOnFailure=false returns the deterministic per-kind fallback description
+		validatedDescription = prompts.validateEventDescription('', name, false, entry);
+	}
 
 	let tagsResult;
 	try {

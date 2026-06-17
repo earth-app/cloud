@@ -631,6 +631,33 @@ describe('createPrompt', () => {
 		} as any;
 		await expect(createPrompt(ai)).rejects.toThrow('No valid prompt message found in response');
 	});
+
+	it('retries when the model first returns a refusal and recovers on a later attempt', async () => {
+		let calls = 0;
+		const ai = {
+			run: vi.fn(async () => {
+				calls++;
+				// first attempt: a refusal (too long, also trips prohibited-word checks) -> must retry
+				const text =
+					calls === 1
+						? "I'm sorry, but I can't create a question that begins with that phrasing, however I can suggest an alternative if that would help you out here today."
+						: 'How does curiosity shape the way people learn?';
+				return {
+					output: [
+						{
+							id: 'msg',
+							type: 'message',
+							content: [{ type: 'output_text', text }]
+						}
+					]
+				};
+			})
+		} as any;
+
+		const result = await createPrompt(ai);
+		expect(result).toBe('How does curiosity shape the way people learn?');
+		expect(calls).toBeGreaterThanOrEqual(2);
+	});
 });
 
 describe('postPrompt', () => {
@@ -918,13 +945,15 @@ describe('createEvent', () => {
 		expect(event?.activities.length).toBeGreaterThan(0);
 	});
 
-	it('throws when event description generation fails', async () => {
-		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
-			new Response(JSON.stringify({ total: 0 }), {
-				status: 200,
-				headers: { 'Content-Type': 'application/json' }
-			})
-		);
+	it('falls back to a deterministic description when the model keeps failing instead of aborting the event', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ total: 0 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
+			)
+			.mockResolvedValueOnce(new Response('activities failed', { status: 500 }));
 
 		const ai = {
 			run: vi.fn(async () => {
@@ -932,13 +961,63 @@ describe('createEvent', () => {
 			})
 		} as any;
 
-		await expect(
-			createEvent(
-				new ExactDateWithYearEntry("Bahamas' Birthday", 7, 10, 1973, 'birthdays/countries.csv'),
-				new Date('2026-07-10T00:00:00.000Z'),
-				createBindings({ AI: ai })
+		const event = await createEvent(
+			new ExactDateWithYearEntry("Bahamas' Birthday", 7, 10, 1973, 'birthdays/countries.csv'),
+			new Date('2026-07-10T00:00:00.000Z'),
+			createBindings({ AI: ai })
+		);
+
+		// event is still created with the safe fallback description rather than failing entirely
+		expect(event).not.toBeNull();
+		expect(typeof event?.description).toBe('string');
+		expect((event?.description.length ?? 0) > 0).toBe(true);
+		expect(event?.description).not.toContain('description model down');
+		expect(event?.activities.includes('OTHER')).toBe(true);
+	});
+
+	it('retries event description generation and recovers on a later attempt', async () => {
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ total: 0 }), {
+					status: 200,
+					headers: { 'Content-Type': 'application/json' }
+				})
 			)
-		).rejects.toThrow('Failed to generate event description using AI model');
+			.mockResolvedValueOnce(new Response('activities failed', { status: 500 }));
+
+		let descCalls = 0;
+		const validDescription =
+			'An annual observance that honors shared history, community values, and cultural storytelling in public spaces across the region. '.repeat(
+				2
+			) + 'The event encourages learning, participation, and collective pride.';
+
+		const ai = {
+			run: vi.fn(async (model: string) => {
+				if (model.includes('llama-4-scout')) {
+					descCalls++;
+					// first attempt is long enough but truncated mid-sentence (no terminal
+					// punctuation) -> validation fails and forces a retry
+					if (descCalls === 1) {
+						return {
+							response:
+								'This is a sufficiently long event description that rambles about the history and significance and cultural meaning and broad community participation of the observance but it gets cut off right here with no ending punctuation so it'
+						};
+					}
+					return { response: validDescription };
+				}
+				return { response: 'NATURE,ART' };
+			})
+		} as any;
+
+		const event = await createEvent(
+			new ExactDateWithYearEntry("Bahamas' Birthday", 7, 10, 1973, 'birthdays/countries.csv'),
+			new Date('2026-07-10T00:00:00.000Z'),
+			createBindings({ AI: ai })
+		);
+
+		expect(event).not.toBeNull();
+		expect(descCalls).toBeGreaterThanOrEqual(2);
+		expect(event?.description).toContain('collective pride');
 	});
 
 	it('falls back to OTHER tags when activity-tag generation fails', async () => {
