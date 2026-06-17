@@ -87,3 +87,7 @@ export async function resetStrikes(env: Bindings, userId: string): Promise<UserS
 	await env.KV.put(KEY(userId), JSON.stringify(fresh));
 	return fresh;
 }
+
+export async function deleteStrikes(env: Bindings, userId: string): Promise<void> {
+	await env.KV.delete(KEY(userId));
+}

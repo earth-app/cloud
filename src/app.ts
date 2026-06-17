@@ -170,6 +170,7 @@ import {
 	listReports,
 	patchReportStatus,
 	deleteReport,
+	purgeUserReports,
 	isReportableContentType,
 	isReportReason,
 	isReportStatus,
@@ -1141,6 +1142,8 @@ app.delete('/users/:id', async (c) => {
 						await deleteR2Prefix(c.env.R2, `users/${variant}/`);
 					})
 				);
+
+				await purgeUserReports(c.env, variants);
 			} catch (err) {
 				console.error(`Failed deleting user data for '${id0}':`, err);
 			}

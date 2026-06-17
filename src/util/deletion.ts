@@ -2,6 +2,7 @@ import { badges, resetBadgeProgress, revokeBadge } from '../user/badges';
 import { JOURNEY_TYPES, resetJourney } from '../user/journies';
 import { getCustomQuestsByOwner, deleteCustomQuest } from '../user/quests/custom';
 import { resetQuestProgress } from '../user/quests/tracking';
+import { deleteStrikes } from '../content/moderation/strikes';
 import { deleteEventImageSubmissions } from '../user/submissions';
 import { clearCachePrefix } from './cache';
 import { Bindings, ExecutionCtxLike } from './types';
@@ -139,6 +140,7 @@ export async function deleteUserDataVariant(
 		env.KV.delete(`journey:activities:${userId}`),
 		env.KV.delete(`user:impact_points:${userId}`),
 		env.KV.delete(`user:onboarding:${userId}`),
+		deleteStrikes(env, userId),
 		deleteQuestHistoryDataForUser(userId, env),
 		clearCachePrefix(`user:profile_photo:${userId}:`, env.CACHE),
 		clearCachePrefix(`user:${userId}:submissions`, env.CACHE),

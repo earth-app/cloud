@@ -295,3 +295,40 @@ export async function expireStaleReports(env: Bindings, now: number = Date.now()
 
 	return expired;
 }
+
+export async function purgeUserReports(
+	env: Bindings,
+	userIds: string[]
+): Promise<{ deleted: number; anonymized: number }> {
+	const ids = new Set(userIds.filter(Boolean));
+	if (ids.size === 0) return { deleted: 0, anonymized: 0 };
+
+	let deleted = 0;
+	let anonymized = 0;
+	let cursor: string | undefined;
+
+	while (true) {
+		const page = await env.KV.list({ prefix: 'report:item:', cursor, limit: 1000 });
+		for (const key of page.keys) {
+			const reportId = key.name.slice('report:item:'.length);
+			const report = await getReport(env, reportId);
+			if (!report) continue;
+
+			if (report.content_owner_id && ids.has(report.content_owner_id)) {
+				await deleteReport(env, reportId);
+				deleted++;
+			} else if (report.reporter_id && ids.has(report.reporter_id)) {
+				report.reporter_id = null;
+				report.reporter_ip_hash = undefined;
+				report.updated_at = Date.now();
+				await env.KV.put(ITEM_KEY(reportId), JSON.stringify(report));
+				anonymized++;
+			}
+		}
+
+		if (page.list_complete || !page.cursor) break;
+		cursor = page.cursor;
+	}
+
+	return { deleted, anonymized };
+}
