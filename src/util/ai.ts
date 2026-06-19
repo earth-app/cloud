@@ -2646,9 +2646,6 @@ export const userProfilePhotoPrompt = (data: UserProfilePromptData) => {
         center of the image. The background should be a simple, abstract design that complements the primary object without distracting from it.
         The object should be easily recognizable and visually appealing, with a focus on the colors and shapes rather than intricate details.
 
-		For more information about the user, here is the user's biography:
-		"${data.bio}"
-
         They created their account on ${data.created_at}. They have set their account visibility to ${data.visibility}.
 		The user lives in ${data.country}. Their name is "${data.full_name ?? 'No name provided.'}".
 
