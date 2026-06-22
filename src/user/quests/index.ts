@@ -1174,7 +1174,7 @@ export const quests = [
 			{
 				type: 'activity_read_time',
 				description: 'Read for at least 10 minutes on an Activity about Nature.',
-				parameters: [{ type: 'activity_type', value: 'NATURE' }, 10],
+				parameters: [{ type: 'activity_type', value: 'NATURE' }, 10 * 60],
 				delay: 3600
 			},
 			[
