@@ -16,6 +16,7 @@ import {
 } from './validation';
 import { markBadgeMastered, masteryBadgeIdFromQuestId } from '../badges/mastery';
 import { addBadgeProgress } from '../badges';
+import { getReadTime } from '../timer';
 import {
 	describeMigrationCount,
 	getQuestHashes,
@@ -685,6 +686,72 @@ async function ensureMigrated(
 	};
 }
 
+export type ActiveReadTime = {
+	stepIndex: number;
+	altIndex?: number;
+	tracker: 'articles_read_time' | 'activity_read_time';
+	accumulatedSeconds: number;
+	targetSeconds: number;
+};
+
+const READ_TIME_TRACKERS: Record<string, 'articles_read_time' | 'activity_read_time'> = {
+	article_read_time: 'articles_read_time',
+	activity_read_time: 'activity_read_time'
+};
+
+async function computeActiveReadTime(
+	userId: string,
+	liveQuest: Quest | CustomQuest,
+	currentStepIndex: number,
+	progress: (QuestStepProgressEntry | QuestStepProgressEntry[])[],
+	bindings: Bindings
+): Promise<ActiveReadTime[] | undefined> {
+	const slot = liveQuest.steps[currentStepIndex];
+	if (!slot) return undefined;
+
+	const slotProgress = progress[currentStepIndex];
+	const completedAltIndices = new Set(
+		Array.isArray(slotProgress) ? slotProgress.map((e) => e.altIndex ?? 0) : []
+	);
+
+	// not-yet-completed read-time step(s) in the active slot (mirrors maybeAdvanceReadTimeQuestStep)
+	const isAltGroup = Array.isArray(slot);
+	const steps = isAltGroup ? slot : [slot];
+	const candidates: {
+		altIndex?: number;
+		tracker: 'articles_read_time' | 'activity_read_time';
+		target: number;
+	}[] = [];
+	steps.forEach((step, i) => {
+		const tracker = READ_TIME_TRACKERS[step.type];
+		if (!tracker) return;
+		if (isAltGroup ? completedAltIndices.has(i) : !!slotProgress) return;
+		const target = (step.parameters as unknown[])?.[1];
+		if (typeof target !== 'number') return;
+		candidates.push({ ...(isAltGroup ? { altIndex: i } : {}), tracker, target });
+	});
+
+	if (candidates.length === 0) return undefined;
+
+	const totals = new Map<string, number>();
+	const result: ActiveReadTime[] = [];
+	for (const c of candidates) {
+		let accumulated = totals.get(c.tracker);
+		if (accumulated === undefined) {
+			accumulated = await getReadTime(userId, c.tracker, bindings.KV);
+			totals.set(c.tracker, accumulated);
+		}
+		result.push({
+			stepIndex: currentStepIndex,
+			...(c.altIndex !== undefined ? { altIndex: c.altIndex } : {}),
+			tracker: c.tracker,
+			accumulatedSeconds: accumulated,
+			targetSeconds: c.target
+		});
+	}
+	return result;
+}
+
 export async function getCurrentQuestProgress(
 	userId: string,
 	bindings: Bindings,
@@ -705,6 +772,19 @@ export async function getCurrentQuestProgress(
 	const meta = migrated.metadata;
 	const liveQuest = meta?.questId === quest?.id ? quest : null;
 
+	const currentStepIndex = meta?.currentStep || 0;
+	const completed = migrated.archivedAfter || meta?.completed || false;
+	const activeReadTime =
+		liveQuest && !completed
+			? await computeActiveReadTime(
+					userId0,
+					liveQuest,
+					currentStepIndex,
+					migrated.progress,
+					bindings
+				)
+			: undefined;
+
 	return {
 		progress: migrated.progress,
 		quest: liveQuest,
@@ -713,10 +793,11 @@ export async function getCurrentQuestProgress(
 			liveQuest && meta?.currentStep !== undefined
 				? liveQuest.steps[meta.currentStep] || null
 				: null,
-		currentStepIndex: meta?.currentStep || 0,
-		completed: migrated.archivedAfter || meta?.completed || false,
+		currentStepIndex,
+		completed,
 		migrationSignals: migrated.signals,
-		migrated: migrated.migrated
+		migrated: migrated.migrated,
+		activeReadTime
 	};
 }
 
@@ -726,13 +807,8 @@ export async function getQuestHistory(userId: string, bindings: Bindings): Promi
 	return (await bindings.KV.get<string[]>(`user:quest_history_index:${userId0}`, 'json')) || [];
 }
 
-// historical archive's stored hash list lives in the KV pointer record so we can detect
-// a definition drift since the user completed the quest.
 type HistoryPointer = { r2Key: string; completedAt: number; hashes?: string[] };
 
-// get the full progress for a completed quest. archive is normally immutable, but if the
-// quest definition has drifted since completion we migrate-on-read, rewrite the archive,
-// and invalidate the cache so future fetches hit the migrated form for free.
 export async function getCompletedQuestProgress(
 	userId: string,
 	questId: string,

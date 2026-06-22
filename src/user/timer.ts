@@ -251,8 +251,9 @@ export class UserTimer {
 			await this.state.storage.delete('timer');
 			this.timer = undefined;
 
+			let deferred: (() => Promise<void>) | undefined;
 			try {
-				await applyField(
+				deferred = await accumulateField(
 					timer.field,
 					timer.userId,
 					durationMs,
@@ -264,6 +265,15 @@ export class UserTimer {
 				console.error('Error applying field:', error);
 			}
 
+			// waitUntil keeps the DO alive until the deferred work settles without blocking the response
+			if (deferred) {
+				this.state.waitUntil(
+					deferred().catch((error) => {
+						console.error('Error advancing read-time quest step:', error);
+					})
+				);
+			}
+
 			return Response.json({ durationMs });
 		}
 
@@ -271,14 +281,14 @@ export class UserTimer {
 	}
 }
 
-async function applyField(
+async function accumulateField(
 	field: string,
 	userId: string,
 	durationMs: number,
 	metadata: Record<string, any>,
 	bindings: Bindings,
 	rank?: string | null
-) {
+): Promise<(() => Promise<void>) | undefined> {
 	const duration = Math.max(0, durationMs / 1000); // convert to seconds
 	const [fieldName, rawFieldParameter] = field.split(':', 2);
 	const fieldParameter = normalizeText(rawFieldParameter);
@@ -325,8 +335,7 @@ async function applyField(
 				// await logAnalyticsBatch(contentId, userId, entries, bindings);
 			}
 
-			await maybeAdvanceReadTimeQuestStep(userId, 'articles_read_time', bindings, rank);
-			break;
+			return () => maybeAdvanceReadTimeQuestStep(userId, 'articles_read_time', bindings, rank);
 		}
 		case 'prompts_read_time': {
 			const prompt = toRecord(metadata.prompt) as Partial<Prompt> | undefined;
@@ -368,17 +377,18 @@ async function applyField(
 
 				// await logAnalyticsBatch(contentId, userId, entries, bindings);
 			}
-			break;
+			return undefined;
 		}
 		case 'activity_read_time': {
 			const activity = toRecord(metadata.activity) as Partial<Activity> | undefined;
 
 			// add to activity_read_time
 			await addBadgeProgress(userId, 'activity_read_time', duration, bindings.KV, { activity });
-			await maybeAdvanceReadTimeQuestStep(userId, 'activity_read_time', bindings, rank);
-			break;
+			return () => maybeAdvanceReadTimeQuestStep(userId, 'activity_read_time', bindings, rank);
 		}
 	}
+
+	return undefined;
 }
 
 // returns reading time in seconds either all time or between start and end timestamps (in ms)
