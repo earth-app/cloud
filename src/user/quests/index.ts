@@ -365,16 +365,19 @@ export const quests = [
 				type: 'match_terms',
 				description: 'Match the track events to their corresponding descriptions.',
 				parameters: [
-					['60m', 'One long straight run on the indoor track'],
-					['60mH', 'One long straight run on the indoor track with hurdles'],
-					['100m', 'One long straight run on the outdoor track'],
-					['110mH', 'One long straight run on the outdoor track with hurdles'],
-					['200m', 'A full lap on the indoor track'],
-					['400m', 'A full lap on the outdoor track'],
-					['600m', 'Three laps on the indoor track'],
-					['800m', 'Half of a mile run'],
-					['1600m', 'A full mile run'],
-					['3200m', 'Two miles worth of a run']
+					'Match the track events to their corresponding descriptions.',
+					[
+						['60m', 'One long straight run on the indoor track'],
+						['60mH', 'One long straight run on the indoor track with hurdles'],
+						['100m', 'One long straight run on the outdoor track'],
+						['110mH', 'One long straight run on the outdoor track with hurdles'],
+						['200m', 'A full lap on the indoor track'],
+						['400m', 'A full lap on the outdoor track'],
+						['600m', 'Three laps on the indoor track'],
+						['800m', 'Half of a mile run'],
+						['1600m', 'A full mile run'],
+						['3200m', 'Two miles worth of a run']
+					]
 				]
 			},
 			[
