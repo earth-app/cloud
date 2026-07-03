@@ -25,8 +25,8 @@
     "pako": "^3.0.0"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.20",
-    "@vitest/coverage-istanbul": "4.1.7",
+    "@cloudflare/vitest-pool-workers": "^0.18.0",
+    "@vitest/coverage-istanbul": "4.1.9",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
     "prettier": "^3.9.4",
