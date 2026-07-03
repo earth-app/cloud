@@ -1,4 +1,4 @@
-import Pako from 'pako';
+import * as Pako from 'pako';
 
 export function capitalizeFully(str: string): string {
 	return str
