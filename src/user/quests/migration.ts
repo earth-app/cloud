@@ -5,11 +5,7 @@ import type { QuestStepProgressEntry } from './tracking';
 // reasons surfaced to crust/sky so the UI can compose a helpful "this was migrated" banner.
 // kept narrow and stable — clients render localized strings keyed off these values.
 export type QuestMigrationReason =
-	| 'type_changed'
-	| 'params_changed'
-	| 'step_removed'
-	| 'alt_removed'
-	| 'quest_deleted';
+	'type_changed' | 'params_changed' | 'step_removed' | 'alt_removed' | 'quest_deleted';
 
 export type QuestMigrationInfo = {
 	from: QuestStep['type']; // old step type at this position (for tombstone display)

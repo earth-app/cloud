@@ -846,8 +846,7 @@ export async function getCompletedQuestProgress(
 			bindings.ENCRYPTION_KEY
 		);
 		const rawProgress = JSON.parse(new TextDecoder().decode(decrypted)) as (
-			| QuestStepProgressEntry
-			| QuestStepProgressEntry[]
+			QuestStepProgressEntry | QuestStepProgressEntry[]
 		)[];
 
 		const outcome = migrateProgress(quest, archiveHashes, rawProgress, quest.steps.length);
@@ -908,8 +907,7 @@ export async function getCompletedQuestProgress(
 				bindings.ENCRYPTION_KEY
 			);
 			const progress = JSON.parse(new TextDecoder().decode(decrypted)) as (
-				| QuestStepProgressEntry
-				| QuestStepProgressEntry[]
+				QuestStepProgressEntry | QuestStepProgressEntry[]
 			)[];
 			return { progress, quest, questId, completedAt };
 		},

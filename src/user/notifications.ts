@@ -6,8 +6,7 @@ type TicketRecord = {
 };
 
 type TicketConsumeResult =
-	| { ok: true; userId: string }
-	| { ok: false; reason: 'missing' | 'expired' | 'user-mismatch' };
+	{ ok: true; userId: string } | { ok: false; reason: 'missing' | 'expired' | 'user-mismatch' };
 
 const DEFAULT_TICKET_TTL_SECONDS = 60;
 const MAX_TICKET_TTL_SECONDS = 300;
