@@ -16,10 +16,12 @@ import {
 	getQuestHistory,
 	handleQuizQuestStep,
 	maybeArchiveCompletedQuest,
+	removeQuestStepEntry,
 	resetQuestProgress,
 	startQuest,
 	updateQuestProgress
 } from '../../../src/user/quests/tracking';
+import { getImpactPoints } from '../../../src/user/points';
 import { quests } from '../../../src/user/quests';
 import { createMockBindings } from '../../helpers/mock-bindings';
 import { MockKVNamespace } from '../../helpers/mock-kv';
@@ -1006,5 +1008,143 @@ describe('handleQuizQuestStep', () => {
 		} finally {
 			firstStep.delay = originalDelay;
 		}
+	});
+});
+
+describe('updateQuestProgress moderation metadata', () => {
+	it('records submitting device and points awarded on the stored entry', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+
+		await kv.put('user:quest_progress:910', JSON.stringify([]), {
+			metadata: {
+				questId: 'fun_facts',
+				currentStep: 0,
+				completed: false,
+				startedAt: Date.now() - 100_000
+			}
+		});
+		await kv.put(
+			'article:quiz_score:910:1',
+			JSON.stringify({ score: 9, scorePercent: 90, total: 10 })
+		);
+
+		const collector = createWaitUntilCollector();
+		await updateQuestProgress(
+			'910',
+			{ type: 'article_quiz', index: 0, scoreKey: 'article:quiz_score:910:1', score: 90 },
+			API_DEVICE_METADATA,
+			bindings,
+			collector.ctx as any
+		);
+		await collector.flush();
+
+		const prog = await getCurrentQuestProgress('910', bindings);
+		const step0 = prog.progress[0] as any;
+		expect(step0.device?.os).toBe(API_DEVICE_METADATA.os);
+		expect(typeof step0.pointsAwarded).toBe('number');
+	});
+});
+
+describe('removeQuestStepEntry', () => {
+	function seed(
+		kv: MockKVNamespace,
+		id: string,
+		progress: any[],
+		currentStep: number,
+		completed = false
+	) {
+		return kv.put(`user:quest_progress:${id}`, JSON.stringify(progress), {
+			metadata: {
+				questId: 'vegetable_head',
+				currentStep,
+				completed,
+				startedAt: Date.now() - 100_000
+			}
+		});
+	}
+
+	it('removes the last completed singular step and rolls back currentStep', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const progress = [{ type: 'order_items', index: 0, submittedAt: Date.now() }];
+		await seed(kv, '920', progress, 1);
+
+		const result = await removeQuestStepEntry('920', 0, undefined, false, bindings);
+		expect(result.ok).toBe(true);
+
+		const stored = await kv.getWithMetadata('user:quest_progress:920', 'json');
+		expect((stored.value as any[]).length).toBe(0);
+		expect((stored.metadata as any).currentStep).toBe(0);
+	});
+
+	it('rejects removing a non-last singular step (would break the timeline)', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const progress = [
+			{ type: 'order_items', index: 0, submittedAt: Date.now() - 10 },
+			{ type: 'order_items', index: 1, submittedAt: Date.now() }
+		];
+		await seed(kv, '921', progress, 2);
+
+		const result = await removeQuestStepEntry('921', 0, undefined, false, bindings);
+		expect(result.ok).toBe(false);
+		expect(result.status).toBe(409);
+	});
+
+	it('rejects removing a step from a completed quest', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		await seed(kv, '922', [{ type: 'order_items', index: 0, submittedAt: Date.now() }], 1, true);
+
+		const result = await removeQuestStepEntry('922', 0, undefined, false, bindings);
+		expect(result.ok).toBe(false);
+		expect(result.status).toBe(409);
+	});
+
+	it('rescinds the points the removed entry awarded when asked', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		await kv.put(
+			'user:impact_points:923',
+			JSON.stringify([{ amount: 50, reason: 'seed', timestamp: Date.now() }]),
+			{ metadata: { total: 50 } }
+		);
+		const progress = [
+			{ type: 'order_items', index: 0, submittedAt: Date.now(), pointsAwarded: 50 }
+		];
+		await seed(kv, '923', progress, 1);
+
+		const result = await removeQuestStepEntry('923', 0, undefined, true, bindings);
+		expect(result.ok).toBe(true);
+		expect(result.pointsRescinded).toBe(50);
+
+		const [total] = await getImpactPoints('923', bindings.KV);
+		expect(total).toBe(0);
+	});
+
+	it('keeps the step and currentStep when removing a redundant alternate', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const progress = [
+			,
+			,
+			,
+			,
+			,
+			[
+				{ type: 'take_photo_classification', index: 5, altIndex: 0, submittedAt: Date.now() - 10 },
+				{ type: 'take_photo_classification', index: 5, altIndex: 1, submittedAt: Date.now() }
+			]
+		];
+		// currentStep past the alt-group so it isn't the last completed step
+		await seed(kv, '924', progress as any[], 5);
+
+		const result = await removeQuestStepEntry('924', 5, 1, false, bindings);
+		expect(result.ok).toBe(true);
+
+		const stored = await kv.getWithMetadata('user:quest_progress:924', 'json');
+		expect((stored.value as any[])[5].length).toBe(1);
+		expect((stored.metadata as any).currentStep).toBe(5);
 	});
 });
