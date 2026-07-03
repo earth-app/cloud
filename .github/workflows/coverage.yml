@@ -29,7 +29,7 @@ jobs:
         run: bun run test:report
       - name: Upload Tests to Codecov
         if: ${{ always() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: earth-app/cloud
@@ -85,7 +85,7 @@ jobs:
           path: code-coverage-summary.md
       - name: Upload Coverage to Codecov
         if: ${{ always() }}
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           slug: earth-app/cloud
