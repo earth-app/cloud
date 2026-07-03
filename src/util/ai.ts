@@ -2248,7 +2248,12 @@ const prefixes = [
 	'What shapes',
 	'What connects',
 	'What separates',
-	'What defines'
+	'What defines',
+	'What hidden',
+	'Why does',
+	'What quietly',
+	'What secretly',
+	'What really'
 ];
 
 const topics = [
@@ -2407,7 +2412,54 @@ const topics = [
 	'consciousness',
 	'belief',
 	'doubt',
-	'mystery'
+	'mystery',
+	// concrete, relatable, sensory territory — sharper raw material for the
+	// short-form pipeline while staying reflective and timeless
+	'nostalgia',
+	'regret',
+	'homesickness',
+	'first impressions',
+	'small talk',
+	'awkward silence',
+	'comparison',
+	'procrastination',
+	'overthinking',
+	'second-guessing',
+	'gut feelings',
+	'daydreaming',
+	'eye contact',
+	'waiting',
+	'morning routines',
+	'the placebo effect',
+	'muscle memory',
+	'deja vu',
+	'background noise',
+	'handwriting',
+	'old photographs',
+	'souvenirs',
+	'inside jokes',
+	'goodbyes',
+	'names',
+	'faces',
+	'smell and memory',
+	'comfort food',
+	'repetition',
+	'crowds',
+	'queues',
+	'shortcuts',
+	'deadlines',
+	'clutter',
+	'multitasking',
+	'commuting',
+	'weekends',
+	'hobbies',
+	'collecting',
+	'rainy days',
+	'morning light',
+	'growing up',
+	'first jobs',
+	'long drives',
+	'late nights'
 ];
 
 export const promptsQuestionPrompt = () => {
