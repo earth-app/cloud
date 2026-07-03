@@ -13,8 +13,11 @@ afterEach(() => {
 	vi.restoreAllMocks();
 });
 
-function createDurableState(): DurableObjectState {
+type TestDurableState = DurableObjectState & { waitForDeferred: () => Promise<void> };
+
+function createDurableState(): TestDurableState {
 	const store = new Map<string, unknown>();
+	const pending: Promise<unknown>[] = [];
 	const storage = {
 		put: async (key: string, value: unknown) => {
 			store.set(key, value);
@@ -24,7 +27,18 @@ function createDurableState(): DurableObjectState {
 			store.delete(key);
 		}
 	};
-	return { storage } as unknown as DurableObjectState;
+	return {
+		storage,
+		// mirror the DO waitUntil so deferred quest advancement can be awaited in tests
+		waitUntil: (promise: Promise<unknown>) => {
+			pending.push(Promise.resolve(promise).catch(() => {}));
+		},
+		waitForDeferred: async () => {
+			while (pending.length) {
+				await Promise.all(pending.splice(0));
+			}
+		}
+	} as unknown as TestDurableState;
 }
 
 describe('UserTimer', () => {
@@ -95,7 +109,8 @@ describe('UserTimer', () => {
 	it('stops a running timer and applies badge tracker updates', async () => {
 		const kv = new MockKVNamespace();
 		const bindings = createMockBindings({ KV: kv as any });
-		const timer = new UserTimer(createDurableState(), bindings);
+		const state = createDurableState();
+		const timer = new UserTimer(state, bindings);
 
 		let now = 1_000;
 		vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -138,6 +153,8 @@ describe('UserTimer', () => {
 		const body = await res.json<{ durationMs: number }>();
 		expect(body.durationMs).toBe(69_000);
 
+		await state.waitForDeferred();
+
 		const readTracker = await kv.get('user:badge_tracker:42:articles_read', 'json');
 		const timeTracker = await kv.get('user:badge_tracker:42:articles_read_time', 'json');
 		expect(Array.isArray(readTracker)).toBe(true);
@@ -146,10 +163,8 @@ describe('UserTimer', () => {
 	});
 
 	it('allows starting again after a successful stop', async () => {
-		const timer = new UserTimer(
-			createDurableState(),
-			createMockBindings({ KV: new MockKVNamespace() as any })
-		);
+		const state = createDurableState();
+		const timer = new UserTimer(state, createMockBindings({ KV: new MockKVNamespace() as any }));
 
 		let now = 5_000;
 		vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -181,6 +196,8 @@ describe('UserTimer', () => {
 		);
 		expect(stopResponse.status).toBe(200);
 
+		await state.waitForDeferred();
+
 		const secondStart = await timer.fetch(startRequest.clone() as any);
 		expect(secondStart.status).toBe(204);
 	});
@@ -188,7 +205,8 @@ describe('UserTimer', () => {
 	it('stops successfully without metadata by falling back to field id', async () => {
 		const kv = new MockKVNamespace();
 		const bindings = createMockBindings({ KV: kv as any });
-		const timer = new UserTimer(createDurableState(), bindings);
+		const state = createDurableState();
+		const timer = new UserTimer(state, bindings);
 
 		let now = 1_000;
 		vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -220,6 +238,8 @@ describe('UserTimer', () => {
 
 		expect(stopResponse.status).toBe(200);
 
+		await state.waitForDeferred();
+
 		const timeTracker = await kv.get<Array<{ value: number; metadata?: Record<string, unknown> }>>(
 			'user:badge_tracker:50:articles_read_time',
 			'json'
@@ -231,7 +251,8 @@ describe('UserTimer', () => {
 	it('honors administrator rank to bypass step delay on auto-advance', async () => {
 		const kv = new MockKVNamespace();
 		const bindings = createMockBindings({ KV: kv as any });
-		const timer = new UserTimer(createDurableState(), bindings);
+		const state = createDurableState();
+		const timer = new UserTimer(state, bindings);
 
 		const questId = 'timer_rank_delay_bypass';
 		const quest = {
@@ -287,6 +308,8 @@ describe('UserTimer', () => {
 			);
 			expect(stopResponse.status).toBe(200);
 
+			await state.waitForDeferred();
+
 			const questHistory = await getQuestHistory('301', bindings);
 			expect(questHistory).toContain(questId);
 		} finally {
@@ -297,7 +320,8 @@ describe('UserTimer', () => {
 	it('respects step delay when no rank is supplied to the timer', async () => {
 		const kv = new MockKVNamespace();
 		const bindings = createMockBindings({ KV: kv as any });
-		const timer = new UserTimer(createDurableState(), bindings);
+		const state = createDurableState();
+		const timer = new UserTimer(state, bindings);
 
 		const questId = 'timer_rank_delay_blocked';
 		const quest = {
@@ -351,6 +375,8 @@ describe('UserTimer', () => {
 			);
 			expect(stopResponse.status).toBe(200);
 
+			await state.waitForDeferred();
+
 			const questHistory = await getQuestHistory('302', bindings);
 			expect(questHistory).not.toContain(questId);
 		} finally {
@@ -361,7 +387,8 @@ describe('UserTimer', () => {
 	it('preserves metadata on activity_read_time trackers and completes matching read-time quests', async () => {
 		const kv = new MockKVNamespace();
 		const bindings = createMockBindings({ KV: kv as any });
-		const timer = new UserTimer(createDurableState(), bindings);
+		const state = createDurableState();
+		const timer = new UserTimer(state, bindings);
 
 		const questId = 'timer_read_time_regression';
 		const quest = {
@@ -420,6 +447,9 @@ describe('UserTimer', () => {
 			);
 
 			expect(stopResponse.status).toBe(200);
+
+			await state.waitForDeferred();
+
 			const tracker = await kv.get<{ metadata?: Record<string, unknown>; value: number }[]>(
 				'user:badge_tracker:42:articles_read_time',
 				'json'
