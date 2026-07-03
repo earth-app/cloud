@@ -22,7 +22,7 @@
     "exifreader": "^4.40.0",
     "hono": "^4.12.23",
     "music-metadata": "^11.12.3",
-    "pako": "^2.1.0"
+    "pako": "^3.0.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.16.10",
