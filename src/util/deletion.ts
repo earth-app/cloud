@@ -93,21 +93,17 @@ export async function deleteUserDurableObjectState(userId: string, env: Bindings
 	);
 }
 
-async function deleteQuestHistoryDataForUser(userId: string, env: Bindings): Promise<void> {
+export async function deleteQuestHistoryDataForUser(userId: string, env: Bindings): Promise<void> {
 	const historyPrefix = `user:quest_history:${userId}:`;
 	const historyKeys = await listAllKvKeysByPrefix(env.KV, historyPrefix);
 
-	const r2Keys = await Promise.all(
-		historyKeys.map(async (key) => {
-			const record = await env.KV.get<{ r2Key?: string }>(key, 'json');
-			return record?.r2Key || null;
-		})
-	);
-
+	// each completed quest owns an r2 folder (history.bin + step_X_Y.bin); sweep per quest so we
+	// don't orphan step binaries, and leave the active quest's folder untouched
 	await batchProcess(
-		r2Keys
-			.filter((value): value is string => typeof value === 'string' && value.length > 0)
-			.map((key) => env.R2.delete(key)),
+		historyKeys.map((key) => {
+			const questId = key.slice(historyPrefix.length);
+			return deleteR2Prefix(env.R2, `users/${userId}/quests/${questId}/`);
+		}),
 		DELETE_BATCH_SIZE
 	);
 
@@ -116,6 +112,34 @@ async function deleteQuestHistoryDataForUser(userId: string, env: Bindings): Pro
 		env.KV.delete(`user:quest_history_index:${userId}`),
 		clearCachePrefix(`cache:quest_history:${userId}:`, env.CACHE)
 	]);
+}
+
+// delete a single completed quest from history: r2 folder (history.bin + step binaries),
+// kv pointer, index entry, and cached reads. returns false when the quest isn't in history.
+export async function deleteQuestHistoryEntry(
+	userId: string,
+	questId: string,
+	env: Bindings
+): Promise<boolean> {
+	const pointerKey = `user:quest_history:${userId}:${questId}`;
+	const record = await env.KV.get<{ r2Key?: string }>(pointerKey, 'json');
+	if (!record) {
+		return false;
+	}
+
+	await deleteR2Prefix(env.R2, `users/${userId}/quests/${questId}/`);
+
+	const indexKey = `user:quest_history_index:${userId}`;
+	const index = (await env.KV.get<string[]>(indexKey, 'json')) || [];
+	const next = index.filter((id) => id !== questId);
+
+	await Promise.all([
+		env.KV.delete(pointerKey),
+		next.length ? env.KV.put(indexKey, JSON.stringify(next)) : env.KV.delete(indexKey),
+		clearCachePrefix(`cache:quest_history:${userId}:`, env.CACHE)
+	]);
+
+	return true;
 }
 
 export async function deleteUserDataVariant(
