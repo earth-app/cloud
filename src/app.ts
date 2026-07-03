@@ -110,6 +110,7 @@ import {
 	getQuestHistory,
 	QuestStepResponse,
 	resetQuestProgress,
+	removeQuestStepEntry,
 	startQuest,
 	updateQuestProgress,
 	handleQuizQuestStep,
@@ -138,7 +139,12 @@ import {
 	createCustomQuest,
 	updateCustomQuest
 } from './user/quests/custom';
-import { deleteUserDataVariant, deleteR2Prefix } from './util/deletion';
+import {
+	deleteUserDataVariant,
+	deleteR2Prefix,
+	deleteQuestHistoryEntry,
+	deleteQuestHistoryDataForUser
+} from './util/deletion';
 import {
 	OnboardingStepId,
 	ONBOARDING_STEPS,
@@ -2854,6 +2860,49 @@ app.delete('/users/quests/progress/:user_id/reset', async (c) => {
 		return c.text('User ID must be numeric', 400);
 	}
 
+	const stepParam = c.req.query('step');
+	if (stepParam !== undefined) {
+		const stepIndex = parseInt(stepParam, 10);
+		if (!Number.isInteger(stepIndex) || stepIndex < 0) {
+			return c.text('step must be a non-negative integer', 400);
+		}
+
+		const altParam = c.req.query('alt');
+		let altIndex: number | undefined;
+		if (altParam !== undefined) {
+			altIndex = parseInt(altParam, 10);
+			if (!Number.isInteger(altIndex) || altIndex < 0) {
+				return c.text('alt must be a non-negative integer', 400);
+			}
+		}
+
+		const rescindPoints = c.req.query('rescind_points') === 'true';
+
+		try {
+			const result = await removeQuestStepEntry(userId, stepIndex, altIndex, rescindPoints, c.env);
+			if (!result.ok) {
+				return c.json({ message: result.message, code: result.status }, result.status as any);
+			}
+			c.executionCtx.waitUntil(
+				sendUserNotification(
+					c.env,
+					userId,
+					'Quest Step Removed',
+					result.pointsRescinded
+						? `A moderator removed a step from your active quest and rescinded ${result.pointsRescinded} impact points.`
+						: 'A moderator removed a step from your active quest.',
+					undefined,
+					'warning',
+					'quest'
+				)
+			);
+			return c.json({ message: 'Step removed', pointsRescinded: result.pointsRescinded ?? 0 }, 200);
+		} catch (err) {
+			console.error(`Error removing quest step for user '${userId}':`, err);
+			return c.text('Failed to remove quest step', 500);
+		}
+	}
+
 	try {
 		// If the active quest is a mastery quest, resetting permanently locks it.
 		const activeProgress = await getCurrentQuestProgress(userId, c.env, c.executionCtx);
@@ -3092,6 +3141,88 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 	} catch (err) {
 		console.error(`Error getting completed quest '${questId}' for user '${userId}':`, err);
 		return c.text('Failed to get completed quest progress', 500);
+	}
+});
+
+// delete every completed quest from a user's history (admin moderation)
+app.delete('/users/quests/history/:user_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	if (!userId) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	try {
+		await deleteQuestHistoryDataForUser(userId, c.env);
+		c.executionCtx.waitUntil(
+			sendUserNotification(
+				c.env,
+				userId,
+				'Quest History Cleared',
+				'A moderator cleared all completed quests from your history.',
+				undefined,
+				'warning',
+				'quest'
+			)
+		);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error deleting quest history for user '${userId}':`, err);
+		return c.text('Failed to delete quest history', 500);
+	}
+});
+
+// delete a single completed quest from a user's history (admin moderation)
+app.delete('/users/quests/history/:user_id/:quest_id', async (c) => {
+	const userId = c.req.param('user_id')?.toLowerCase();
+	const questId = c.req.param('quest_id')?.toLowerCase();
+	if (!userId || !questId) {
+		return c.text('User ID and Quest ID are required', 400);
+	}
+
+	if (userId.length < 3 || userId.length > 50) {
+		return c.text('User ID must be between 3 and 50 characters', 400);
+	}
+
+	if (!/^\d+$/.test(userId)) {
+		return c.text('User ID must be numeric', 400);
+	}
+
+	if (questId.length < 3 || questId.length > 80) {
+		return c.text('Quest ID must be between 3 and 80 characters', 400);
+	}
+
+	if (!/^[a-z0-9_-]+$/.test(questId)) {
+		return c.text('Quest ID must be alphanumeric with optional dashes or underscores', 400);
+	}
+
+	try {
+		const removed = await deleteQuestHistoryEntry(userId, questId, c.env);
+		if (!removed) {
+			return c.text('Completed quest not found', 404);
+		}
+		c.executionCtx.waitUntil(
+			sendUserNotification(
+				c.env,
+				userId,
+				'Quest Removed',
+				'A moderator removed a completed quest from your history.',
+				undefined,
+				'warning',
+				'quest'
+			)
+		);
+		return c.body(null, 204);
+	} catch (err) {
+		console.error(`Error deleting completed quest '${questId}' for user '${userId}':`, err);
+		return c.text('Failed to delete completed quest', 500);
 	}
 });
 

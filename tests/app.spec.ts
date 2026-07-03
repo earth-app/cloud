@@ -167,6 +167,8 @@ describe('app route registration', () => {
 				'GET /users/quests/progress/:user_id/step/:step_index',
 				'GET /users/quests/history/:user_id',
 				'GET /users/quests/history/:user_id/:quest_id',
+				'DELETE /users/quests/history/:user_id',
+				'DELETE /users/quests/history/:user_id/:quest_id',
 				'GET /events/thumbnail/:id',
 				'GET /events/thumbnail/:id/metadata',
 				'POST /events/thumbnail/:id',
@@ -360,6 +362,96 @@ describe('GET /users/quests', () => {
 		const json = await response.json<unknown[]>();
 		expect(Array.isArray(json)).toBe(true);
 		expect(json.length).toBeGreaterThan(0);
+	});
+});
+
+describe('admin quest moderation routes', () => {
+	async function seedHistory(
+		bindings: ReturnType<typeof createMockBindings>,
+		userId: string,
+		questId: string
+	) {
+		const r2Key = `users/${userId}/quests/${questId}/history.bin`;
+		await bindings.KV.put(
+			`user:quest_history:${userId}:${questId}`,
+			JSON.stringify({ r2Key, completedAt: Date.now() }),
+			{
+				metadata: { questId, completedAt: Date.now() }
+			}
+		);
+		await bindings.KV.put(`user:quest_history_index:${userId}`, JSON.stringify([questId]));
+		await bindings.R2.put(r2Key, new Uint8Array([1]));
+	}
+
+	it('DELETE /users/quests/history/:user_id/:quest_id removes one completed quest', async () => {
+		const bindings = createMockBindings();
+		await seedHistory(bindings, '810', 'fun_facts');
+
+		const res = await callApp(
+			'/users/quests/history/810/fun_facts',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(res.status).toBe(204);
+		expect(await bindings.KV.get('user:quest_history:810:fun_facts')).toBeNull();
+	});
+
+	it('DELETE /users/quests/history/:user_id/:quest_id 404s when not in history', async () => {
+		const bindings = createMockBindings();
+		const res = await callApp(
+			'/users/quests/history/811/fun_facts',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(res.status).toBe(404);
+	});
+
+	it('DELETE /users/quests/history/:user_id clears all completed quests', async () => {
+		const bindings = createMockBindings();
+		await seedHistory(bindings, '812', 'fun_facts');
+
+		const res = await callApp('/users/quests/history/812', { method: 'DELETE' }, true, bindings);
+		expect(res.status).toBe(204);
+		expect(await bindings.KV.get('user:quest_history_index:812')).toBeNull();
+	});
+
+	it('DELETE /users/quests/progress/:user_id/reset?step removes a single step', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put(
+			'user:quest_progress:813',
+			JSON.stringify([{ type: 'order_items', index: 0, submittedAt: Date.now() }]),
+			{
+				metadata: {
+					questId: 'vegetable_head',
+					currentStep: 1,
+					completed: false,
+					startedAt: Date.now()
+				}
+			}
+		);
+
+		const res = await callApp(
+			'/users/quests/progress/813/reset?step=0',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(res.status).toBe(200);
+		const stored = await bindings.KV.getWithMetadata('user:quest_progress:813', 'json');
+		expect((stored.value as any[]).length).toBe(0);
+	});
+
+	it('DELETE /users/quests/progress/:user_id/reset?step rejects an invalid step param', async () => {
+		const bindings = createMockBindings();
+		const res = await callApp(
+			'/users/quests/progress/814/reset?step=-1',
+			{ method: 'DELETE' },
+			true,
+			bindings
+		);
+		expect(res.status).toBe(400);
 	});
 });
 
