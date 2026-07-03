@@ -4,7 +4,7 @@ import { getQuest, QuestStep, Quest } from '.';
 import type { CustomQuest } from './custom';
 import { ActivityType, Bindings, ExecutionCtxLike } from '../../util/types';
 import { deflate, encrypt, inflate, decrypt, normalizeId } from '../../util/util';
-import { addImpactPoints } from '../points';
+import { addImpactPoints, removeImpactPoints } from '../points';
 import { notifyChallengeStep } from '../challenges';
 import { pushLiveMessage, sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
@@ -75,6 +75,9 @@ export type QuestStepProgressEntry = {
 	altIndex?: number;
 	submittedAt: number; // unix ms when this step was submitted
 	migrated?: QuestMigrationInfo; // present iff this entry was rewritten by the migration pass
+	// captured at submission for moderation (spot desktop-spoofed / location-mismatched entries)
+	device?: { make?: string; model?: string; os?: string; latitude?: number; longitude?: number };
+	pointsAwarded?: number; // impact points awarded for this step (step reward + quest reward on completion)
 } & (
 	| {
 			type:
@@ -972,6 +975,138 @@ export async function resetQuestProgress(userId: string, bindings: Bindings) {
 	console.log(`User ${userId} reset their active quest progress`);
 }
 
+export type RemoveStepResult = {
+	ok: boolean;
+	status: number;
+	message?: string;
+	pointsRescinded?: number;
+};
+
+export async function removeQuestStepEntry(
+	userId: string,
+	stepIndex: number,
+	altIndex: number | undefined,
+	rescindPoints: boolean,
+	bindings: Bindings
+): Promise<RemoveStepResult> {
+	const userId0 = normalizeId(userId);
+	const res = await bindings.KV.getWithMetadata<
+		(QuestStepProgressEntry | QuestStepProgressEntry[])[],
+		QuestProgress
+	>(`user:quest_progress:${userId0}`, 'json');
+
+	const progress = res.value;
+	const metadata = res.metadata;
+	if (!progress || !metadata || !metadata.questId) {
+		return { ok: false, status: 404, message: 'No active quest found' };
+	}
+
+	// completed quests live immutably in history
+	if (metadata.completed) {
+		return { ok: false, status: 409, message: 'Cannot remove a step from a completed quest' };
+	}
+
+	const quest = await getQuest(metadata.questId, bindings, userId0);
+	if (!quest) {
+		return { ok: false, status: 404, message: 'No active quest found' };
+	}
+
+	if (stepIndex < 0 || stepIndex >= quest.steps.length) {
+		return { ok: false, status: 400, message: 'Invalid step index' };
+	}
+
+	const slot = progress[stepIndex];
+	if (slot === undefined || slot === null || (Array.isArray(slot) && slot.length === 0)) {
+		return { ok: false, status: 404, message: 'Step has no recorded progress' };
+	}
+
+	// decide what gets removed and whether that empties the step
+	let entriesToRemove: QuestStepProgressEntry[];
+	let removeWholeStep: boolean;
+	let remainingAlts: QuestStepProgressEntry[] = [];
+
+	if (Array.isArray(slot)) {
+		if (altIndex === undefined) {
+			entriesToRemove = slot;
+			removeWholeStep = true;
+		} else {
+			entriesToRemove = slot.filter((e) => (e.altIndex ?? 0) === altIndex);
+			if (entriesToRemove.length === 0) {
+				return { ok: false, status: 404, message: 'Alternate not completed' };
+			}
+			remainingAlts = slot.filter((e) => (e.altIndex ?? 0) !== altIndex);
+			removeWholeStep = remainingAlts.length === 0;
+		}
+	} else {
+		entriesToRemove = [slot];
+		removeWholeStep = true;
+	}
+
+	// timeline guard: emptying a step is only safe when nothing after it has progress (i.e. it is
+	// the last completed step). covers singular non-last steps and middle alt-groups with one alt.
+	const hasLaterProgress = progress
+		.slice(stepIndex + 1)
+		.some((s) => (Array.isArray(s) ? s.length > 0 : s !== undefined && s !== null));
+	if (removeWholeStep && hasLaterProgress) {
+		return {
+			ok: false,
+			status: 409,
+			message:
+				'Removing this step would break the timeline; only the last completed step or a redundant alternate can be removed'
+		};
+	}
+
+	// delete the removed entries' r2 binaries
+	await Promise.all(
+		entriesToRemove
+			.filter((e): e is QuestStepProgressEntry & { r2Key: string } => 'r2Key' in e && !!e.r2Key)
+			.map((e) => bindings.R2.delete(e.r2Key))
+	);
+
+	// rebuild the progress array + currentStep
+	let updatedProgress: (QuestStepProgressEntry | QuestStepProgressEntry[])[];
+	let newCurrentStep = metadata.currentStep;
+	if (removeWholeStep) {
+		// drop this step (nothing later has progress) and roll the cursor back to it
+		updatedProgress = progress.slice(0, stepIndex);
+		newCurrentStep = stepIndex;
+	} else {
+		// redundant alternate removal: keep the step, currentStep unchanged
+		updatedProgress = [...progress];
+		updatedProgress[stepIndex] = remainingAlts;
+	}
+
+	await bindings.KV.put(`user:quest_progress:${userId0}`, JSON.stringify(updatedProgress), {
+		metadata: {
+			questId: metadata.questId,
+			currentStep: newCurrentStep,
+			completed: false,
+			startedAt: metadata.startedAt,
+			hashes: metadata.hashes
+		} satisfies QuestProgress
+	});
+
+	// optionally claw back the points those entries awarded
+	let pointsRescinded = 0;
+	if (rescindPoints) {
+		pointsRescinded = entriesToRemove.reduce((sum, e) => sum + (e.pointsAwarded ?? 0), 0);
+		if (pointsRescinded > 0) {
+			await removeImpactPoints(
+				userId0,
+				pointsRescinded,
+				`Quest "${quest.title}" | Step #${stepIndex + 1} progress removed`,
+				bindings.KV
+			);
+		}
+	}
+
+	console.log(
+		`Admin removed step ${stepIndex}${altIndex !== undefined ? ` alt ${altIndex}` : ''} from active quest "${quest.title}" for user ${userId} (points rescinded: ${pointsRescinded})`
+	);
+
+	return { ok: true, status: 200, pointsRescinded };
+}
+
 // phase markers consumed by Server-Timing in the quest-submit handler. opt-in so other
 // call sites (timer.ts, event submissions) don't need to know about timing diagnostics
 export type QuestPhaseRecorder = (phase: string) => void;
@@ -1115,6 +1250,17 @@ export async function updateQuestProgress(
 	const advancesStep = isFirstCompletionOfStep && idx === metadata.currentStep;
 	const isLastStep = metadata.currentStep === quest.steps.length - 1;
 	const completed = advancesStep && isLastStep;
+
+	// attach moderation metadata (entry is held by reference in updatedProgress): submitting
+	// device + the points this step awards (step reward + quest reward on completion)
+	progressEntry.device = {
+		make: device.make,
+		model: device.model,
+		os: device.os,
+		latitude: device.latitude,
+		longitude: device.longitude
+	};
+	progressEntry.pointsAwarded = (submittingStep.reward ?? 0) + (completed ? quest.reward : 0);
 	const newStepIndex = completed
 		? metadata.currentStep
 		: metadata.currentStep + (advancesStep ? 1 : 0);
