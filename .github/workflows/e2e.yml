@@ -23,3 +23,10 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             https://api.github.com/repos/earth-app/sky/dispatches \
             -d '{"event_type":"cloud-update"}'
+      - name: Dispatch to mantle2
+        run: |
+          curl -X POST \
+            -H "Authorization: Bearer ${{ secrets.MANTLE2_AUTH_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/earth-app/mantle2/dispatches \
+            -d '{"event_type":"cloud-update"}'
