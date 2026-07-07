@@ -79,6 +79,35 @@ describe('moderateText', () => {
 		expect(result.labels).toEqual(['sexual']);
 		expect(result.severe).toBe(true);
 	});
+
+	it('retries a transient guard failure and then returns the verdict', async () => {
+		let calls = 0;
+		const run = vi.fn(async () => {
+			calls++;
+			if (calls < 2) throw new Error('guard 5xx');
+			return { response: 'unsafe\nS10' };
+		});
+		const env = createMockBindings({ AI: { run } as unknown as Bindings['AI'] });
+
+		const result = await moderateText(env, 'bad text');
+		expect(result.flagged).toBe(true);
+		expect(result.labels).toEqual(['hate_speech']);
+		expect(run).toHaveBeenCalledTimes(2);
+	});
+
+	it('fails safe (not flagged, no throw) when the guard is persistently unavailable', async () => {
+		const run = vi.fn(async () => {
+			throw new Error('guard down');
+		});
+		const env = createMockBindings({ AI: { run } as unknown as Bindings['AI'] });
+
+		// a persistent AI failure must never auto-flag or throw; degrade to human review
+		const result = await moderateText(env, 'possibly bad text');
+		expect(result.flagged).toBe(false);
+		expect(result.severe).toBe(false);
+		expect(result.labels).toEqual([]);
+		expect(run).toHaveBeenCalledTimes(3);
+	});
 });
 
 describe('moderateImage', () => {

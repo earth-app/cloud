@@ -1489,4 +1489,55 @@ describe('validateStep', () => {
 			expect(result.message).toContain('required score threshold of 0.85');
 		});
 	});
+
+	describe('AI reliability (retry + graceful degrade)', () => {
+		const criteria = [{ id: 'clarity', weight: 1, ideal: 'clear and specific response' }];
+
+		function describeTextStep() {
+			return {
+				step: {
+					type: 'describe_text',
+					description: 'Describe your favorite outdoor activity',
+					parameters: [criteria, 0.7, 50]
+				} as any,
+				response: {
+					type: 'describe_text',
+					index: 0,
+					text: 'I enjoy hiking in forest preserves because it helps me clear my mind.'
+				} as any,
+				device: { make: 'unknown', model: 'unknown', os: 'unknown' } as any
+			};
+		}
+
+		it('retries a transient AI failure and then succeeds', async () => {
+			const { step, response, device } = describeTextStep();
+
+			// first attempt throws (transient 5xx), retry succeeds via the beforeEach default (0.9)
+			mockScoreText.mockReset();
+			mockScoreText
+				.mockRejectedValueOnce(new Error('AI transient 5xx'))
+				.mockResolvedValue({ score: 0.9, breakdown: [] } as any);
+
+			const result = await validateStep(step, response, createMockBindings(), device);
+
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(0.9);
+			expect(mockScoreText).toHaveBeenCalledTimes(2);
+		});
+
+		it('degrades gracefully (no throw / no 500) when the AI is persistently unavailable', async () => {
+			const { step, response, device } = describeTextStep();
+
+			mockScoreText.mockReset();
+			mockScoreText.mockRejectedValue(new Error('AI persistently down'));
+
+			// must resolve, never reject — a rejection here would surface as a 500 to the client
+			const result = await validateStep(step, response, createMockBindings(), device);
+
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('temporarily unavailable');
+			// exhausts the bounded retry budget rather than failing on the first error
+			expect(mockScoreText).toHaveBeenCalledTimes(3);
+		});
+	});
 });

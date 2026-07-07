@@ -449,6 +449,110 @@ describe('createArticleQuiz', () => {
 		expect(result[0].question).toBe('Q1');
 	});
 
+	it('retries a transient generation failure and then returns questions', async () => {
+		const questions: ArticleQuizQuestion[] = [
+			{
+				question: 'Q1',
+				type: 'multiple_choice',
+				options: ['A', 'B', 'C', 'D'],
+				correct_answer: 'A',
+				correct_answer_index: 0
+			}
+		];
+		let calls = 0;
+		const run = vi.fn(async () => {
+			calls++;
+			if (calls < 2) throw new Error('quiz model 5xx');
+			return { response: JSON.stringify({ questions }) };
+		});
+		const ai = { run } as any;
+
+		const result = await createArticleQuiz(
+			{
+				title: 'Title',
+				content: 'Body',
+				tags: [],
+				ocean: {
+					title: 'Title',
+					author: 'Author',
+					source: 'Source',
+					url: 'https://example.com/ocean',
+					keywords: [],
+					date: '2026-01-01',
+					links: {}
+				}
+			},
+			ai
+		);
+
+		expect(result).toHaveLength(1);
+		expect(run).toHaveBeenCalledTimes(2);
+	});
+
+	it('re-asks on malformed json and falls back to an empty quiz when it stays malformed', async () => {
+		const run = vi.fn(async () => ({ response: 'this is not json at all' }));
+		const ai = { run } as any;
+
+		const result = await createArticleQuiz(
+			{
+				title: 'Title',
+				content: 'Body',
+				tags: [],
+				ocean: {
+					title: 'Title',
+					author: 'Author',
+					source: 'Source',
+					url: 'https://example.com/ocean',
+					keywords: [],
+					date: '2026-01-01',
+					links: {}
+				}
+			},
+			ai
+		);
+
+		// graceful fallback: article creation proceeds without a quiz, no throw
+		expect(result).toEqual([]);
+		expect(run).toHaveBeenCalledTimes(3);
+	});
+
+	it('parses the chat-completions choices shape as well as .response', async () => {
+		const questions: ArticleQuizQuestion[] = [
+			{
+				question: 'Q1',
+				type: 'multiple_choice',
+				options: ['A', 'B', 'C', 'D'],
+				correct_answer: 'A',
+				correct_answer_index: 0
+			}
+		];
+		const run = vi.fn(async () => ({
+			choices: [{ message: { content: JSON.stringify({ questions }) } }]
+		}));
+		const ai = { run } as any;
+
+		const result = await createArticleQuiz(
+			{
+				title: 'Title',
+				content: 'Body',
+				tags: [],
+				ocean: {
+					title: 'Title',
+					author: 'Author',
+					source: 'Source',
+					url: 'https://example.com/ocean',
+					keywords: [],
+					date: '2026-01-01',
+					links: {}
+				}
+			},
+			ai
+		);
+
+		expect(result).toHaveLength(1);
+		expect(result[0].question).toBe('Q1');
+	});
+
 	it('sends the summary as the primary source and the scientific text as supporting context', async () => {
 		const run = vi.fn(async () => ({ response: JSON.stringify({ questions: [] }) }));
 		const ai = { run } as any;
