@@ -3,6 +3,7 @@ import { downscaleImageForAI } from '../ferry';
 import { getEventImage } from '../../user/submissions';
 import { ContentReport, getReport, patchReportStatus, setReportAi, ReportReason } from '../reports';
 import { fetchReportableContentText, requestContentRemoval } from '../../util/mantle2';
+import { runAI } from '../../util/ai-runtime';
 
 const textSafetyModel = '@cf/meta/llama-guard-3-8b';
 const imageCaptionModel = '@cf/llava-hf/llava-1.5-7b-hf';
@@ -57,9 +58,19 @@ export async function moderateText(env: Bindings, text: string): Promise<Moderat
 		return { model: textSafetyModel, flagged: false, confidence: 0, labels: [], severe: false };
 	}
 
-	const res = (await env.AI.run(textSafetyModel as any, {
-		messages: [{ role: 'user', content: trimmed }]
-	})) as { response?: string };
+	let res: { response?: string };
+	try {
+		res = (await runAI('moderateText', () =>
+			env.AI.run(textSafetyModel as any, {
+				messages: [{ role: 'user', content: trimmed }]
+			})
+		)) as { response?: string };
+	} catch (err) {
+		// fail-safe: a spent ai budget must not auto-remove; leave the content unflagged
+		// for human review rather than acting on a garbage/absent verdict
+		console.error('moderateText: ai scoring unavailable, degrading to not-flagged', { err });
+		return { model: textSafetyModel, flagged: false, confidence: 0, labels: [], severe: false };
+	}
 
 	const out = parseGuardOutput(typeof res?.response === 'string' ? res.response : '');
 	return {
@@ -74,11 +85,20 @@ export async function moderateText(env: Bindings, text: string): Promise<Moderat
 export async function moderateImage(env: Bindings, image: Uint8Array): Promise<ModerationResult> {
 	// no server nsfw model: caption the image, then run the caption through the text guard
 	const scaled = await downscaleImageForAI(env, image);
-	const caption = (await env.AI.run(imageCaptionModel as any, {
-		image: [...new Uint8Array(scaled)],
-		prompt: 'Describe this image in detail for content safety review.',
-		max_tokens: 512
-	})) as { description?: string };
+	let caption: { description?: string };
+	try {
+		caption = (await runAI('moderateImage:caption', () =>
+			env.AI.run(imageCaptionModel as any, {
+				image: [...new Uint8Array(scaled)],
+				prompt: 'Describe this image in detail for content safety review.',
+				max_tokens: 512
+			})
+		)) as { description?: string };
+	} catch (err) {
+		// fail-safe: no caption means no basis to flag; leave for human review
+		console.error('moderateImage: captioning unavailable, degrading to not-flagged', { err });
+		return { model: imageCaptionModel, flagged: false, confidence: 0, labels: [], severe: false };
+	}
 
 	return moderateText(env, caption?.description?.trim() || '');
 }
