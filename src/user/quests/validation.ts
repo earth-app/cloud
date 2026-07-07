@@ -13,6 +13,7 @@ import { parseBuffer } from 'music-metadata';
 import { isInsideLocation } from '../../util/util';
 import { Bindings } from '../../util/types';
 import { QuestStepResponse } from './tracking';
+import { runAI, AITimeoutError } from '../../util/ai-runtime';
 
 const USER_AGENT = '@earth-app/cloud v1.0 (support@earth-app.com)';
 
@@ -26,24 +27,26 @@ class AIValidationTimeoutError extends Error {
 	}
 }
 
-// race a workers-ai promise against an 8s AbortController. note: env.AI.run / IMAGES
-// transform do not accept an AbortSignal, so the underlying call may keep running on
-// cloudflare's side — we just stop waiting and let the validator return a retry message
 async function withAITimeout<T>(kind: string, fn: () => Promise<T>): Promise<T> {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), AI_VALIDATION_TIMEOUT_MS);
 	try {
-		return await new Promise<T>((resolve, reject) => {
-			controller.signal.addEventListener(
-				'abort',
-				() => reject(new AIValidationTimeoutError(kind)),
-				{ once: true }
-			);
-			fn().then(resolve, reject);
+		return await runAI(kind, fn, {
+			attempts: 3,
+			perAttemptTimeoutMs: 4000,
+			totalTimeoutMs: AI_VALIDATION_TIMEOUT_MS,
+			backoffMs: 150
 		});
-	} finally {
-		clearTimeout(timer);
+	} catch (err) {
+		if (err instanceof AITimeoutError) throw new AIValidationTimeoutError(kind);
+		throw err;
 	}
+}
+
+// fail-safe result when AI scoring is exhausted: never auto-pass, never 500, never hang
+function aiUnavailableResult(): { success: false; message: string } {
+	return {
+		success: false,
+		message: 'Validation is temporarily unavailable. Please try again in a moment.'
+	};
 }
 
 export const API_DEVICE_METADATA: QuestDeviceMetadata = {
@@ -849,7 +852,7 @@ async function validateStepAudio(
 				message: 'Audio validation timed out — please retry.'
 			};
 		}
-		throw err;
+		return aiUnavailableResult();
 	}
 
 	if (score.score < normalizedThreshold.value) {
@@ -1280,7 +1283,7 @@ async function validateStepPhoto(
 						message: 'Photo validation timed out — please retry.'
 					};
 				}
-				throw err;
+				return aiUnavailableResult();
 			}
 			const classification = findBestLabelConfidence(classifications, normalizedLabel);
 
@@ -1318,7 +1321,7 @@ async function validateStepPhoto(
 					message: 'Photo validation timed out — please retry.'
 				};
 			}
-			throw err;
+			return aiUnavailableResult();
 		}
 		const requiredScores: number[] = [];
 
@@ -1379,7 +1382,7 @@ async function validateStepPhoto(
 					message: 'Photo validation timed out — please retry.'
 				};
 			}
-			throw err;
+			return aiUnavailableResult();
 		}
 		if (score.score < normalizedThreshold.value) {
 			return {
@@ -1421,7 +1424,7 @@ async function validateStepPhoto(
 					message: 'Photo validation timed out — please retry.'
 				};
 			}
-			throw err;
+			return aiUnavailableResult();
 		}
 
 		if (score.score < normalizedThreshold.value) {
@@ -1477,7 +1480,7 @@ async function validateStepPhoto(
 					message: 'Photo validation timed out — please retry.'
 				};
 			}
-			throw err;
+			return aiUnavailableResult();
 		}
 
 		if (score.score < normalizedThreshold.value) {
@@ -1562,7 +1565,7 @@ async function validateDrawing(
 				message: 'Drawing validation timed out — please retry.'
 			};
 		}
-		throw err;
+		return aiUnavailableResult();
 	}
 	if (score.score < normalizedThreshold.value) {
 		return {
@@ -1644,7 +1647,7 @@ async function validateDescribeText(
 				message: 'Text validation timed out — please retry.'
 			};
 		}
-		throw err;
+		return aiUnavailableResult();
 	}
 	if (score.score < normalizedThreshold.value) {
 		return {
