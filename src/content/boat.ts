@@ -15,6 +15,7 @@ import * as prompts from '../util/ai';
 import { isPlaceBirthdaySource } from '../util/ai';
 import { chunkArray, batchProcess } from '../util/util';
 import { toOrdinal, splitContent, stripMarkdownCodeFence, getSynonyms } from '../util/lang';
+import { runAI, extractAIText } from '../util/ai-runtime';
 import {
 	Entry,
 	ExactDateEntry,
@@ -503,13 +504,33 @@ export async function createArticleQuiz(
 				'\n\nReturn ONLY a JSON object of the form {"questions": [ ... ]}. No markdown, no prose.'
 		});
 
-		const quizResult = (await ai.run(quizModel, {
-			messages,
-			max_tokens: 4096, // room for up to 10 questions without truncating the JSON
-			temperature: 0.3
-		} as any)) as { response?: unknown };
+		// bounded retry so a transient miss or a malformed json blob gets another schema-constrained
+		// pass before we fall back; extractAIText tolerates both `.response` and chat-completions shapes
+		const quizResult = (await runAI(
+			'createArticleQuiz',
+			() =>
+				ai.run(quizModel, {
+					messages,
+					max_tokens: 4096, // room for up to 10 questions without truncating the JSON
+					temperature: 0.3
+				} as any),
+			{
+				attempts: 3,
+				perAttemptTimeoutMs: 15000,
+				totalTimeoutMs: 40000,
+				// treat an unparseable / empty quiz as retryable so we re-ask before giving up
+				shouldRetryResult: (v) => {
+					const parsed = coerceQuizResult(
+						extractAIText(v) || (v as { response?: unknown })?.response
+					);
+					return !parsed || !Array.isArray(parsed.questions) || parsed.questions.length === 0;
+				}
+			}
+		)) as { response?: unknown };
 
-		const parsedResult = coerceQuizResult(quizResult?.response);
+		const parsedResult = coerceQuizResult(
+			extractAIText(quizResult) || (quizResult as { response?: unknown })?.response
+		);
 		if (!parsedResult) {
 			console.error('createArticleQuiz: model returned no usable quiz', {
 				responseType: typeof quizResult?.response,
