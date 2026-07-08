@@ -17,8 +17,8 @@ import { runAI, AITimeoutError } from '../../util/ai-runtime';
 
 const USER_AGENT = '@earth-app/cloud v1.0 (support@earth-app.com)';
 
-// hard cap so a cold workers-ai start can't stack past mantle2's 10s curl timeout
-const AI_VALIDATION_TIMEOUT_MS = 8000;
+// hard cap so a cold workers-ai start can't stack past crust's timeout
+const AI_VALIDATION_TIMEOUT_MS = 33000;
 
 class AIValidationTimeoutError extends Error {
 	constructor(public readonly kind: string) {
@@ -31,7 +31,7 @@ async function withAITimeout<T>(kind: string, fn: () => Promise<T>): Promise<T> 
 	try {
 		return await runAI(kind, fn, {
 			attempts: 3,
-			perAttemptTimeoutMs: 4000,
+			perAttemptTimeoutMs: AI_VALIDATION_TIMEOUT_MS / 3,
 			totalTimeoutMs: AI_VALIDATION_TIMEOUT_MS,
 			backoffMs: 150
 		});
@@ -1280,7 +1280,7 @@ async function validateStepPhoto(
 				if (err instanceof AIValidationTimeoutError) {
 					return {
 						success: false,
-						message: 'Photo validation timed out — please retry.'
+						message: 'Photo validation timed out, please retry.'
 					};
 				}
 				return aiUnavailableResult();
@@ -1318,7 +1318,7 @@ async function validateStepPhoto(
 			if (err instanceof AIValidationTimeoutError) {
 				return {
 					success: false,
-					message: 'Photo validation timed out — please retry.'
+					message: 'Photo validation timed out, please retry.'
 				};
 			}
 			return aiUnavailableResult();
@@ -1379,7 +1379,7 @@ async function validateStepPhoto(
 			if (err instanceof AIValidationTimeoutError) {
 				return {
 					success: false,
-					message: 'Photo validation timed out — please retry.'
+					message: 'Photo validation timed out, please retry.'
 				};
 			}
 			return aiUnavailableResult();
@@ -1421,7 +1421,7 @@ async function validateStepPhoto(
 			if (err instanceof AIValidationTimeoutError) {
 				return {
 					success: false,
-					message: 'Photo validation timed out — please retry.'
+					message: 'Photo validation timed out, please retry.'
 				};
 			}
 			return aiUnavailableResult();
@@ -1477,7 +1477,7 @@ async function validateStepPhoto(
 			if (err instanceof AIValidationTimeoutError) {
 				return {
 					success: false,
-					message: 'Photo validation timed out — please retry.'
+					message: 'Photo validation timed out, please retry.'
 				};
 			}
 			return aiUnavailableResult();
