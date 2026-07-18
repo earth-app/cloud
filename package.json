@@ -1,7 +1,7 @@
 {
   "private": true,
   "name": "@earth-app/cloud",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "The Automaton behind The Earth App",
   "scripts": {
     "test": "bunx vitest run",
@@ -14,24 +14,23 @@
     "prepare": "husky install"
   },
   "dependencies": {
-    "@cloudflare/workerd-darwin-arm64": "^1.20260703.1",
     "@earth-app/moho": "^1.0.2",
     "@earth-app/ocean": "^1.1.0",
     "@types/bun": "^1.3.14",
     "@types/pako": "^2.0.4",
     "exifreader": "^4.41.0",
-    "hono": "^4.12.27",
-    "music-metadata": "^11.13.0",
-    "pako": "^3.0.0"
+    "hono": "^4.12.30",
+    "music-metadata": "^11.14.0",
+    "pako": "^3.0.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.0",
+    "@cloudflare/vitest-pool-workers": "^0.18.6",
     "@vitest/coverage-istanbul": "4.1.9",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
-    "prettier": "^3.9.4",
-    "vitest": "^4.1.9",
-    "wrangler": "^4.107.0"
+    "prettier": "^3.9.5",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.112.0"
   },
   "lint-staged": {
     "*.{js,ts,json,yml,md}": "prettier --write"
