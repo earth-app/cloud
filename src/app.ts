@@ -20,6 +20,11 @@ import {
 } from './content/thumbnails';
 import { getSynonyms } from './util/lang';
 import * as prompts from './util/ai';
+import {
+	generateMarketingContent,
+	MARKETING_CONTENT_KINDS,
+	type MarketingContentKind
+} from './admin/marketing';
 
 import { ActivityType, Article, Bindings, Event, ExecutionCtxLike } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
@@ -184,6 +189,28 @@ import {
 } from './content/reports';
 import { getStrikes, addStrike, resetStrikes } from './content/moderation/strikes';
 import { moderateReport } from './content/moderation/ai';
+import {
+	getAllTrails,
+	getTrail,
+	isTrailLocked,
+	getNatureMinutes,
+	addNatureMinutes,
+	type NatureMinutesKind
+} from './user/trails';
+import {
+	startExpedition,
+	getExpedition,
+	getExpeditionByOwner,
+	creditContribution,
+	computeGarden,
+	isExpeditionGoal
+} from './user/expeditions';
+import {
+	createTrailmark,
+	getNearbyTrailmarks,
+	thankTrailmark,
+	TRAILMARK_LIMITS
+} from './user/trailmarks';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -626,6 +653,35 @@ app.get('/activity/:id', async (c) => {
 		}),
 		200
 	);
+});
+
+// Marketing Studio
+
+app.post('/admin/marketing/generate', async (c) => {
+	let body: { kind?: string; hint?: string };
+	try {
+		body = await c.req.json<{ kind?: string; hint?: string }>();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const kind = body.kind;
+	if (!kind || !(MARKETING_CONTENT_KINDS as string[]).includes(kind)) {
+		return c.text(`kind must be one of ${MARKETING_CONTENT_KINDS.join(', ')}`, 400);
+	}
+
+	const hint = typeof body.hint === 'string' ? body.hint.slice(0, 200) : undefined;
+
+	try {
+		const result = await generateMarketingContent(kind as MarketingContentKind, hint, c.env);
+		return c.json(result, 200);
+	} catch (err) {
+		console.error('Marketing dry-run generation failed', { kind, err });
+		return c.text(
+			`Failed to generate ${kind}: ${err instanceof Error ? err.message : 'Unknown error'}`,
+			500
+		);
+	}
 });
 
 // Articles
@@ -4195,6 +4251,293 @@ app.post('/mood/:topic/:date', async (c) => {
 
 	const snapshot = await recordMood(c.env, topic, date, body.emoji);
 	return c.json(snapshot, 200);
+});
+
+// Curiosity Trails - themed quest-chains + the personal weekly nature-minutes ring.
+// a trail RUN reuses the quest engine: getQuest resolves trail_* ids, so start/progress
+// ride the existing /users/quests/progress routes (premium gate enforced there).
+
+app.get('/v1/trails', async (c) => {
+	// full catalog incl. premium/seasonal (each carries its own flags); mirrors the quest
+	// list which returns premium quests to everyone and gates at start time
+	return c.json(getAllTrails(), 200);
+});
+
+app.get('/v1/trails/:id', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('Trail ID is required', 400);
+	}
+
+	const trail = getTrail(id);
+	if (!trail) {
+		return c.text('Trail not found', 404);
+	}
+
+	// defense-in-depth gate: when a rank is supplied, a free rank can't open a locked trail
+	const rank = normalizeQuestRank(c.req.query('rank'));
+	if (isTrailLocked(trail) && rank === 'free') {
+		return c.text('Premium and seasonal trails require a non-free rank', 403);
+	}
+
+	return c.json(trail, 200);
+});
+
+function parseNatureUid(value: string | undefined): string | null {
+	const uid = normalizeId(value || '');
+	return uid && /^\d+$/.test(uid) ? uid : null;
+}
+
+const WEEK_RE = /^\d{4}-W\d{2}$/;
+
+app.get('/v1/users/nature-minutes', async (c) => {
+	const uid = parseNatureUid(c.req.query('uid') || c.req.query('user_id'));
+	if (!uid) {
+		return c.text('Valid uid is required', 400);
+	}
+
+	const weekParam = c.req.query('week');
+	const week = weekParam && WEEK_RE.test(weekParam) ? weekParam : undefined;
+
+	const nm = await getNatureMinutes(c.env, uid, week);
+	return c.json(nm, 200);
+});
+
+app.post('/v1/users/nature-minutes', async (c) => {
+	let body: { uid?: string; user_id?: string; minutes?: number; kind?: string; ref_id?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const uid = parseNatureUid(body.uid || body.user_id);
+	if (!uid) {
+		return c.text('Valid uid is required', 400);
+	}
+
+	if (typeof body.minutes !== 'number' || !Number.isFinite(body.minutes) || body.minutes <= 0) {
+		return c.text('minutes must be a positive number', 400);
+	}
+
+	const kinds: NatureMinutesKind[] = ['trail_step', 'quest', 'healthkit', 'manual'];
+	const kind = kinds.includes(body.kind as NatureMinutesKind)
+		? (body.kind as NatureMinutesKind)
+		: 'manual';
+
+	const nm = await addNatureMinutes(c.env, uid, body.minutes, kind, body.ref_id);
+	return c.json(nm, 200);
+});
+
+// Circles & Expeditions + Garden
+
+function parseOwner(value: string | undefined): string | null {
+	const owner = normalizeId(value || '');
+	return owner && /^\d+$/.test(owner) ? owner : null;
+}
+
+app.post('/v1/circles/:owner/expedition', async (c) => {
+	const owner = parseOwner(c.req.param('owner'));
+	if (!owner) {
+		return c.text('Valid owner is required', 400);
+	}
+
+	let body: {
+		title?: string;
+		goal?: string;
+		target?: number;
+		ends_at?: string;
+		members?: { uid: string; username: string }[];
+	};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	if (!isExpeditionGoal(body.goal)) {
+		return c.text('Invalid goal', 400);
+	}
+
+	if (!body.ends_at || Number.isNaN(Date.parse(body.ends_at))) {
+		return c.text('Valid ends_at is required', 400);
+	}
+
+	const exp = await startExpedition(c.env, {
+		owner_uid: owner,
+		title: body.title || 'Circle Expedition',
+		goal: body.goal,
+		target: typeof body.target === 'number' ? body.target : 120,
+		ends_at: body.ends_at,
+		members: Array.isArray(body.members) ? body.members : []
+	});
+
+	return c.json(exp, 201);
+});
+
+app.get('/v1/circles/:owner/expedition', async (c) => {
+	const owner = parseOwner(c.req.param('owner'));
+	if (!owner) {
+		return c.text('Valid owner is required', 400);
+	}
+
+	const exp = await getExpeditionByOwner(c.env, owner);
+	if (!exp) {
+		return c.text('No active expedition for this circle', 404);
+	}
+	return c.json(exp, 200);
+});
+
+app.post('/v1/circles/:owner/expedition/contribute', async (c) => {
+	const owner = parseOwner(c.req.param('owner'));
+	if (!owner) {
+		return c.text('Valid owner is required', 400);
+	}
+
+	let body: { member_uid?: string; amount?: number; username?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const member = normalizeId(body.member_uid || '');
+	if (!member || !/^\d+$/.test(member)) {
+		return c.text('Valid member_uid is required', 400);
+	}
+
+	if (typeof body.amount !== 'number' || !Number.isFinite(body.amount) || body.amount <= 0) {
+		return c.text('amount must be a positive number', 400);
+	}
+
+	const result = await creditContribution(c.env, owner, member, body.amount, body.username);
+	if (!result.ok) {
+		const status = result.reason === 'not_found' ? 404 : 409;
+		const message = result.reason === 'not_found' ? 'No active expedition' : 'Expedition is closed';
+		return c.json({ message, code: status }, status);
+	}
+
+	return c.json({ expedition: result.expedition, just_completed: result.justCompleted }, 200);
+});
+
+app.get('/v1/circles/:owner/garden', async (c) => {
+	const owner = parseOwner(c.req.param('owner'));
+	if (!owner) {
+		return c.text('Valid owner is required', 400);
+	}
+
+	// perk: animated garden variants unlock on a paid rank; free gardens still grow, calmer
+	const rank = normalizeQuestRank(c.req.query('rank'));
+	const animated = !!rank && rank !== 'free';
+
+	const minutesRaw = parseInt(c.req.query('minutes') || '0', 10);
+	const extraMinutes = Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : 0;
+
+	const exp = await getExpeditionByOwner(c.env, owner);
+	const garden = computeGarden(owner, exp, { animated, extraMinutes });
+	return c.json(garden, 200);
+});
+
+app.get('/v1/expeditions/:id', async (c) => {
+	const id = c.req.param('id');
+	if (!id || !/^[a-f0-9]{8,}$/i.test(id)) {
+		return c.text('Invalid expedition id', 400);
+	}
+
+	const exp = await getExpedition(c.env, id);
+	if (!exp) {
+		return c.text('Expedition not found', 404);
+	}
+	return c.json(exp, 200);
+});
+
+// Trailmarks
+
+app.get('/v1/trailmarks', async (c) => {
+	const lat = Number(c.req.query('lat'));
+	const lng = Number(c.req.query('lng'));
+	if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+		return c.text('Valid lat and lng are required', 400);
+	}
+
+	const radiusRaw = Number(c.req.query('radius'));
+	const radius =
+		Number.isFinite(radiusRaw) && radiusRaw > 0 ? radiusRaw : TRAILMARK_LIMITS.DEFAULT_RADIUS;
+
+	const viewer = c.req.query('viewer') || c.req.query('user_id') || undefined;
+	const marks = await getNearbyTrailmarks(c.env, lat, lng, radius, viewer);
+	return c.json(marks, 200);
+});
+
+app.post('/v1/trailmarks', async (c) => {
+	let body: {
+		author_uid?: string;
+		author_username?: string;
+		geo?: { lat?: number; lng?: number; place_label?: string };
+		note?: string;
+	};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const authorUid = normalizeId(body.author_uid || '');
+	if (!authorUid || !/^\d+$/.test(authorUid)) {
+		return c.text('Valid author_uid is required', 400);
+	}
+
+	if (!body.geo || typeof body.geo.lat !== 'number' || typeof body.geo.lng !== 'number') {
+		return c.text('Valid geo (lat, lng) is required', 400);
+	}
+
+	const result = await createTrailmark(c.env, {
+		author_uid: authorUid,
+		author_username: body.author_username,
+		geo: { lat: body.geo.lat, lng: body.geo.lng, place_label: body.geo.place_label },
+		note: body.note || ''
+	});
+
+	if (!result.ok) {
+		const message =
+			result.reason === 'invalid_geo' ? 'Invalid geo coordinates' : 'Note is empty after censoring';
+		return c.text(message, 400);
+	}
+
+	return c.json(result.trailmark, 201);
+});
+
+app.post('/v1/trailmarks/:id/thank', async (c) => {
+	const id = c.req.param('id');
+	if (!id || id.length < 6 || id.length > 64 || !/^[0-9a-z]+$/i.test(id)) {
+		return c.text('Invalid trailmark id', 400);
+	}
+
+	let body: { uid?: string; user_id?: string; username?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		body = {};
+	}
+
+	const uid = normalizeId(body.uid || body.user_id || '');
+	if (!uid || !/^\d+$/.test(uid)) {
+		return c.text('Valid uid is required', 400);
+	}
+
+	const result = await thankTrailmark(c.env, id, uid, body.username, c.executionCtx);
+	if (!result.ok) {
+		if (result.reason === 'not_found') {
+			return c.text('Trailmark not found', 404);
+		}
+		if (result.reason === 'self') {
+			return c.text('You cannot thank your own note', 400);
+		}
+		return c.json({ message: 'Already thanked', code: 409 }, 409);
+	}
+
+	// thanks tally stays private to the author; the thanker gets only an acknowledgment
+	return c.json({ thanked: true }, 200);
 });
 
 export default app;
