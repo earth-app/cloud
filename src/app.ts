@@ -4257,13 +4257,13 @@ app.post('/mood/:topic/:date', async (c) => {
 // a trail RUN reuses the quest engine: getQuest resolves trail_* ids, so start/progress
 // ride the existing /users/quests/progress routes (premium gate enforced there).
 
-app.get('/v1/trails', async (c) => {
+app.get('/trails', async (c) => {
 	// full catalog incl. premium/seasonal (each carries its own flags); mirrors the quest
 	// list which returns premium quests to everyone and gates at start time
 	return c.json(getAllTrails(), 200);
 });
 
-app.get('/v1/trails/:id', async (c) => {
+app.get('/trails/:id', async (c) => {
 	const id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('Trail ID is required', 400);
@@ -4290,7 +4290,7 @@ function parseNatureUid(value: string | undefined): string | null {
 
 const WEEK_RE = /^\d{4}-W\d{2}$/;
 
-app.get('/v1/users/nature-minutes', async (c) => {
+app.get('/users/nature-minutes', async (c) => {
 	const uid = parseNatureUid(c.req.query('uid') || c.req.query('user_id'));
 	if (!uid) {
 		return c.text('Valid uid is required', 400);
@@ -4303,7 +4303,7 @@ app.get('/v1/users/nature-minutes', async (c) => {
 	return c.json(nm, 200);
 });
 
-app.post('/v1/users/nature-minutes', async (c) => {
+app.post('/users/nature-minutes', async (c) => {
 	let body: { uid?: string; user_id?: string; minutes?: number; kind?: string; ref_id?: string };
 	try {
 		body = await c.req.json();
@@ -4336,7 +4336,7 @@ function parseOwner(value: string | undefined): string | null {
 	return owner && /^\d+$/.test(owner) ? owner : null;
 }
 
-app.post('/v1/circles/:owner/expedition', async (c) => {
+app.post('/circles/:owner/expedition', async (c) => {
 	const owner = parseOwner(c.req.param('owner'));
 	if (!owner) {
 		return c.text('Valid owner is required', 400);
@@ -4375,7 +4375,7 @@ app.post('/v1/circles/:owner/expedition', async (c) => {
 	return c.json(exp, 201);
 });
 
-app.get('/v1/circles/:owner/expedition', async (c) => {
+app.get('/circles/:owner/expedition', async (c) => {
 	const owner = parseOwner(c.req.param('owner'));
 	if (!owner) {
 		return c.text('Valid owner is required', 400);
@@ -4388,7 +4388,7 @@ app.get('/v1/circles/:owner/expedition', async (c) => {
 	return c.json(exp, 200);
 });
 
-app.post('/v1/circles/:owner/expedition/contribute', async (c) => {
+app.post('/circles/:owner/expedition/contribute', async (c) => {
 	const owner = parseOwner(c.req.param('owner'));
 	if (!owner) {
 		return c.text('Valid owner is required', 400);
@@ -4420,7 +4420,7 @@ app.post('/v1/circles/:owner/expedition/contribute', async (c) => {
 	return c.json({ expedition: result.expedition, just_completed: result.justCompleted }, 200);
 });
 
-app.get('/v1/circles/:owner/garden', async (c) => {
+app.get('/circles/:owner/garden', async (c) => {
 	const owner = parseOwner(c.req.param('owner'));
 	if (!owner) {
 		return c.text('Valid owner is required', 400);
@@ -4438,7 +4438,7 @@ app.get('/v1/circles/:owner/garden', async (c) => {
 	return c.json(garden, 200);
 });
 
-app.get('/v1/expeditions/:id', async (c) => {
+app.get('/expeditions/:id', async (c) => {
 	const id = c.req.param('id');
 	if (!id || !/^[a-f0-9]{8,}$/i.test(id)) {
 		return c.text('Invalid expedition id', 400);
@@ -4453,7 +4453,7 @@ app.get('/v1/expeditions/:id', async (c) => {
 
 // Trailmarks
 
-app.get('/v1/trailmarks', async (c) => {
+app.get('/trailmarks', async (c) => {
 	const lat = Number(c.req.query('lat'));
 	const lng = Number(c.req.query('lng'));
 	if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
@@ -4469,7 +4469,7 @@ app.get('/v1/trailmarks', async (c) => {
 	return c.json(marks, 200);
 });
 
-app.post('/v1/trailmarks', async (c) => {
+app.post('/trailmarks', async (c) => {
 	let body: {
 		author_uid?: string;
 		author_username?: string;
@@ -4507,7 +4507,7 @@ app.post('/v1/trailmarks', async (c) => {
 	return c.json(result.trailmark, 201);
 });
 
-app.post('/v1/trailmarks/:id/thank', async (c) => {
+app.post('/trailmarks/:id/thank', async (c) => {
 	const id = c.req.param('id');
 	if (!id || id.length < 6 || id.length > 64 || !/^[0-9a-z]+$/i.test(id)) {
 		return c.text('Invalid trailmark id', 400);

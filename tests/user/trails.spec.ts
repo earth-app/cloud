@@ -141,12 +141,12 @@ describe('trail + nature-minutes routes', () => {
 	afterEach(() => vi.restoreAllMocks());
 
 	it('rejects unauthenticated requests', async () => {
-		const { response } = await callApp('/v1/trails', {}, false);
+		const { response } = await callApp('/trails', {}, false);
 		expect(response.status).toBe(401);
 	});
 
 	it('GET /v1/trails returns the full catalog', async () => {
-		const { response } = await callApp('/v1/trails');
+		const { response } = await callApp('/trails');
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as unknown[];
 		expect(Array.isArray(body)).toBe(true);
@@ -154,30 +154,30 @@ describe('trail + nature-minutes routes', () => {
 	});
 
 	it('GET /v1/trails/:id resolves a trail and 404s an unknown id', async () => {
-		const ok = await callApp('/v1/trails/trail_dawn_chorus');
+		const ok = await callApp('/trails/trail_dawn_chorus');
 		expect(ok.response.status).toBe(200);
-		const missing = await callApp('/v1/trails/trail_missing');
+		const missing = await callApp('/trails/trail_missing');
 		expect(missing.response.status).toBe(404);
 	});
 
 	it('GET /v1/trails/:id gates a premium trail for a free rank', async () => {
-		const { response } = await callApp('/v1/trails/trail_night_sky?rank=free');
+		const { response } = await callApp('/trails/trail_night_sky?rank=free');
 		expect(response.status).toBe(403);
-		const pro = await callApp('/v1/trails/trail_night_sky?rank=pro');
+		const pro = await callApp('/trails/trail_night_sky?rank=pro');
 		expect(pro.response.status).toBe(200);
 	});
 
 	it('GET /v1/users/nature-minutes requires a valid uid', async () => {
-		const bad = await callApp('/v1/users/nature-minutes');
+		const bad = await callApp('/users/nature-minutes');
 		expect(bad.response.status).toBe(400);
-		const ok = await callApp('/v1/users/nature-minutes?uid=42');
+		const ok = await callApp('/users/nature-minutes?uid=42');
 		expect(ok.response.status).toBe(200);
 	});
 
 	it('POST /v1/users/nature-minutes credits the ring', async () => {
 		const bindings = createMockBindings();
 		const post = await callApp(
-			'/v1/users/nature-minutes',
+			'/users/nature-minutes',
 			{ method: 'POST', body: JSON.stringify({ uid: '42', minutes: 25, kind: 'trail_step' }) },
 			true,
 			bindings
@@ -186,13 +186,13 @@ describe('trail + nature-minutes routes', () => {
 		const body = (await post.response.json()) as { minutes: number };
 		expect(body.minutes).toBe(25);
 
-		const get = await callApp('/v1/users/nature-minutes?uid=42', {}, true, bindings);
+		const get = await callApp('/users/nature-minutes?uid=42', {}, true, bindings);
 		const ring = (await get.response.json()) as { minutes: number };
 		expect(ring.minutes).toBe(25);
 	});
 
 	it('POST /v1/users/nature-minutes rejects non-positive minutes', async () => {
-		const { response } = await callApp('/v1/users/nature-minutes', {
+		const { response } = await callApp('/users/nature-minutes', {
 			method: 'POST',
 			body: JSON.stringify({ uid: '42', minutes: 0 })
 		});

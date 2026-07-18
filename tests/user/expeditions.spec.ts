@@ -206,7 +206,7 @@ describe('circle expedition + garden routes', () => {
 		const bindings = createMockBindings();
 
 		const start = await callApp(
-			'/v1/circles/100/expedition',
+			'/circles/100/expedition',
 			{
 				method: 'POST',
 				body: JSON.stringify({
@@ -223,14 +223,14 @@ describe('circle expedition + garden routes', () => {
 		expect(start.response.status).toBe(201);
 		const exp = (await start.response.json()) as { id: string };
 
-		const get = await callApp('/v1/circles/100/expedition', {}, true, bindings);
+		const get = await callApp('/circles/100/expedition', {}, true, bindings);
 		expect(get.response.status).toBe(200);
 
-		const byId = await callApp(`/v1/expeditions/${exp.id}`, {}, true, bindings);
+		const byId = await callApp(`/expeditions/${exp.id}`, {}, true, bindings);
 		expect(byId.response.status).toBe(200);
 
 		const contribute = await callApp(
-			'/v1/circles/100/expedition/contribute',
+			'/circles/100/expedition/contribute',
 			{ method: 'POST', body: JSON.stringify({ member_uid: '200', amount: 60 }) },
 			true,
 			bindings
@@ -239,7 +239,7 @@ describe('circle expedition + garden routes', () => {
 		const cbody = (await contribute.response.json()) as { expedition: { progress: number } };
 		expect(cbody.expedition.progress).toBe(60);
 
-		const garden = await callApp('/v1/circles/100/garden?rank=pro', {}, true, bindings);
+		const garden = await callApp('/circles/100/garden?rank=pro', {}, true, bindings);
 		expect(garden.response.status).toBe(200);
 		const gbody = (await garden.response.json()) as { animated: boolean; total_minutes: number };
 		expect(gbody.animated).toBe(true);
@@ -247,18 +247,18 @@ describe('circle expedition + garden routes', () => {
 	});
 
 	it('rejects an invalid goal and a missing expedition', async () => {
-		const badGoal = await callApp('/v1/circles/100/expedition', {
+		const badGoal = await callApp('/circles/100/expedition', {
 			method: 'POST',
 			body: JSON.stringify({ goal: 'nope', target: 10, ends_at: future() })
 		});
 		expect(badGoal.response.status).toBe(400);
 
-		const noExp = await callApp('/v1/circles/999/expedition');
+		const noExp = await callApp('/circles/999/expedition');
 		expect(noExp.response.status).toBe(404);
 	});
 
 	it('contribute returns 404 when the circle has no expedition', async () => {
-		const { response } = await callApp('/v1/circles/555/expedition/contribute', {
+		const { response } = await callApp('/circles/555/expedition/contribute', {
 			method: 'POST',
 			body: JSON.stringify({ member_uid: '200', amount: 5 })
 		});
@@ -266,7 +266,7 @@ describe('circle expedition + garden routes', () => {
 	});
 
 	it('garden renders a calm baseline for a circle with no expedition', async () => {
-		const { response } = await callApp('/v1/circles/100/garden');
+		const { response } = await callApp('/circles/100/garden');
 		expect(response.status).toBe(200);
 		const g = (await response.json()) as { animated: boolean; level: number };
 		expect(g.animated).toBe(false);
