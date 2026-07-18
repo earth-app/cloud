@@ -11,6 +11,7 @@ import {
 import type { QuestClassificationLabel, QuestObjectLabel } from '../../util/ai';
 import { BarcodeResolution } from './validation';
 import { prewarmBuiltInHashes } from './migration';
+import { getTrail, trailToQuest, TRAIL_QUEST_ID_PREFIX } from '../trails';
 
 export type Quest = {
 	id: string;
@@ -1547,6 +1548,11 @@ export async function getQuest(
 	const quest = quests.find((q) => q.id === id);
 	if (quest) {
 		return quest;
+	}
+
+	if (id.startsWith(TRAIL_QUEST_ID_PREFIX)) {
+		const trail = getTrail(id);
+		return trail ? trailToQuest(trail) : null;
 	}
 
 	if (id.startsWith('activity_quest_')) {
