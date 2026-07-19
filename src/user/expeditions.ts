@@ -1,5 +1,6 @@
-import { Bindings } from '../util/types';
+import { Bindings, ExecutionCtxLike } from '../util/types';
 import { normalizeId, clampInt, clampNumber } from '../util/util';
+import { trackAndGrant } from './badges';
 
 export type ExpeditionGoal = 'nature_minutes' | 'trails' | 'quests';
 export type ExpeditionStatus = 'active' | 'complete' | 'expired';
@@ -176,7 +177,8 @@ export async function creditContribution(
 	ownerUid: string,
 	memberUid: string,
 	amount: number,
-	username?: string
+	username?: string,
+	ctx?: ExecutionCtxLike
 ): Promise<ContributeResult> {
 	const exp = await getExpeditionByOwner(env, ownerUid);
 	if (!exp) return { ok: false, reason: 'not_found' };
@@ -211,6 +213,24 @@ export async function creditContribution(
 	await writeExpedition(env, exp);
 
 	const justCompleted = !wasComplete && exp.progress >= exp.target;
+
+	// the owner's shared garden may have leveled up;
+	// completion is credited to the owner and the member who finished it
+	const owner = normalizeId(exp.owner_uid);
+	await trackAndGrant(uid, 'expeditions_contributed', 1, env, ctx);
+
+	const level = computeGarden(owner, exp).level;
+	if (level >= 1) {
+		await trackAndGrant(owner, 'garden_level', String(level), env, ctx);
+	}
+
+	if (justCompleted) {
+		await trackAndGrant(owner, 'expeditions_completed', 1, env, ctx);
+		if (uid !== owner) {
+			await trackAndGrant(uid, 'expeditions_completed', 1, env, ctx);
+		}
+	}
+
 	return { ok: true, expedition: exp, justCompleted };
 }
 

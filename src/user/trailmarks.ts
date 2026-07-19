@@ -1,7 +1,8 @@
-import { Bindings } from '../util/types';
+import { Bindings, ExecutionCtxLike } from '../util/types';
 import { normalizeId, clampNumber } from '../util/util';
 import { sendUserNotification } from './notifications';
 import { classifySentiment } from '../content/moderation/ai';
+import { trackAndGrant } from './badges';
 
 // mirrors crust/src/shared/types/trailmarks.ts (do not import across repos)
 
@@ -231,7 +232,8 @@ export type CreateTrailmarkResult =
 
 export async function createTrailmark(
 	env: Bindings,
-	input: TrailmarkCreateInput
+	input: TrailmarkCreateInput,
+	ctx?: ExecutionCtxLike
 ): Promise<CreateTrailmarkResult> {
 	const lat = input?.geo?.lat;
 	const lng = input?.geo?.lng;
@@ -290,6 +292,9 @@ export async function createTrailmark(
 	}
 
 	await Promise.all(writes);
+
+	// badge hook: total trailmarks left by this author
+	await trackAndGrant(authorUid, 'trailmarks_left', 1, env, ctx);
 
 	return { ok: true, trailmark };
 }
@@ -480,6 +485,9 @@ export async function thankTrailmark(
 
 	if (ctx) ctx.waitUntil(notify);
 	else await notify;
+
+	// badge hook: the author's note earned appreciation
+	await trackAndGrant(normalizeId(mark.author_uid), 'trailmarks_thanked', 1, env, ctx);
 
 	return {
 		ok: true,
