@@ -3,34 +3,42 @@ import {
 	getAllTrails,
 	getTrail,
 	isTrailLocked,
-	trailToQuest,
 	isoWeekKey,
 	getNatureMinutes,
 	addNatureMinutes,
 	NATURE_MINUTES_TARGET,
-	TRAIL_QUEST_ID_PREFIX
+	startTrailRun,
+	completeTrailRun,
+	getTrailRun,
+	getTrailJournal,
+	journalCap
 } from '../../src/user/trails';
-import { getQuest } from '../../src/user/quests';
 import { createMockBindings } from '../helpers/mock-bindings';
 import { callApp } from '../helpers/call-app';
 
 describe('trail catalog', () => {
-	it('every trail id carries the trail prefix and non-empty valid steps', () => {
+	it('every trail is a practice-based standalone trail with curiosity + reveal', () => {
 		const all = getAllTrails();
-		expect(all.length).toBeGreaterThan(0);
+		expect(all.length).toBeGreaterThanOrEqual(8);
+		const practices = new Set<string>();
 		for (const t of all) {
-			expect(t.id.startsWith(TRAIL_QUEST_ID_PREFIX)).toBe(true);
-			expect(t.steps.length).toBeGreaterThan(0);
-			for (const s of t.steps) {
-				expect(typeof s.clue).toBe('string');
-				expect(typeof s.reveal).toBe('string');
-				expect(typeof s.step.type).toBe('string');
-			}
+			expect(typeof t.id).toBe('string');
+			expect(typeof t.practice).toBe('string');
+			expect(t.curiosity.length).toBeGreaterThan(0);
+			expect(t.reflectionPrompt.length).toBeGreaterThan(0);
+			expect(t.reveal.length).toBeGreaterThan(0);
+			expect(t.duration).toBeGreaterThan(0);
+			// no quest projection leaks onto the standalone trail shape
+			expect((t as unknown as Record<string, unknown>).steps).toBeUndefined();
+			expect((t as unknown as Record<string, unknown>).reward).toBeUndefined();
+			practices.add(t.practice);
 		}
+		// the catalog spans several distinct qualitative practices
+		expect(practices.size).toBeGreaterThanOrEqual(6);
 	});
 
 	it('getTrail resolves a known id and returns null for an unknown one', () => {
-		expect(getTrail('trail_dawn_chorus')?.title).toBe('Dawn Chorus');
+		expect(getTrail('trail_sit_spot')?.title).toBe('The Sit Spot');
 		expect(getTrail('trail_nope')).toBeNull();
 	});
 
@@ -42,31 +50,12 @@ describe('trail catalog', () => {
 		expect(isTrailLocked(seasonal!)).toBe(true);
 		expect(isTrailLocked(normal!)).toBe(false);
 	});
-});
 
-describe('trailToQuest', () => {
-	it('projects a trail onto the quest shape and mirrors the lock as premium', () => {
-		const trail = getTrail('trail_night_sky')!; // premium
-		const quest = trailToQuest(trail);
-		expect(quest.id).toBe(trail.id);
-		expect(quest.title).toBe(trail.title);
-		expect(quest.reward).toBe(trail.reward);
-		expect(quest.steps.length).toBe(trail.steps.length);
-		expect(quest.premium).toBe(true);
-	});
-
-	it('derives permissions from the underlying step types', () => {
-		const quest = trailToQuest(getTrail('trail_dawn_chorus')!);
-		// dawn chorus has photo steps (camera) and a distance step (motion)
-		expect(quest.permissions).toContain('camera');
-		expect(quest.permissions).toContain('motion');
-	});
-
-	it('the quest engine resolves trail_* ids through getQuest', async () => {
-		const bindings = createMockBindings();
-		const quest = await getQuest('trail_texture_hunt', bindings);
-		expect(quest?.id).toBe('trail_texture_hunt');
-		expect(await getQuest('trail_does_not_exist', bindings)).toBeNull();
+	it('journalCap grows with a paid rank', () => {
+		expect(journalCap('free')).toBe(20);
+		expect(journalCap(undefined)).toBe(20);
+		expect(journalCap(null)).toBe(20);
+		expect(journalCap('pro')).toBe(100);
 	});
 });
 
@@ -95,14 +84,14 @@ describe('nature minutes', () => {
 		expect(nm.sources).toEqual([]);
 	});
 
-	it('credits minutes and appends a source', async () => {
-		const nm = await addNatureMinutes(env, '42', 30, 'trail_step', 'trail_dawn_chorus');
+	it('credits minutes and appends a trail source', async () => {
+		const nm = await addNatureMinutes(env, '42', 30, 'trail', 'trail_sit_spot');
 		expect(nm.minutes).toBe(30);
 		expect(nm.best).toBe(30);
 		expect(nm.sources[0]).toMatchObject({
-			kind: 'trail_step',
+			kind: 'trail',
 			minutes: 30,
-			ref_id: 'trail_dawn_chorus'
+			ref_id: 'trail_sit_spot'
 		});
 	});
 
@@ -135,7 +124,105 @@ describe('nature minutes', () => {
 	});
 });
 
-// ---- routes ----------------------------------------------------------------
+describe('trail runs + journal', () => {
+	let env: ReturnType<typeof createMockBindings>;
+	beforeEach(() => {
+		env = createMockBindings();
+	});
+
+	it('start then complete records a journal entry and credits nature minutes as trail', async () => {
+		const run = await startTrailRun(env, '42', 'trail_sit_spot', {
+			when: 'after lunch',
+			where: 'the park'
+		});
+		expect(run.completed).toBe(false);
+		expect(run.presenceMinutes).toBe(0);
+		expect(run.pledge?.when).toBe('after lunch');
+		expect(run.pledge?.where).toBe('the park');
+
+		const stored = await getTrailRun(env, '42', 'trail_sit_spot');
+		expect(stored?.trailId).toBe('trail_sit_spot');
+
+		const result = await completeTrailRun(
+			env,
+			'42',
+			'trail_sit_spot',
+			15,
+			{ note: 'so quiet', mood: 'calm', photoCount: 2, sharedToGarden: true },
+			journalCap('free')
+		);
+		expect(result).not.toBeNull();
+		if (!result) return;
+		expect(result.run.completed).toBe(true);
+		expect(result.run.presenceMinutes).toBe(15);
+		// the run keeps the pledge captured at start
+		expect(result.run.pledge?.when).toBe('after lunch');
+		expect(result.entry.title).toBe('The Sit Spot');
+		expect(result.entry.practice).toBe('sit_spot');
+		expect(result.entry.reflection.note).toBe('so quiet');
+		expect(result.entry.reflection.mood).toBe('calm');
+		expect(result.entry.reflection.photoCount).toBe(2);
+		expect(result.entry.reflection.sharedToGarden).toBe(true);
+		expect(result.natureMinutes.minutes).toBe(15);
+		expect(result.natureMinutes.sources[0].kind).toBe('trail');
+		expect(result.natureMinutes.sources[0].ref_id).toBe('trail_sit_spot');
+
+		const journal = await getTrailJournal(env, '42', journalCap('free'));
+		expect(journal.length).toBe(1);
+		expect(journal[0].trailId).toBe('trail_sit_spot');
+	});
+
+	it('clamps presence minutes to 0..180 and drops an invalid mood', async () => {
+		const over = await completeTrailRun(
+			env,
+			'7',
+			'trail_sit_spot',
+			999,
+			{ mood: 'ecstatic' as never },
+			journalCap('free')
+		);
+		expect(over?.run.presenceMinutes).toBe(180);
+		expect(over?.entry.reflection.mood).toBeUndefined();
+
+		const neg = await completeTrailRun(env, '7', 'trail_sit_spot', -5, {}, journalCap('free'));
+		expect(neg?.run.presenceMinutes).toBe(0);
+	});
+
+	it('completeTrailRun returns null for an unknown trail', async () => {
+		expect(await completeTrailRun(env, '7', 'trail_nope', 10, {}, 20)).toBeNull();
+	});
+
+	it('caps the free journal at 20 while a paid rank keeps more', async () => {
+		for (let i = 0; i < 25; i++) {
+			await completeTrailRun(
+				env,
+				'42',
+				'trail_sit_spot',
+				10,
+				{ note: `n${i}` },
+				journalCap('free')
+			);
+		}
+		const free = await getTrailJournal(env, '42', journalCap('free'));
+		expect(free.length).toBe(20);
+		// most-recent first: the last write leads the journal
+		expect(free[0].reflection.note).toBe('n24');
+
+		const env2 = createMockBindings();
+		for (let i = 0; i < 25; i++) {
+			await completeTrailRun(
+				env2,
+				'42',
+				'trail_sit_spot',
+				10,
+				{ note: `p${i}` },
+				journalCap('pro')
+			);
+		}
+		const premium = await getTrailJournal(env2, '42', journalCap('pro'));
+		expect(premium.length).toBe(25);
+	});
+});
 
 describe('trail + nature-minutes routes', () => {
 	afterEach(() => vi.restoreAllMocks());
@@ -154,17 +241,134 @@ describe('trail + nature-minutes routes', () => {
 	});
 
 	it('GET /v1/trails/:id resolves a trail and 404s an unknown id', async () => {
-		const ok = await callApp('/trails/trail_dawn_chorus');
+		const ok = await callApp('/trails/trail_sit_spot');
 		expect(ok.response.status).toBe(200);
 		const missing = await callApp('/trails/trail_missing');
 		expect(missing.response.status).toBe(404);
 	});
 
 	it('GET /v1/trails/:id gates a premium trail for a free rank', async () => {
-		const { response } = await callApp('/trails/trail_night_sky?rank=free');
+		const { response } = await callApp('/trails/trail_open_sky?rank=free');
 		expect(response.status).toBe(403);
-		const pro = await callApp('/trails/trail_night_sky?rank=pro');
+		const pro = await callApp('/trails/trail_open_sky?rank=pro');
 		expect(pro.response.status).toBe(200);
+	});
+
+	it('POST /v1/trails/:id/start opens a run', async () => {
+		const bindings = createMockBindings();
+		const res = await callApp(
+			'/trails/trail_sit_spot/start',
+			{ method: 'POST', body: JSON.stringify({ uid: '42', pledge: { when: 'tomorrow morning' } }) },
+			true,
+			bindings
+		);
+		expect(res.response.status).toBe(201);
+		const run = (await res.response.json()) as { trailId: string; completed: boolean };
+		expect(run.trailId).toBe('trail_sit_spot');
+		expect(run.completed).toBe(false);
+	});
+
+	it('POST /v1/trails/:id/start 404s an unknown trail and 400s a bad uid', async () => {
+		const missing = await callApp('/trails/trail_nope/start', {
+			method: 'POST',
+			body: JSON.stringify({ uid: '42' })
+		});
+		expect(missing.response.status).toBe(404);
+		const badUid = await callApp('/trails/trail_sit_spot/start', {
+			method: 'POST',
+			body: JSON.stringify({ uid: 'abc' })
+		});
+		expect(badUid.response.status).toBe(400);
+	});
+
+	it('POST /v1/trails/:id/start gates a premium trail for a free rank', async () => {
+		const locked = await callApp('/trails/trail_open_sky/start', {
+			method: 'POST',
+			body: JSON.stringify({ uid: '42', rank: 'free' })
+		});
+		expect(locked.response.status).toBe(403);
+		const pro = await callApp('/trails/trail_open_sky/start', {
+			method: 'POST',
+			body: JSON.stringify({ uid: '42', rank: 'pro' })
+		});
+		expect(pro.response.status).toBe(201);
+	});
+
+	it('POST /v1/trails/:id/complete records a journal entry the journal route returns', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/trails/trail_sit_spot/start',
+			{ method: 'POST', body: JSON.stringify({ uid: '42' }) },
+			true,
+			bindings
+		);
+		const done = await callApp(
+			'/trails/trail_sit_spot/complete',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					uid: '42',
+					presenceMinutes: 12,
+					reflection: { note: 'lovely', mood: 'calm' }
+				})
+			},
+			true,
+			bindings
+		);
+		expect(done.response.status).toBe(200);
+		const result = (await done.response.json()) as {
+			entry: { trailId: string };
+			natureMinutes: { minutes: number; sources: { kind: string }[] };
+		};
+		expect(result.entry.trailId).toBe('trail_sit_spot');
+		expect(result.natureMinutes.minutes).toBe(12);
+		expect(result.natureMinutes.sources[0].kind).toBe('trail');
+
+		const journal = await callApp('/users/trail-journal?uid=42', {}, true, bindings);
+		expect(journal.response.status).toBe(200);
+		const entries = (await journal.response.json()) as unknown[];
+		expect(entries.length).toBe(1);
+	});
+
+	it('POST /v1/trails/:id/complete rejects a missing presenceMinutes', async () => {
+		const res = await callApp('/trails/trail_sit_spot/complete', {
+			method: 'POST',
+			body: JSON.stringify({ uid: '42', reflection: {} })
+		});
+		expect(res.response.status).toBe(400);
+	});
+
+	it('GET /v1/users/trail-journal requires a valid uid', async () => {
+		const bad = await callApp('/users/trail-journal');
+		expect(bad.response.status).toBe(400);
+		const ok = await callApp('/users/trail-journal?uid=42');
+		expect(ok.response.status).toBe(200);
+	});
+
+	it('GET /v1/users/trail-run returns the active run and 404s when none', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/trails/trail_sit_spot/start',
+			{ method: 'POST', body: JSON.stringify({ uid: '42' }) },
+			true,
+			bindings
+		);
+		const ok = await callApp('/users/trail-run?uid=42&trailId=trail_sit_spot', {}, true, bindings);
+		expect(ok.response.status).toBe(200);
+		const none = await callApp(
+			'/users/trail-run?uid=99&trailId=trail_sit_spot',
+			{},
+			true,
+			bindings
+		);
+		expect(none.response.status).toBe(404);
+		const badTrail = await callApp(
+			'/users/trail-run?uid=42&trailId=trail_nope',
+			{},
+			true,
+			bindings
+		);
+		expect(badTrail.response.status).toBe(400);
 	});
 
 	it('GET /v1/users/nature-minutes requires a valid uid', async () => {
@@ -178,7 +382,7 @@ describe('trail + nature-minutes routes', () => {
 		const bindings = createMockBindings();
 		const post = await callApp(
 			'/users/nature-minutes',
-			{ method: 'POST', body: JSON.stringify({ uid: '42', minutes: 25, kind: 'trail_step' }) },
+			{ method: 'POST', body: JSON.stringify({ uid: '42', minutes: 25, kind: 'trail' }) },
 			true,
 			bindings
 		);
