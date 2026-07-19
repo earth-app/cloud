@@ -1,9 +1,7 @@
 import { Bindings } from '../util/types';
 import { normalizeId, clampInt, clampNumber } from '../util/util';
 
-// mirrors crust/src/shared/types/circles.ts (do not import across repos)
-
-export type ExpeditionGoal = 'nature_minutes' | 'trail_steps' | 'quests';
+export type ExpeditionGoal = 'nature_minutes' | 'trails' | 'quests';
 export type ExpeditionStatus = 'active' | 'complete' | 'expired';
 
 export interface ExpeditionContributor {
@@ -44,12 +42,13 @@ export interface CircleGarden {
 	updated_at: string;
 }
 
-const GOALS: ExpeditionGoal[] = ['nature_minutes', 'trail_steps', 'quests'];
+const GOALS: ExpeditionGoal[] = ['nature_minutes', 'trails', 'quests'];
 
 // each goal unit is worth this many minutes-equivalent when growing the garden
+// (a completed trail contributes 1 to a `trails` goal, ~its unhurried presence in minutes)
 const GOAL_MINUTE_WEIGHT: Record<ExpeditionGoal, number> = {
 	nature_minutes: 1,
-	trail_steps: 8,
+	trails: 12,
 	quests: 30
 };
 
@@ -214,8 +213,6 @@ export async function creditContribution(
 	const justCompleted = !wasComplete && exp.progress >= exp.target;
 	return { ok: true, expedition: exp, justCompleted };
 }
-
-// Garden ---------------------------------------------------------------------
 
 // deterministic 32-bit FNV-1a so the same input always seeds the same element
 function hashString(s: string): number {
