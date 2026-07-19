@@ -1,5 +1,6 @@
-import type { Bindings } from '../util/types';
+import type { Bindings, ExecutionCtxLike } from '../util/types';
 import { normalizeId, clampInt } from '../util/util';
+import { trackAndGrant } from './badges';
 
 // #region types
 
@@ -45,6 +46,24 @@ export interface Trail {
 	// perk: premium/seasonal trails gate on a paid rank (free users keep the core set)
 	premium?: boolean;
 	seasonal?: boolean;
+	// cloud-authored presentation metadata, delivered embedded on every returned trail
+	practiceMeta?: TrailPracticeMeta;
+}
+
+// presentation metadata for a practice (label/icon/verb/cue/defaults); authored here and
+// delivered embedded on every trail so clients render without a hardcoded map
+export interface TrailPracticeMeta {
+	practice: TrailPractice;
+	label: string; // Title Case name
+	icon: string;
+	// the single verb of the practice (present tense), for the presence screen
+	verb: string;
+	// calm one-line invitation shown while out there
+	cue: string;
+	// gentle default minutes if a trail does not set its own
+	defaultMinutes: number;
+	// whether the practice naturally involves a short series of photos
+	photos: boolean;
 }
 
 // a private reflection saved to the journal after a trail practice
@@ -240,14 +259,102 @@ export const trails: Trail[] = [
 
 // #endregion
 
+// #region practice metadata (source of truth; delivered embedded on every trail)
+
+// per-practice presentation metadata; authored here and attached to each returned trail so
+// clients (crust/sky) render label/icon/verb/cue without their own hardcoded map
+export const TRAIL_PRACTICE_META: Record<TrailPractice, TrailPracticeMeta> = {
+	sit_spot: {
+		practice: 'sit_spot',
+		label: 'Sit Spot',
+		icon: 'mdi:meditation',
+		verb: 'sit',
+		cue: 'Find one spot, settle in, and let the place come to you.',
+		defaultMinutes: 12,
+		photos: false
+	},
+	photo_series: {
+		practice: 'photo_series',
+		label: 'Photo Series',
+		icon: 'mdi:camera-iris',
+		verb: 'photograph',
+		cue: 'Follow one thread of light, color, or shape through a few frames.',
+		defaultMinutes: 10,
+		photos: true
+	},
+	sound_map: {
+		practice: 'sound_map',
+		label: 'Sound Map',
+		icon: 'mdi:ear-hearing',
+		verb: 'listen',
+		cue: 'Close your eyes and place each sound you hear around you.',
+		defaultMinutes: 8,
+		photos: false
+	},
+	slow_look: {
+		practice: 'slow_look',
+		label: 'Slow Look',
+		icon: 'mdi:magnify-scan',
+		verb: 'observe',
+		cue: 'Pick one small living thing and watch it far longer than feels normal.',
+		defaultMinutes: 8,
+		photos: false
+	},
+	sky_watch: {
+		practice: 'sky_watch',
+		label: 'Sky Watch',
+		icon: 'mdi:weather-partly-cloudy',
+		verb: 'watch',
+		cue: 'Lie back and give the sky your full, unhurried attention.',
+		defaultMinutes: 12,
+		photos: false
+	},
+	wander: {
+		practice: 'wander',
+		label: 'Slow Wander',
+		icon: 'mdi:foot-print',
+		verb: 'wander',
+		cue: 'Walk with no destination; follow whatever catches your curiosity.',
+		defaultMinutes: 15,
+		photos: false
+	},
+	texture: {
+		practice: 'texture',
+		label: 'Texture Hunt',
+		icon: 'mdi:hand-back-left',
+		verb: 'touch',
+		cue: 'Find five textures worth touching and stay with each one.',
+		defaultMinutes: 10,
+		photos: false
+	},
+	water_sit: {
+		practice: 'water_sit',
+		label: 'Waterside',
+		icon: 'mdi:waves',
+		verb: 'rest',
+		cue: 'Settle beside moving water and let it hold your attention.',
+		defaultMinutes: 12,
+		photos: false
+	}
+};
+
+// enrich a catalog trail with its authored presentation metadata (delivered embedded, like
+// badges/quests) so clients need no hardcoded practice map
+function withPracticeMeta(trail: Trail): Trail {
+	return { ...trail, practiceMeta: TRAIL_PRACTICE_META[trail.practice] };
+}
+
+// #endregion
+
 // #region catalog accessors
 
 export function getAllTrails(): Trail[] {
-	return trails;
+	return trails.map(withPracticeMeta);
 }
 
 export function getTrail(id: string): Trail | null {
-	return trails.find((t) => t.id === id) ?? null;
+	const trail = trails.find((t) => t.id === id);
+	return trail ? withPracticeMeta(trail) : null;
 }
 
 // perk gate: premium OR seasonal trails require a paid rank
@@ -333,7 +440,8 @@ export async function addNatureMinutes(
 	uid: string,
 	minutes: number,
 	kind: NatureMinutesKind = 'manual',
-	refId?: string
+	refId?: string,
+	ctx?: ExecutionCtxLike
 ): Promise<NatureMinutes> {
 	const credit = clampInt(minutes, 0, MAX_SINGLE_CREDIT_MINUTES, 0);
 	const week = isoWeekKey();
@@ -362,6 +470,17 @@ export async function addNatureMinutes(
 	// persist the all-time best without a ttl so it outlives weekly records
 	if (updated.best > current.best || (await readBest(env, uid)) < updated.best) {
 		await env.KV.put(bestKey(uid), String(updated.best));
+	}
+
+	// badge hooks: full-ring (weekly target hit, deduped by week) + a new personal best
+	if (credit > 0) {
+		if (updated.minutes >= NATURE_MINUTES_TARGET) {
+			await trackAndGrant(uid, 'nature_target_weeks', week, env, ctx);
+		}
+		// a strict increase over a prior best is a genuine new personal best (not the first week)
+		if (current.best > 0 && updated.best > current.best) {
+			await trackAndGrant(uid, 'nature_personal_bests', 1, env, ctx);
+		}
 	}
 
 	return updated;
@@ -461,7 +580,8 @@ export async function completeTrailRun(
 	trailId: string,
 	presenceMinutes: number,
 	reflection: unknown,
-	cap: number = JOURNAL_CAP_FREE
+	cap: number = JOURNAL_CAP_FREE,
+	ctx?: ExecutionCtxLike
 ): Promise<CompleteTrailResult | null> {
 	const trail = getTrail(trailId);
 	if (!trail) return null;
@@ -495,11 +615,19 @@ export async function completeTrailRun(
 		Math.max(1, cap)
 	);
 
+	// nature minutes credit carries the badge ctx so nature-ring badges fire on this path too
 	const [, , natureMinutes] = await Promise.all([
 		env.KV.put(runKey(uid, trailId), JSON.stringify(run), { expirationTtl: TRAIL_RUN_TTL }),
 		env.KV.put(journalKey(uid), JSON.stringify(journal)),
-		addNatureMinutes(env, uid, minutes, 'trail', trailId)
+		addNatureMinutes(env, uid, minutes, 'trail', trailId, ctx)
 	]);
+
+	// badge hooks: total completions, distinct practice days, and a journaled reflection
+	await trackAndGrant(uid, 'trails_completed', 1, env, ctx);
+	await trackAndGrant(uid, 'trail_practice_days', now.slice(0, 10), env, ctx);
+	if (ref.note || ref.mood) {
+		await trackAndGrant(uid, 'reflections_journaled', 1, env, ctx);
+	}
 
 	return { run, entry, natureMinutes };
 }
