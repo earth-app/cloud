@@ -188,13 +188,18 @@ import {
 	CreateReportInput
 } from './content/reports';
 import { getStrikes, addStrike, resetStrikes } from './content/moderation/strikes';
-import { moderateReport } from './content/moderation/ai';
+import { moderateReport, classifySentiment } from './content/moderation/ai';
 import {
 	getAllTrails,
 	getTrail,
 	isTrailLocked,
 	getNatureMinutes,
 	addNatureMinutes,
+	startTrailRun,
+	completeTrailRun,
+	getTrailRun,
+	getTrailJournal,
+	journalCap,
 	type NatureMinutesKind
 } from './user/trails';
 import {
@@ -208,6 +213,7 @@ import {
 import {
 	createTrailmark,
 	getNearbyTrailmarks,
+	getTrailmarksForPrompt,
 	thankTrailmark,
 	TRAILMARK_LIMITS
 } from './user/trailmarks';
@@ -4253,13 +4259,13 @@ app.post('/mood/:topic/:date', async (c) => {
 	return c.json(snapshot, 200);
 });
 
-// Curiosity Trails - themed quest-chains + the personal weekly nature-minutes ring.
-// a trail RUN reuses the quest engine: getQuest resolves trail_* ids, so start/progress
-// ride the existing /users/quests/progress routes (premium gate enforced there).
+// Curiosity Trails - standalone practice-based trails (NOT the quest engine): one sustained
+// outdoor practice + a private reflection, plus the personal weekly nature-minutes ring.
+// a trail run/journal lives in its own KV; premium/seasonal trails gate on rank at start.
 
 app.get('/trails', async (c) => {
-	// full catalog incl. premium/seasonal (each carries its own flags); mirrors the quest
-	// list which returns premium quests to everyone and gates at start time
+	// full catalog incl. premium/seasonal (each carries its own flags); the gate is applied
+	// per-trail at read + start time, so the list stays complete for everyone
 	return c.json(getAllTrails(), 200);
 });
 
@@ -4281,6 +4287,95 @@ app.get('/trails/:id', async (c) => {
 	}
 
 	return c.json(trail, 200);
+});
+
+app.post('/trails/:id/start', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('Trail ID is required', 400);
+	}
+
+	const trail = getTrail(id);
+	if (!trail) {
+		return c.text('Trail not found', 404);
+	}
+
+	let body: { uid?: string; user_id?: string; pledge?: unknown; rank?: string };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const uid = parseNatureUid(body.uid || body.user_id);
+	if (!uid) {
+		return c.text('Valid uid is required', 400);
+	}
+
+	// perk gate: a free rank can't open a premium or seasonal trail
+	const rank = normalizeQuestRank(body.rank);
+	if (isTrailLocked(trail) && rank === 'free') {
+		return c.text('Premium and seasonal trails require a non-free rank', 403);
+	}
+
+	const run = await startTrailRun(c.env, uid, id, body.pledge);
+	return c.json(run, 201);
+});
+
+app.post('/trails/:id/complete', async (c) => {
+	const id = c.req.param('id')?.toLowerCase();
+	if (!id) {
+		return c.text('Trail ID is required', 400);
+	}
+
+	const trail = getTrail(id);
+	if (!trail) {
+		return c.text('Trail not found', 404);
+	}
+
+	let body: {
+		uid?: string;
+		user_id?: string;
+		presenceMinutes?: number;
+		reflection?: unknown;
+		rank?: string;
+	};
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const uid = parseNatureUid(body.uid || body.user_id);
+	if (!uid) {
+		return c.text('Valid uid is required', 400);
+	}
+
+	if (
+		typeof body.presenceMinutes !== 'number' ||
+		!Number.isFinite(body.presenceMinutes) ||
+		body.presenceMinutes < 0
+	) {
+		return c.text('presenceMinutes must be a non-negative number', 400);
+	}
+
+	const rank = normalizeQuestRank(body.rank);
+	if (isTrailLocked(trail) && rank === 'free') {
+		return c.text('Premium and seasonal trails require a non-free rank', 403);
+	}
+
+	const result = await completeTrailRun(
+		c.env,
+		uid,
+		id,
+		body.presenceMinutes,
+		body.reflection,
+		journalCap(rank)
+	);
+	if (!result) {
+		return c.text('Trail not found', 404);
+	}
+	return c.json(result, 200);
 });
 
 function parseNatureUid(value: string | undefined): string | null {
@@ -4320,13 +4415,42 @@ app.post('/users/nature-minutes', async (c) => {
 		return c.text('minutes must be a positive number', 400);
 	}
 
-	const kinds: NatureMinutesKind[] = ['trail_step', 'quest', 'healthkit', 'manual'];
+	const kinds: NatureMinutesKind[] = ['trail', 'quest', 'healthkit', 'manual'];
 	const kind = kinds.includes(body.kind as NatureMinutesKind)
 		? (body.kind as NatureMinutesKind)
 		: 'manual';
 
 	const nm = await addNatureMinutes(c.env, uid, body.minutes, kind, body.ref_id);
 	return c.json(nm, 200);
+});
+
+app.get('/users/trail-journal', async (c) => {
+	const uid = parseNatureUid(c.req.query('uid') || c.req.query('user_id'));
+	if (!uid) {
+		return c.text('Valid uid is required', 400);
+	}
+
+	const rank = normalizeQuestRank(c.req.query('rank'));
+	const journal = await getTrailJournal(c.env, uid, journalCap(rank));
+	return c.json(journal, 200);
+});
+
+app.get('/users/trail-run', async (c) => {
+	const uid = parseNatureUid(c.req.query('uid') || c.req.query('user_id'));
+	if (!uid) {
+		return c.text('Valid uid is required', 400);
+	}
+
+	const trailId = (c.req.query('trailId') || c.req.query('trail_id') || '').toLowerCase();
+	if (!trailId || !getTrail(trailId)) {
+		return c.text('Valid trailId is required', 400);
+	}
+
+	const run = await getTrailRun(c.env, uid, trailId);
+	if (!run) {
+		return c.text('No active run for this trail', 404);
+	}
+	return c.json(run, 200);
 });
 
 // Circles & Expeditions + Garden
@@ -4451,6 +4575,21 @@ app.get('/expeditions/:id', async (c) => {
 	return c.json(exp, 200);
 });
 
+// Sentiment - text tone classifier used by mantle2 to keep prompt responses encouraging
+
+app.post('/content/sentiment', async (c) => {
+	let body: { text?: unknown };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body', 400);
+	}
+
+	const text = typeof body.text === 'string' ? body.text : '';
+	const result = await classifySentiment(c.env, text);
+	return c.json(result, 200);
+});
+
 // Trailmarks
 
 app.get('/trailmarks', async (c) => {
@@ -4475,6 +4614,7 @@ app.post('/trailmarks', async (c) => {
 		author_username?: string;
 		geo?: { lat?: number; lng?: number; place_label?: string };
 		note?: string;
+		prompt_id?: string;
 	};
 	try {
 		body = await c.req.json();
@@ -4495,16 +4635,32 @@ app.post('/trailmarks', async (c) => {
 		author_uid: authorUid,
 		author_username: body.author_username,
 		geo: { lat: body.geo.lat, lng: body.geo.lng, place_label: body.geo.place_label },
-		note: body.note || ''
+		note: body.note || '',
+		...(typeof body.prompt_id === 'string' ? { prompt_id: body.prompt_id } : {})
 	});
 
 	if (!result.ok) {
+		// a confidently-negative note is turned away so mantle2 can show a gentle nudge
+		if (result.reason === 'negative_sentiment') {
+			return c.json({ ok: false, reason: 'negative_sentiment' }, 422);
+		}
 		const message =
 			result.reason === 'invalid_geo' ? 'Invalid geo coordinates' : 'Note is empty after censoring';
 		return c.text(message, 400);
 	}
 
 	return c.json(result.trailmark, 201);
+});
+
+app.get('/prompts/:id/trailmarks', async (c) => {
+	const promptId = c.req.param('id');
+	if (!promptId) {
+		return c.text('Prompt ID is required', 400);
+	}
+
+	const viewer = c.req.query('viewer') || c.req.query('user_id') || undefined;
+	const marks = await getTrailmarksForPrompt(c.env, promptId, viewer);
+	return c.json(marks, 200);
 });
 
 app.post('/trailmarks/:id/thank', async (c) => {
