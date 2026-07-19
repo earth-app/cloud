@@ -17,15 +17,28 @@ vi.mock('../../../src/user/submissions', () => ({
 
 import { createMockBindings } from '../../helpers/mock-bindings';
 import { createMockAiRun } from '../../helpers/mock-ai';
-import { moderateText, moderateImage, moderateReport } from '../../../src/content/moderation/ai';
+import {
+	moderateText,
+	moderateImage,
+	moderateReport,
+	classifySentiment,
+	NEGATIVE_SENTIMENT_THRESHOLD
+} from '../../../src/content/moderation/ai';
 import { createReport, getReport, patchReportStatus } from '../../../src/content/reports';
 import { Bindings } from '../../../src/util/types';
 
 const GUARD_MODEL = '@cf/meta/llama-guard-3-8b';
+const SENTIMENT_MODEL = '@cf/huggingface/distilbert-sst-2-int8';
 
 function envGuard(response: string): Bindings {
 	return createMockBindings({
 		AI: { run: createMockAiRun({ [GUARD_MODEL]: { response } }) } as unknown as Bindings['AI']
+	});
+}
+
+function envSentiment(labels: { label: string; score: number }[]): Bindings {
+	return createMockBindings({
+		AI: { run: createMockAiRun({ [SENTIMENT_MODEL]: labels }) } as unknown as Bindings['AI']
 	});
 }
 
@@ -107,6 +120,65 @@ describe('moderateText', () => {
 		expect(result.severe).toBe(false);
 		expect(result.labels).toEqual([]);
 		expect(run).toHaveBeenCalledTimes(3);
+	});
+});
+
+describe('classifySentiment', () => {
+	it('returns a positive verdict for empty input without calling the model', async () => {
+		const env = envSentiment([
+			{ label: 'NEGATIVE', score: 0.99 },
+			{ label: 'POSITIVE', score: 0.01 }
+		]);
+		const res = await classifySentiment(env, '   ');
+		expect(res).toEqual({ label: 'POSITIVE', score: 0, negative: false });
+		expect(env.AI.run).not.toHaveBeenCalled();
+	});
+
+	it('marks a confidently-negative note as negative', async () => {
+		const env = envSentiment([
+			{ label: 'NEGATIVE', score: 0.97 },
+			{ label: 'POSITIVE', score: 0.03 }
+		]);
+		const res = await classifySentiment(env, 'this place is disgusting and everyone here is awful');
+		expect(res.label).toBe('NEGATIVE');
+		expect(res.negative).toBe(true);
+		expect(res.score).toBeGreaterThanOrEqual(NEGATIVE_SENTIMENT_THRESHOLD);
+	});
+
+	it('leaves a mildly-negative note below threshold un-negative', async () => {
+		const env = envSentiment([
+			{ label: 'NEGATIVE', score: 0.6 },
+			{ label: 'POSITIVE', score: 0.4 }
+		]);
+		const res = await classifySentiment(env, 'a bit gloomy today');
+		expect(res.label).toBe('NEGATIVE');
+		expect(res.negative).toBe(false);
+	});
+
+	it('passes a positive note', async () => {
+		const env = envSentiment([
+			{ label: 'POSITIVE', score: 0.98 },
+			{ label: 'NEGATIVE', score: 0.02 }
+		]);
+		const res = await classifySentiment(env, 'what a beautiful, peaceful spot');
+		expect(res.label).toBe('POSITIVE');
+		expect(res.negative).toBe(false);
+	});
+
+	it('fails open (positive) when the classifier throws', async () => {
+		const run = vi.fn(async () => {
+			throw new Error('sentiment down');
+		});
+		const env = createMockBindings({ AI: { run } as unknown as Bindings['AI'] });
+		const res = await classifySentiment(env, 'anything at all');
+		expect(res).toEqual({ label: 'POSITIVE', score: 0, negative: false });
+		expect(run).toHaveBeenCalled();
+	});
+
+	it('fails open (positive) on an unusable model shape', async () => {
+		const env = envSentiment([]);
+		const res = await classifySentiment(env, 'note');
+		expect(res).toEqual({ label: 'POSITIVE', score: 0, negative: false });
 	});
 });
 
