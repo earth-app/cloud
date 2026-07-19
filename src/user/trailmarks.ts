@@ -1,6 +1,7 @@
 import { Bindings } from '../util/types';
 import { normalizeId, clampNumber } from '../util/util';
 import { sendUserNotification } from './notifications';
+import { classifySentiment } from '../content/moderation/ai';
 
 // mirrors crust/src/shared/types/trailmarks.ts (do not import across repos)
 
@@ -21,6 +22,8 @@ export interface Trailmark {
 	thanked_by_me?: boolean;
 	// private appreciation signal, only ever returned to the author
 	thanks_for_author?: number;
+	// set when this note was left as an answer to a daily prompt (surfaces on the prompt)
+	prompt_id?: string;
 }
 
 export interface TrailmarkCreateInput {
@@ -28,6 +31,8 @@ export interface TrailmarkCreateInput {
 	author_username?: string;
 	geo: TrailmarkGeo;
 	note: string;
+	// optional: also surface this note under a daily prompt as a 'from outside' response
+	prompt_id?: string;
 }
 
 // notes linger for the next visitor; long enough to matter, bounded so the map self-cleans
@@ -47,8 +52,6 @@ const GEOHASH_BASE32 = '0123456789bcdefghjkmnpqrstuvwxyz';
 // precision-5 cell is ~0.0439 deg on each axis (constant in degrees, not meters)
 const CELL_DEG = 360 / Math.pow(2, 13);
 const METERS_PER_DEG_LAT = 111320;
-
-// ---- geo helpers (deterministic; never done in latent space) ---------------
 
 export function geohashEncode(lat: number, lng: number, precision = BUCKET_PRECISION): string {
 	let idx = 0;
@@ -199,7 +202,21 @@ const userKey = (uid: string) => `trailmark:user:${normalizeId(uid)}`;
 const thanksKey = (id: string) => `trailmark:thanks:${id}`;
 const thankedKey = (id: string, uid: string) => `trailmark:thanked:${id}:${normalizeId(uid)}`;
 
+// opaque, filesystem-safe prompt id so the index key can't be poisoned by odd input
+function sanitizePromptId(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null;
+	const clean = raw
+		.trim()
+		.replace(/[^A-Za-z0-9_-]/g, '')
+		.slice(0, 64);
+	return clean || null;
+}
+
+const promptPrefix = (promptId: string) => `trailmark:prompt:${promptId}:`;
+const promptKey = (promptId: string, id: string) => `${promptPrefix(promptId)}${id}`;
+
 type GeoMeta = { lat: number; lng: number; created_at: string };
+type PromptMeta = { created_at: string };
 
 function genSuffix(): string {
 	const bytes = crypto.getRandomValues(new Uint8Array(8));
@@ -209,7 +226,8 @@ function genSuffix(): string {
 }
 
 export type CreateTrailmarkResult =
-	{ ok: true; trailmark: Trailmark } | { ok: false; reason: 'invalid_geo' | 'empty_note' };
+	| { ok: true; trailmark: Trailmark }
+	| { ok: false; reason: 'invalid_geo' | 'empty_note' | 'negative_sentiment' };
 
 export async function createTrailmark(
 	env: Bindings,
@@ -225,10 +243,17 @@ export async function createTrailmark(
 	const authorUid = normalizeId(input.author_uid);
 	if (!authorUid) return { ok: false, reason: 'invalid_geo' };
 
+	// keep the trail kind + encouraging; a confidently-negative note is turned away
+	// (fail-open inside classifySentiment, so infra trouble never blocks a post)
+	const sentiment = await classifySentiment(env, note);
+	if (sentiment.negative) return { ok: false, reason: 'negative_sentiment' };
+
 	const placeLabel =
 		typeof input.geo.place_label === 'string' && input.geo.place_label.trim()
 			? input.geo.place_label.trim().slice(0, MAX_PLACE_LABEL)
 			: undefined;
+
+	const promptId = sanitizePromptId(input.prompt_id);
 
 	const bucket = geohashEncode(lat, lng);
 	const id = `${bucket}${genSuffix()}`;
@@ -239,18 +264,32 @@ export async function createTrailmark(
 		author_username: (input.author_username || 'someone').slice(0, 64),
 		geo: { lat, lng, ...(placeLabel ? { place_label: placeLabel } : {}) },
 		note,
-		created_at: new Date().toISOString()
+		created_at: new Date().toISOString(),
+		...(promptId ? { prompt_id: promptId } : {})
 	};
 
 	const meta: GeoMeta = { lat, lng, created_at: trailmark.created_at };
 
-	await Promise.all([
+	const writes: Promise<unknown>[] = [
 		env.KV.put(markKey(id), JSON.stringify(trailmark), {
 			expirationTtl: TRAILMARK_TTL,
 			metadata: meta
 		}),
 		appendToUserIndex(env, authorUid, trailmark)
-	]);
+	];
+
+	// link the note to the prompt so it surfaces under 'from outside'; id resolves the mark
+	if (promptId) {
+		const promptMeta: PromptMeta = { created_at: trailmark.created_at };
+		writes.push(
+			env.KV.put(promptKey(promptId, id), '1', {
+				expirationTtl: TRAILMARK_TTL,
+				metadata: promptMeta
+			})
+		);
+	}
+
+	await Promise.all(writes);
 
 	return { ok: true, trailmark };
 }
@@ -313,25 +352,62 @@ export async function getNearbyTrailmarks(
 		if (!rec || typeof rec.note !== 'string') continue;
 		// re-verify radius for any metadata-less fallback candidate
 		if (rec.geo && !within(lat, lng, rec.geo, radiusM)) continue;
+		out.push(await enrichForViewer(env, rec, viewer));
+	}
+	return out;
+}
 
-		const isAuthor = viewer !== '' && normalizeId(rec.author_uid) === viewer;
-		const enriched: Trailmark = {
-			id: rec.id,
-			author_uid: rec.author_uid,
-			author_username: rec.author_username,
-			geo: rec.geo,
-			note: rec.note,
-			created_at: rec.created_at
-		};
+// shapes a stored mark for a viewer: the private thanks tally goes only to the author,
+// every other viewer gets thanked_by_me. shared by nearby + prompt lookups
+async function enrichForViewer(env: Bindings, rec: Trailmark, viewer: string): Promise<Trailmark> {
+	const enriched: Trailmark = {
+		id: rec.id,
+		author_uid: rec.author_uid,
+		author_username: rec.author_username,
+		geo: rec.geo,
+		note: rec.note,
+		created_at: rec.created_at,
+		...(rec.prompt_id ? { prompt_id: rec.prompt_id } : {})
+	};
 
-		if (isAuthor) {
-			// private appreciation is only ever returned to the author of the note
-			enriched.thanks_for_author = await readThanks(env, rec.id);
-			enriched.thanked_by_me = false;
-		} else if (viewer !== '') {
-			enriched.thanked_by_me = await hasThanked(env, rec.id, viewer);
-		}
-		out.push(enriched);
+	const isAuthor = viewer !== '' && normalizeId(rec.author_uid) === viewer;
+	if (isAuthor) {
+		enriched.thanks_for_author = await readThanks(env, rec.id);
+		enriched.thanked_by_me = false;
+	} else if (viewer !== '') {
+		enriched.thanked_by_me = await hasThanked(env, rec.id, viewer);
+	}
+	return enriched;
+}
+
+// notes left as answers to a daily prompt, most-recent first (capped). same thanks
+// semantics as nearby; the prompt index stores ids, the mark id resolves the full record
+export async function getTrailmarksForPrompt(
+	env: Bindings,
+	promptId: string,
+	viewerUid?: string
+): Promise<Trailmark[]> {
+	const pid = sanitizePromptId(promptId);
+	if (!pid) return [];
+	const viewer = viewerUid ? normalizeId(viewerUid) : '';
+
+	const page = await env.KV.list<PromptMeta>({ prefix: promptPrefix(pid) });
+	const entries = page.keys
+		.map((k) => ({
+			id: k.name.slice(k.name.lastIndexOf(':') + 1),
+			created_at: k.metadata?.created_at || ''
+		}))
+		.sort((a, b) => Date.parse(b.created_at || '') - Date.parse(a.created_at || ''))
+		.slice(0, MAX_RESULTS);
+
+	const records = await Promise.all(
+		entries.map(({ id }) => env.KV.get<Trailmark>(markKey(id), 'json'))
+	);
+
+	const out: Trailmark[] = [];
+	for (const rec of records) {
+		if (!rec || typeof rec.note !== 'string') continue;
+		out.push(await enrichForViewer(env, rec, viewer));
 	}
 	return out;
 }
@@ -340,8 +416,6 @@ function within(lat: number, lng: number, geo: TrailmarkGeo, radiusM: number): b
 	if (typeof geo.lat !== 'number' || typeof geo.lng !== 'number') return false;
 	return distanceMeters([lat, lng], [geo.lat, geo.lng]) <= radiusM;
 }
-
-// ---- thanks ----------------------------------------------------------------
 
 async function readThanks(env: Bindings, id: string): Promise<number> {
 	const raw = await env.KV.get(thanksKey(id));
