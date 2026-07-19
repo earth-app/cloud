@@ -17,8 +17,10 @@ const future = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(
 describe('isExpeditionGoal', () => {
 	it('accepts the three shared goals and rejects anything else', () => {
 		expect(isExpeditionGoal('nature_minutes')).toBe(true);
-		expect(isExpeditionGoal('trail_steps')).toBe(true);
+		expect(isExpeditionGoal('trails')).toBe(true);
 		expect(isExpeditionGoal('quests')).toBe(true);
+		// the legacy step-based goal is gone
+		expect(isExpeditionGoal('trail_steps')).toBe(false);
 		expect(isExpeditionGoal('followers')).toBe(false);
 		expect(isExpeditionGoal(42)).toBe(false);
 	});
@@ -195,9 +197,24 @@ describe('computeGarden', () => {
 		// quests weight is 30 minutes-equivalent each
 		expect(expeditionMinutes(exp)).toBe(120);
 	});
-});
 
-// ---- routes ----------------------------------------------------------------
+	it('weights a completed trail into minute-equivalents', () => {
+		const exp = {
+			id: 'a',
+			owner_uid: '1',
+			title: 't',
+			goal: 'trails' as const,
+			target: 20,
+			progress: 5,
+			contributors: [],
+			status: 'active' as const,
+			starts_at: new Date().toISOString(),
+			ends_at: future()
+		};
+		// a completed trail is worth 12 minutes-equivalent
+		expect(expeditionMinutes(exp)).toBe(60);
+	});
+});
 
 describe('circle expedition + garden routes', () => {
 	afterEach(() => vi.restoreAllMocks());
