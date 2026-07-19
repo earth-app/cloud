@@ -362,3 +362,59 @@ describe('checkAndGrantBadges', () => {
 		expect(granted.length).toBeGreaterThan(1);
 	});
 });
+
+describe('v0.6.0 outdoor badges', () => {
+	const byId = (id: string) => badges.find((b) => b.id === id);
+
+	it('registers the new badges with evocative names and rarities', () => {
+		expect(byId('first_trail')?.rarity).toBe('normal');
+		expect(byId('first_trail')?.name).toBe('Trailhead');
+		expect(byId('trailblazer')?.rarity).toBe('rare');
+		expect(byId('trail_devotee')?.rarity).toBe('amazing');
+		expect(byId('garden_grove')?.rarity).toBe('green');
+		expect(byId('week_of_wonder')?.name).toBe('Seven Days of Wonder');
+	});
+
+	it('accumulates trails_completed across the tiers', async () => {
+		const kv = new MockKVNamespace();
+		for (let i = 0; i < 10; i++) await addBadgeProgress('1', 'trails_completed', 1, kv as any);
+		expect(await getBadgeProgress('1', 'first_trail', kv as any)).toBe(1);
+		expect(await getBadgeProgress('1', 'trailblazer', kv as any)).toBe(1);
+		expect(await getBadgeProgress('1', 'trail_devotee', kv as any)).toBeCloseTo(0.2);
+	});
+
+	it('counts distinct practice days for week_of_wonder', async () => {
+		const kv = new MockKVNamespace();
+		for (const d of ['2026-07-13', '2026-07-14', '2026-07-15']) {
+			await addBadgeProgress('2', 'trail_practice_days', d, kv as any);
+		}
+		expect(await getBadgeProgress('2', 'week_of_wonder', kv as any)).toBeCloseTo(3 / 7);
+		for (const d of ['2026-07-16', '2026-07-17', '2026-07-18', '2026-07-19']) {
+			await addBadgeProgress('2', 'trail_practice_days', d, kv as any);
+		}
+		expect(await getBadgeProgress('2', 'week_of_wonder', kv as any)).toBe(1);
+	});
+
+	it('dedupes the weekly nature target for full_ring', async () => {
+		const kv = new MockKVNamespace();
+		await addBadgeProgress('3', 'nature_target_weeks', '2026-W29', kv as any);
+		await addBadgeProgress('3', 'nature_target_weeks', '2026-W29', kv as any);
+		expect(await getBadgeProgress('3', 'full_ring', kv as any)).toBe(1);
+	});
+
+	it('reads the max garden level for the garden badges', async () => {
+		const kv = new MockKVNamespace();
+		await addBadgeProgress('4', 'garden_level', '5', kv as any);
+		expect(await getBadgeProgress('4', 'garden_bloom', kv as any)).toBe(1);
+		expect(await getBadgeProgress('4', 'garden_grove', kv as any)).toBe(0.5);
+		await addBadgeProgress('4', 'garden_level', '10', kv as any);
+		expect(await getBadgeProgress('4', 'garden_grove', kv as any)).toBe(1);
+	});
+
+	it('awards green-tier impact points when a garden badge is granted', async () => {
+		const kv = new MockKVNamespace();
+		await grantBadge('5', 'garden_grove', kv as any);
+		const [pts] = await points.getImpactPoints('5', kv as any);
+		expect(pts).toBe(150);
+	});
+});

@@ -11,10 +11,19 @@ import {
 	completeTrailRun,
 	getTrailRun,
 	getTrailJournal,
-	journalCap
+	journalCap,
+	TRAIL_PRACTICE_META
 } from '../../src/user/trails';
+import type { TrailPracticeMeta } from '../../src/user/trails';
+import { isBadgeGranted } from '../../src/user/badges';
 import { createMockBindings } from '../helpers/mock-bindings';
 import { callApp } from '../helpers/call-app';
+
+// badge grants notify mantle over fetch; keep every direct-call test off the network
+beforeEach(() => {
+	vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+});
+afterEach(() => vi.restoreAllMocks());
 
 describe('trail catalog', () => {
 	it('every trail is a practice-based standalone trail with curiosity + reveal', () => {
@@ -40,6 +49,28 @@ describe('trail catalog', () => {
 	it('getTrail resolves a known id and returns null for an unknown one', () => {
 		expect(getTrail('trail_sit_spot')?.title).toBe('The Sit Spot');
 		expect(getTrail('trail_nope')).toBeNull();
+	});
+
+	it('embeds the authored practiceMeta on every trail from getAllTrails', () => {
+		for (const t of getAllTrails()) {
+			const meta = t.practiceMeta as TrailPracticeMeta;
+			expect(meta).toBeDefined();
+			// the embedded meta matches the authored source of truth for the practice
+			expect(meta).toEqual(TRAIL_PRACTICE_META[t.practice]);
+			expect(meta.practice).toBe(t.practice);
+			expect(meta.label.length).toBeGreaterThan(0);
+			expect(meta.cue.length).toBeGreaterThan(0);
+			expect(meta.defaultMinutes).toBeGreaterThan(0);
+		}
+	});
+
+	it('embeds the matching practiceMeta on a single getTrail', () => {
+		const sit = getTrail('trail_sit_spot');
+		expect(sit?.practiceMeta?.label).toBe('Sit Spot');
+		expect(sit?.practiceMeta?.cue).toBe(TRAIL_PRACTICE_META.sit_spot.cue);
+		const wander = getTrail('trail_slow_wander');
+		expect(wander?.practiceMeta?.label).toBe('Slow Wander');
+		expect(wander?.practiceMeta?.verb).toBe('wander');
 	});
 
 	it('locks premium and seasonal trails, leaves the core set free', () => {
@@ -224,6 +255,44 @@ describe('trail runs + journal', () => {
 	});
 });
 
+describe('outdoor feature badges', () => {
+	let env: ReturnType<typeof createMockBindings>;
+	beforeEach(() => {
+		env = createMockBindings();
+	});
+
+	it('completeTrailRun unlocks first_trail and first_reflection', async () => {
+		await completeTrailRun(env, '42', 'trail_sit_spot', 15, { note: 'quiet', mood: 'calm' }, 20);
+		expect(await isBadgeGranted('42', 'first_trail', env.KV)).toBe(true);
+		expect(await isBadgeGranted('42', 'first_reflection', env.KV)).toBe(true);
+	});
+
+	it('does not journal a reflection badge without a note or mood', async () => {
+		await completeTrailRun(env, '43', 'trail_sit_spot', 10, {}, 20);
+		expect(await isBadgeGranted('43', 'first_trail', env.KV)).toBe(true);
+		expect(await isBadgeGranted('43', 'first_reflection', env.KV)).toBe(false);
+	});
+
+	it('ten completions unlock trailblazer', async () => {
+		for (let i = 0; i < 10; i++) {
+			await completeTrailRun(env, '44', 'trail_sit_spot', 5, {}, 100);
+		}
+		expect(await isBadgeGranted('44', 'trailblazer', env.KV)).toBe(true);
+	});
+
+	it('reaching the weekly nature target unlocks full_ring', async () => {
+		await addNatureMinutes(env, '45', NATURE_MINUTES_TARGET, 'manual');
+		expect(await isBadgeGranted('45', 'full_ring', env.KV)).toBe(true);
+	});
+
+	it('beating a prior best unlocks personal_best_week but not on the first week', async () => {
+		await addNatureMinutes(env, '46', 40, 'manual');
+		expect(await isBadgeGranted('46', 'personal_best_week', env.KV)).toBe(false);
+		await addNatureMinutes(env, '46', 30, 'manual');
+		expect(await isBadgeGranted('46', 'personal_best_week', env.KV)).toBe(true);
+	});
+});
+
 describe('trail + nature-minutes routes', () => {
 	afterEach(() => vi.restoreAllMocks());
 
@@ -232,17 +301,29 @@ describe('trail + nature-minutes routes', () => {
 		expect(response.status).toBe(401);
 	});
 
-	it('GET /v1/trails returns the full catalog', async () => {
+	it('GET /v1/trails returns the full catalog with embedded practiceMeta', async () => {
 		const { response } = await callApp('/trails');
 		expect(response.status).toBe(200);
-		const body = (await response.json()) as unknown[];
+		const body = (await response.json()) as Array<{
+			practice: string;
+			practiceMeta?: TrailPracticeMeta;
+		}>;
 		expect(Array.isArray(body)).toBe(true);
 		expect(body.length).toBe(getAllTrails().length);
+		// every trail on the wire carries its authored practiceMeta (label/cue/verb/defaults)
+		for (const t of body) {
+			expect(t.practiceMeta).toEqual(
+				TRAIL_PRACTICE_META[t.practice as keyof typeof TRAIL_PRACTICE_META]
+			);
+		}
 	});
 
-	it('GET /v1/trails/:id resolves a trail and 404s an unknown id', async () => {
+	it('GET /v1/trails/:id resolves a trail (with practiceMeta) and 404s an unknown id', async () => {
 		const ok = await callApp('/trails/trail_sit_spot');
 		expect(ok.response.status).toBe(200);
+		const trail = (await ok.response.json()) as { practiceMeta?: TrailPracticeMeta };
+		expect(trail.practiceMeta?.label).toBe('Sit Spot');
+		expect(trail.practiceMeta?.cue).toBe(TRAIL_PRACTICE_META.sit_spot.cue);
 		const missing = await callApp('/trails/trail_missing');
 		expect(missing.response.status).toBe(404);
 	});

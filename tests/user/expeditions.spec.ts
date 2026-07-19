@@ -8,11 +8,18 @@ import {
 	expeditionMinutes,
 	isExpeditionGoal
 } from '../../src/user/expeditions';
+import { isBadgeGranted } from '../../src/user/badges';
 import { createMockBindings } from '../helpers/mock-bindings';
 import { callApp } from '../helpers/call-app';
 import type { Bindings } from '../../src/util/types';
 
 const future = () => new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+// badge grants notify mantle over fetch; keep every direct-call test off the network
+beforeEach(() => {
+	vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+});
+afterEach(() => vi.restoreAllMocks());
 
 describe('isExpeditionGoal', () => {
 	it('accepts the three shared goals and rejects anything else', () => {
@@ -213,6 +220,49 @@ describe('computeGarden', () => {
 		};
 		// a completed trail is worth 12 minutes-equivalent
 		expect(expeditionMinutes(exp)).toBe(60);
+	});
+});
+
+describe('expedition + garden badges', () => {
+	let env: Bindings;
+	beforeEach(() => (env = createMockBindings()));
+
+	async function seed(target: number) {
+		return startExpedition(env, {
+			owner_uid: '100',
+			title: 'goal',
+			goal: 'nature_minutes',
+			target,
+			ends_at: future(),
+			members: [{ uid: '200', username: 'alex' }]
+		});
+	}
+
+	it('a contribution unlocks first_contribution for the member', async () => {
+		await seed(500);
+		await creditContribution(env, '100', '200', 30, 'alex');
+		expect(await isBadgeGranted('200', 'first_contribution', env.KV)).toBe(true);
+	});
+
+	it('growing the shared garden to level 5 unlocks garden_bloom for the owner', async () => {
+		await seed(700);
+		await creditContribution(env, '100', '200', 600, 'alex');
+		expect(await isBadgeGranted('100', 'garden_bloom', env.KV)).toBe(true);
+		expect(await isBadgeGranted('100', 'garden_grove', env.KV)).toBe(false);
+	});
+
+	it('growing the shared garden to level 10 unlocks the green garden_grove', async () => {
+		await seed(1300);
+		await creditContribution(env, '100', '200', 1200, 'alex');
+		expect(await isBadgeGranted('100', 'garden_grove', env.KV)).toBe(true);
+	});
+
+	it('completing an expedition unlocks first_expedition for owner and finisher', async () => {
+		await seed(100);
+		const res = await creditContribution(env, '100', '200', 100);
+		expect(res.ok && res.justCompleted).toBe(true);
+		expect(await isBadgeGranted('100', 'first_expedition', env.KV)).toBe(true);
+		expect(await isBadgeGranted('200', 'first_expedition', env.KV)).toBe(true);
 	});
 });
 
