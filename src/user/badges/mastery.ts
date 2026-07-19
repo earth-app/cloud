@@ -30,7 +30,12 @@ export const MASTERY_EXEMPT_TRACKERS: ReadonlySet<BadgeTracker> = new Set<BadgeT
 	'friends_added',
 	'referrals_converted',
 	'quest_steps_completed',
-	'quest_steps_completed_green'
+	'quest_steps_completed_green',
+	'trailmarks_thanked',
+	'expeditions_contributed',
+	'expeditions_completed',
+	'garden_level',
+	'nature_personal_bests'
 ]);
 
 export function isMasteryExempt(badgeId: string): boolean {
@@ -108,7 +113,13 @@ export const MASTERY_TRACKER_LABELS: Partial<Record<BadgeTracker, string[]>> = {
 	event_images_submitted: ['reflex_camera', 'polaroid_camera', 'lens_cap'],
 	event_images_submitted_good: ['reflex_camera', 'polaroid_camera'],
 	event_countries_photographed: ['reflex_camera', 'polaroid_camera', 'magnetic_compass'],
-	friends_added: ['envelope', 'mailbag']
+	friends_added: ['envelope', 'mailbag'],
+	// v0.6.0 outdoor: nature/trail themed anchors for mastery-eligible trackers
+	trails_completed: ['magnetic_compass', 'alp', 'lakeside'],
+	reflections_journaled: ['book_jacket', 'magnetic_compass'],
+	trail_practice_days: ['magnetic_compass', 'mountain_tent', 'alp'],
+	nature_target_weeks: ['alp', 'lakeside', 'valley'],
+	trailmarks_left: ['magnetic_compass', 'worm_fence', 'park_bench']
 };
 
 export function labelsForBadge(badge: Badge): string[] {

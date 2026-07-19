@@ -24,7 +24,17 @@ export type BadgeTracker =
 	| 'activity_read_time'
 	| 'quest_steps_completed' // pushed but no badges currently use this; future expansion
 	| 'quest_steps_completed_green' // pushed but no badges currently use this; future expansion
-	| 'referrals_converted';
+	| 'referrals_converted'
+	| 'trails_completed'
+	| 'reflections_journaled'
+	| 'trail_practice_days'
+	| 'nature_target_weeks'
+	| 'nature_personal_bests'
+	| 'trailmarks_left'
+	| 'trailmarks_thanked'
+	| 'expeditions_contributed'
+	| 'expeditions_completed'
+	| 'garden_level';
 
 export type Badge = {
 	id: string;
@@ -648,6 +658,138 @@ export const badges = (
 			progress: (...args: any[]) => min(args, 10 * 60),
 			tracker_id: 'prompts_read_time',
 			allows_duplicate_data: true
+		},
+		// v0.6.0 outdoor features: curiosity trails, nature minutes, trailmarks, circles + shared garden
+		{
+			id: 'first_trail',
+			name: 'Trailhead',
+			description: 'Complete your first Curiosity Trail',
+			icon: 'mdi:pine-tree',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'trails_completed',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'trailblazer',
+			description: 'Complete 10 Curiosity Trails',
+			icon: 'mdi:hiking',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'trails_completed',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'trail_devotee',
+			description: 'Complete 50 Curiosity Trails',
+			icon: 'mdi:forest',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 50),
+			tracker_id: 'trails_completed',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'first_reflection',
+			name: 'Inner Compass',
+			description: 'Journal your first trail reflection',
+			icon: 'mdi:notebook-heart',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'reflections_journaled',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'week_of_wonder',
+			name: 'Seven Days of Wonder',
+			description: 'Practice a trail on 7 different days',
+			icon: 'mdi:calendar-heart',
+			rarity: 'amazing',
+			progress: (...args: any[]) => min(args, 7),
+			tracker_id: 'trail_practice_days'
+		},
+		{
+			id: 'full_ring',
+			description: 'Reach 120 nature minutes in a single week',
+			icon: 'mdi:leaf-circle',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'nature_target_weeks'
+		},
+		{
+			id: 'personal_best_week',
+			name: 'New Heights',
+			description: 'Set a new personal-best nature-minutes week',
+			icon: 'mdi:trophy-variant',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'nature_personal_bests',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'first_trailmark',
+			name: 'First Mark',
+			description: 'Leave your first trailmark for the next visitor',
+			icon: 'mdi:map-marker-plus',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'trailmarks_left',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'waymarker',
+			description: 'Leave 10 trailmarks along the way',
+			icon: 'mdi:sign-direction',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 10),
+			tracker_id: 'trailmarks_left',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'kind_words',
+			description: 'Have one of your trailmarks thanked by a visitor',
+			icon: 'mdi:hand-heart',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'trailmarks_thanked',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'first_contribution',
+			name: 'Kindred Spirit',
+			description: 'Contribute to a circle expedition',
+			icon: 'mdi:hand-extended',
+			rarity: 'normal',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'expeditions_contributed',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'first_expedition',
+			name: 'Summit',
+			description: 'Complete your first circle expedition',
+			icon: 'mdi:flag-checkered',
+			rarity: 'rare',
+			progress: (...args: any[]) => min(args, 1),
+			tracker_id: 'expeditions_completed',
+			allows_duplicate_data: true
+		},
+		{
+			id: 'garden_bloom',
+			name: 'In Bloom',
+			description: 'Grow your shared garden to level 5',
+			icon: 'mdi:flower',
+			rarity: 'rare',
+			progress: (...args: any[]) => maxLevel(args, 5),
+			tracker_id: 'garden_level'
+		},
+		{
+			id: 'garden_grove',
+			name: 'Grove Keeper',
+			description: 'Grow your shared garden to level 10',
+			icon: 'mdi:flower-tulip',
+			rarity: 'green',
+			progress: (...args: any[]) => maxLevel(args, 10),
+			tracker_id: 'garden_level'
 		}
 	] as (Badge & { name?: string })[]
 ).map((badge) => {
@@ -677,6 +819,18 @@ function min(args: any[], min: number): number {
 
 	const value = parseInt(args[0]);
 	return isNaN(value) ? 0 : Math.min(value, min) / min;
+}
+
+// garden_level tracker stores each level reached as a string; progress is max(level)/target
+function maxLevel(args: any[], target: number): number {
+	const raw = args[0];
+	const values = Array.isArray(raw) ? raw : [raw];
+	let max = 0;
+	for (const v of values) {
+		const n = typeof v === 'number' ? v : parseInt(String(v), 10);
+		if (Number.isFinite(n) && n > max) max = n;
+	}
+	return Math.min(max, target) / target;
 }
 
 // storage functions
@@ -1473,4 +1627,30 @@ export async function checkAndGrantBadges(
 	}
 
 	return newlyGranted;
+}
+
+// best-effort fallback ctx for feature hooks called outside a request (or in tests)
+const SAFE_CTX: ExecutionCtxLike = {
+	waitUntil: (p) => {
+		void Promise.resolve(p).catch(() => {});
+	}
+};
+
+// records tracker progress then evaluates + grants any newly-earned badges. a thin,
+// throw-safe convenience over addBadgeProgress + checkAndGrantBadges for feature hooks
+export async function trackAndGrant(
+	userId: string,
+	trackerId: BadgeTracker,
+	value: TrackerEntry['value'] | TrackerEntry['value'][],
+	bindings: Bindings,
+	ctx: ExecutionCtxLike = SAFE_CTX
+): Promise<string[]> {
+	try {
+		await addBadgeProgress(userId, trackerId, value, bindings.KV);
+		return await checkAndGrantBadges(userId, trackerId, bindings, ctx);
+	} catch (error) {
+		// a badge side-effect must never block the underlying feature action
+		console.error(`trackAndGrant failed for ${userId}/${trackerId}:`, error);
+		return [];
+	}
 }
