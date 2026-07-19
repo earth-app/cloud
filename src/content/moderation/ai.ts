@@ -7,6 +7,10 @@ import { runAI } from '../../util/ai-runtime';
 
 const textSafetyModel = '@cf/meta/llama-guard-3-8b';
 const imageCaptionModel = '@cf/llava-hf/llava-1.5-7b-hf';
+const sentimentModel = '@cf/huggingface/distilbert-sst-2-int8';
+
+// a note only rejects on a confidently-negative verdict; mild negativity still posts
+export const NEGATIVE_SENTIMENT_THRESHOLD = 0.85;
 
 const SYSTEM_USER_ID = '1';
 
@@ -80,6 +84,55 @@ export async function moderateText(env: Bindings, text: string): Promise<Moderat
 		labels: out.reasons,
 		severe: out.reasons.some((r) => AUTO_REMOVE_REASONS.has(r))
 	};
+}
+
+export type SentimentResult = {
+	label: 'POSITIVE' | 'NEGATIVE';
+	score: number;
+	// confidently negative; used to keep trailmarks / prompt responses kind
+	negative: boolean;
+};
+
+// distilbert-sst-2 returns [{label,score}...]; pick the top-scoring label
+function topSentiment(res: unknown): { label: 'POSITIVE' | 'NEGATIVE'; score: number } | null {
+	const arr = Array.isArray(res)
+		? res
+		: Array.isArray((res as { response?: unknown })?.response)
+			? (res as { response: unknown[] }).response
+			: null;
+	if (!arr) return null;
+
+	let best: { label: 'POSITIVE' | 'NEGATIVE'; score: number } | null = null;
+	for (const item of arr) {
+		const label = String((item as { label?: unknown })?.label || '').toUpperCase();
+		const score = Number((item as { score?: unknown })?.score);
+		if ((label !== 'POSITIVE' && label !== 'NEGATIVE') || !Number.isFinite(score)) continue;
+		if (!best || score > best.score) best = { label: label as 'POSITIVE' | 'NEGATIVE', score };
+	}
+	return best;
+}
+
+export async function classifySentiment(env: Bindings, text: string): Promise<SentimentResult> {
+	const trimmed = (text || '').slice(0, 2000);
+	if (!trimmed.trim()) {
+		return { label: 'POSITIVE', score: 0, negative: false };
+	}
+
+	let res: unknown;
+	try {
+		res = await runAI('classifySentiment', () =>
+			env.AI.run(sentimentModel as any, { text: trimmed })
+		);
+	} catch (err) {
+		console.error('classifySentiment: ai unavailable, failing open (positive)', { err });
+		return { label: 'POSITIVE', score: 0, negative: false };
+	}
+
+	const top = topSentiment(res);
+	if (!top) return { label: 'POSITIVE', score: 0, negative: false };
+
+	const negative = top.label === 'NEGATIVE' && top.score >= NEGATIVE_SENTIMENT_THRESHOLD;
+	return { label: top.label, score: top.score, negative };
 }
 
 export async function moderateImage(env: Bindings, image: Uint8Array): Promise<ModerationResult> {
