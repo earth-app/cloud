@@ -4259,13 +4259,9 @@ app.post('/mood/:topic/:date', async (c) => {
 	return c.json(snapshot, 200);
 });
 
-// Curiosity Trails - standalone practice-based trails (NOT the quest engine): one sustained
-// outdoor practice + a private reflection, plus the personal weekly nature-minutes ring.
-// a trail run/journal lives in its own KV; premium/seasonal trails gate on rank at start.
+// Curiosity Trails
 
 app.get('/trails', async (c) => {
-	// full catalog incl. premium/seasonal (each carries its own flags); the gate is applied
-	// per-trail at read + start time, so the list stays complete for everyone
 	return c.json(getAllTrails(), 200);
 });
 
