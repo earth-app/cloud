@@ -261,8 +261,6 @@ export const trails: Trail[] = [
 
 // #region practice metadata (source of truth; delivered embedded on every trail)
 
-// per-practice presentation metadata; authored here and attached to each returned trail so
-// clients (crust/sky) render label/icon/verb/cue without their own hardcoded map
 export const TRAIL_PRACTICE_META: Record<TrailPractice, TrailPracticeMeta> = {
 	sit_spot: {
 		practice: 'sit_spot',

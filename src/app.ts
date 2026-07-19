@@ -4370,7 +4370,8 @@ app.post('/trails/:id/complete', async (c) => {
 		id,
 		body.presenceMinutes,
 		body.reflection,
-		journalCap(rank)
+		journalCap(rank),
+		c.executionCtx
 	);
 	if (!result) {
 		return c.text('Trail not found', 404);
@@ -4420,7 +4421,7 @@ app.post('/users/nature-minutes', async (c) => {
 		? (body.kind as NatureMinutesKind)
 		: 'manual';
 
-	const nm = await addNatureMinutes(c.env, uid, body.minutes, kind, body.ref_id);
+	const nm = await addNatureMinutes(c.env, uid, body.minutes, kind, body.ref_id, c.executionCtx);
 	return c.json(nm, 200);
 });
 
@@ -4534,7 +4535,14 @@ app.post('/circles/:owner/expedition/contribute', async (c) => {
 		return c.text('amount must be a positive number', 400);
 	}
 
-	const result = await creditContribution(c.env, owner, member, body.amount, body.username);
+	const result = await creditContribution(
+		c.env,
+		owner,
+		member,
+		body.amount,
+		body.username,
+		c.executionCtx
+	);
 	if (!result.ok) {
 		const status = result.reason === 'not_found' ? 404 : 409;
 		const message = result.reason === 'not_found' ? 'No active expedition' : 'Expedition is closed';
@@ -4631,13 +4639,17 @@ app.post('/trailmarks', async (c) => {
 		return c.text('Valid geo (lat, lng) is required', 400);
 	}
 
-	const result = await createTrailmark(c.env, {
-		author_uid: authorUid,
-		author_username: body.author_username,
-		geo: { lat: body.geo.lat, lng: body.geo.lng, place_label: body.geo.place_label },
-		note: body.note || '',
-		...(typeof body.prompt_id === 'string' ? { prompt_id: body.prompt_id } : {})
-	});
+	const result = await createTrailmark(
+		c.env,
+		{
+			author_uid: authorUid,
+			author_username: body.author_username,
+			geo: { lat: body.geo.lat, lng: body.geo.lng, place_label: body.geo.place_label },
+			note: body.note || '',
+			...(typeof body.prompt_id === 'string' ? { prompt_id: body.prompt_id } : {})
+		},
+		c.executionCtx
+	);
 
 	if (!result.ok) {
 		// a confidently-negative note is turned away so mantle2 can show a gentle nudge
