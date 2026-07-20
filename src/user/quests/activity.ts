@@ -286,6 +286,12 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 					type: 'draw_picture',
 					description: 'Draw a picture of a sport you like.',
 					parameters: ['Draw a picture of a sport you like.', 0.5]
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Get outside and stay active for at least 15 minutes.',
+					parameters: [15],
+					reward: 40
 				}
 			];
 		}
@@ -350,6 +356,12 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 					description: 'Read about this activity for at least 15 minutes',
 					parameters: [{ type: 'activity', ...activity }, 15 * 60],
 					reward: 25
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 15 minutes being active outdoors.',
+					parameters: [15],
+					reward: 40
 				}
 			];
 		}
@@ -437,6 +449,12 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 					type: 'activity_read_time',
 					description: 'Read about travel for at least 10 minutes',
 					parameters: [{ type: 'activity_type', value: 'TRAVEL' }, 10 * 60]
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Explore somewhere new on foot for at least 15 minutes.',
+					parameters: [15],
+					reward: 40
 				}
 			];
 		}
@@ -453,6 +471,12 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 					type: 'take_photo_validation',
 					description: 'Take a photo of a natural landmark or scenery.',
 					parameters: ['A photo of a natural landmark or scenery.', 0.55]
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 20 minutes outside in nature.',
+					parameters: [20],
+					reward: 50
 				}
 			];
 		}
@@ -475,6 +499,12 @@ function step2(activity: Activity): QuestStep | QuestStep[] {
 					description: 'Describe your favorite relaxation techniques for at least 75s.',
 					parameters: ['Describe your favorite relaxation techniques.', 0.6, 75],
 					reward: 25
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Unwind outside for at least 15 minutes.',
+					parameters: [15],
+					reward: 40
 				}
 			];
 		}
