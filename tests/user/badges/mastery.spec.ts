@@ -384,6 +384,43 @@ describe('mastery: validateBadgeMasterySteps clamping', () => {
 			}
 		}
 	});
+
+	it('can generate nature_minutes and trailmarker_added steps', () => {
+		const raw = {
+			steps: [
+				{ type: 'draw_picture', description: 'Draw a leaf', prompt: 'leaf', threshold: 0.6 },
+				{ type: 'nature_minutes', description: 'Spend time outside', minutes: 15 },
+				{ type: 'trailmarker_added', description: 'Leave a note', keyword: 'trail' },
+				{ type: 'trailmarker_added', description: 'Leave any note' }
+			]
+		};
+		const clamped = validateBadgeMasterySteps(raw, ctxFor('normal'));
+		expect(clamped).toHaveLength(4);
+
+		const types = clamped.map((e) => (Array.isArray(e) ? e[0].type : e.type));
+		expect(types).toContain('nature_minutes');
+		expect(types).toContain('trailmarker_added');
+
+		const nature = clamped.map(asSingle).find((s) => s.type === 'nature_minutes');
+		expect(nature).toBeDefined();
+		if (nature && nature.type === 'nature_minutes') {
+			expect(nature.parameters[0]).toBe(15);
+		}
+
+		// keyword survives when it is a single lowercase token
+		const tmKeyword = clamped
+			.map(asSingle)
+			.find((s) => s.type === 'trailmarker_added' && s.parameters.length === 1);
+		if (tmKeyword && tmKeyword.type === 'trailmarker_added') {
+			expect(tmKeyword.parameters[0]).toBe('trail');
+		}
+
+		// a param-less trailmarker_added step is valid (any note qualifies)
+		const tmBare = clamped
+			.map(asSingle)
+			.find((s) => s.type === 'trailmarker_added' && s.parameters.length === 0);
+		expect(tmBare).toBeDefined();
+	});
 });
 
 describe('mastery: mobile-only step wrapping', () => {

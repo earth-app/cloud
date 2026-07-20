@@ -48,4 +48,17 @@ describe('activity quests', () => {
 			expect(Array.isArray(quest.steps[quest.steps.length - 1])).toBe(false);
 		}
 	});
+
+	it('offers a nature_minutes alternative for nature-primary activities', () => {
+		const quest = designActivityQuest({
+			id: 'forest_walks',
+			name: 'Forest Walks',
+			description: 'Walking in the forest.',
+			aliases: [],
+			types: ['NATURE', 'HEALTH', 'SPORT'],
+			fields: {}
+		});
+		const allSteps = quest.steps.flatMap((s) => (Array.isArray(s) ? s : [s]));
+		expect(allSteps.some((s) => s.type === 'nature_minutes')).toBe(true);
+	});
 });

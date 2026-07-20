@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { validateStep } from '../../../src/user/quests/validation';
+import { validateStep, API_DEVICE_METADATA } from '../../../src/user/quests/validation';
+import { addNatureMinutes } from '../../../src/user/trails';
+import { createTrailmark } from '../../../src/user/trailmarks';
 import { createMockBindings } from '../../helpers/mock-bindings';
 import { MockKVNamespace } from '../../helpers/mock-kv';
 import ExifReader from 'exifreader';
@@ -1538,6 +1540,199 @@ describe('validateStep', () => {
 			expect(result.message).toContain('temporarily unavailable');
 			// exhausts the bounded retry budget rather than failing on the first error
 			expect(mockScoreText).toHaveBeenCalledTimes(3);
+		});
+	});
+
+	describe('nature_minutes', () => {
+		const uid = '123456';
+
+		beforeEach(() => {
+			// addNatureMinutes badge hooks notify mantle over fetch; keep the test off the network
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+		});
+
+		it('passes when minutes accrued since the step unlocked meet the target', async () => {
+			const kv = new MockKVNamespace();
+			const bindings = createMockBindings({ KV: kv as any });
+			await addNatureMinutes(bindings, uid, 12, 'trail', 'ref-1');
+			await addNatureMinutes(bindings, uid, 8, 'manual', 'ref-2');
+
+			const step = { type: 'nature_minutes', description: 'Outside', parameters: [15] } as any;
+			const response = { type: 'nature_minutes', index: 1 } as any;
+			const result = await validateStep(step, response, bindings, API_DEVICE_METADATA, {
+				userId: uid,
+				stepAchievableAt: Date.now() - 60_000
+			});
+			expect(result.success).toBe(true);
+			expect(result.score).toBe(20);
+		});
+
+		it('fails when accrued minutes are below the target', async () => {
+			const kv = new MockKVNamespace();
+			const bindings = createMockBindings({ KV: kv as any });
+			await addNatureMinutes(bindings, uid, 5, 'trail', 'ref-1');
+
+			const step = { type: 'nature_minutes', description: 'Outside', parameters: [15] } as any;
+			const response = { type: 'nature_minutes', index: 1 } as any;
+			const result = await validateStep(step, response, bindings, API_DEVICE_METADATA, {
+				userId: uid,
+				stepAchievableAt: Date.now() - 60_000
+			});
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('do not meet the required');
+		});
+
+		it('excludes minutes credited before the step became achievable', async () => {
+			const kv = new MockKVNamespace();
+			const bindings = createMockBindings({ KV: kv as any });
+			await addNatureMinutes(bindings, uid, 30, 'trail', 'old');
+
+			const step = { type: 'nature_minutes', description: 'Outside', parameters: [15] } as any;
+			const response = { type: 'nature_minutes', index: 1 } as any;
+			// the step only unlocks in the future relative to the credited entries
+			const result = await validateStep(step, response, bindings, API_DEVICE_METADATA, {
+				userId: uid,
+				stepAchievableAt: Date.now() + 60_000
+			});
+			expect(result.success).toBe(false);
+		});
+
+		it('fails without quest timing context', async () => {
+			const bindings = createMockBindings();
+			const step = { type: 'nature_minutes', description: 'Outside', parameters: [15] } as any;
+			const response = { type: 'nature_minutes', index: 1 } as any;
+			const result = await validateStep(step, response, bindings, API_DEVICE_METADATA);
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('timing context');
+		});
+
+		it('rejects an invalid minutes threshold', async () => {
+			const bindings = createMockBindings();
+			const step = { type: 'nature_minutes', description: 'Outside', parameters: [-5] } as any;
+			const response = { type: 'nature_minutes', index: 1 } as any;
+			const result = await validateStep(step, response, bindings, API_DEVICE_METADATA, {
+				userId: uid,
+				stepAchievableAt: Date.now() - 1000
+			});
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('valid minimum minutes threshold');
+		});
+	});
+
+	describe('trailmarker_added', () => {
+		const uid = '123456';
+		const geo = { lat: 41.88, lng: -87.62 };
+
+		beforeEach(() => {
+			// createTrailmark badge hooks notify mantle over fetch; keep the test off the network
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+		});
+
+		it('passes when the user left any note since the step unlocked (no params)', async () => {
+			const kv = new MockKVNamespace();
+			const bindings = createMockBindings({ KV: kv as any });
+			const created = await createTrailmark(bindings, {
+				author_uid: uid,
+				author_username: 'tester',
+				geo,
+				note: 'A lovely quiet bench by the river.'
+			});
+			expect(created.ok).toBe(true);
+
+			const step = {
+				type: 'trailmarker_added',
+				description: 'Leave a note',
+				parameters: []
+			} as any;
+			const response = { type: 'trailmarker_added', index: 1 } as any;
+			const result = await validateStep(step, response, bindings, API_DEVICE_METADATA, {
+				userId: uid,
+				stepAchievableAt: Date.now() - 60_000
+			});
+			expect(result.success).toBe(true);
+		});
+
+		it('requires the note to contain the keyword when one is given', async () => {
+			const kv = new MockKVNamespace();
+			const bindings = createMockBindings({ KV: kv as any });
+			await createTrailmark(bindings, {
+				author_uid: uid,
+				geo,
+				note: 'The maple trees are turning gold here.'
+			});
+			const ctx = { userId: uid, stepAchievableAt: Date.now() - 60_000 };
+
+			const ok = await validateStep(
+				{ type: 'trailmarker_added', description: 'x', parameters: ['maple'] } as any,
+				{ type: 'trailmarker_added', index: 1 } as any,
+				bindings,
+				API_DEVICE_METADATA,
+				ctx
+			);
+			expect(ok.success).toBe(true);
+
+			const miss = await validateStep(
+				{ type: 'trailmarker_added', description: 'x', parameters: ['ocean'] } as any,
+				{ type: 'trailmarker_added', index: 1 } as any,
+				bindings,
+				API_DEVICE_METADATA,
+				ctx
+			);
+			expect(miss.success).toBe(false);
+			expect(miss.message).toContain('ocean');
+		});
+
+		it('enforces the optional author id', async () => {
+			const kv = new MockKVNamespace();
+			const bindings = createMockBindings({ KV: kv as any });
+			await createTrailmark(bindings, { author_uid: uid, geo, note: 'Signed, the wanderer.' });
+			const ctx = { userId: uid, stepAchievableAt: Date.now() - 60_000 };
+
+			const ok = await validateStep(
+				{ type: 'trailmarker_added', description: 'x', parameters: [undefined, 123456] } as any,
+				{ type: 'trailmarker_added', index: 1 } as any,
+				bindings,
+				API_DEVICE_METADATA,
+				ctx
+			);
+			expect(ok.success).toBe(true);
+
+			const wrong = await validateStep(
+				{ type: 'trailmarker_added', description: 'x', parameters: [undefined, 999999] } as any,
+				{ type: 'trailmarker_added', index: 1 } as any,
+				bindings,
+				API_DEVICE_METADATA,
+				ctx
+			);
+			expect(wrong.success).toBe(false);
+		});
+
+		it('fails when the only note predates the step becoming achievable', async () => {
+			const kv = new MockKVNamespace();
+			const bindings = createMockBindings({ KV: kv as any });
+			await createTrailmark(bindings, { author_uid: uid, geo, note: 'An earlier note.' });
+
+			const result = await validateStep(
+				{ type: 'trailmarker_added', description: 'x', parameters: [] } as any,
+				{ type: 'trailmarker_added', index: 1 } as any,
+				bindings,
+				API_DEVICE_METADATA,
+				{ userId: uid, stepAchievableAt: Date.now() + 60_000 }
+			);
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('No qualifying trailmark');
+		});
+
+		it('fails without quest timing context', async () => {
+			const bindings = createMockBindings();
+			const result = await validateStep(
+				{ type: 'trailmarker_added', description: 'x', parameters: [] } as any,
+				{ type: 'trailmarker_added', index: 1 } as any,
+				bindings,
+				API_DEVICE_METADATA
+			);
+			expect(result.success).toBe(false);
+			expect(result.message).toContain('timing context');
 		});
 	});
 });
