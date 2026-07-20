@@ -20,10 +20,7 @@ export const MASTERY_EXEMPT_BADGE_IDS: ReadonlySet<string> = new Set([
 	'ultimate_adventurer'
 ]);
 
-// trackers whose badges are counterproductive to gate behind a mastery quest:
-// unbounded counters that mastery itself feeds (impact_points_earned,
-// quest_steps_completed{_green}) or social/profile growth metrics that a per-user
-// quest cannot meaningfully unlock (activities_added, friends_added, referrals_converted).
+// trackers whose badges are counterproductive to gate behind a mastery quest
 export const MASTERY_EXEMPT_TRACKERS: ReadonlySet<BadgeTracker> = new Set<BadgeTracker>([
 	'impact_points_earned',
 	'activities_added',
@@ -45,9 +42,7 @@ export function isMasteryExempt(badgeId: string): boolean {
 	return false;
 }
 
-// step types the AI may emit; anything outside this list is dropped during clamping.
-// Mobile-only variants (distance_covered, scan_barcode) are server-wrapped with a
-// non-mobile describe_text fallback alt before being returned in the final quest.
+// step types the AI may emit; anything outside this list is dropped during clamping
 export const MASTERY_STEP_TYPES = [
 	'draw_picture',
 	'article_quiz',
@@ -59,6 +54,8 @@ export const MASTERY_STEP_TYPES = [
 	'order_items',
 	'article_read_time',
 	'activity_read_time',
+	'nature_minutes',
+	'trailmarker_added',
 	'distance_covered',
 	'scan_barcode'
 ] as const;

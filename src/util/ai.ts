@@ -2762,6 +2762,8 @@ const MASTERY_AI_STEP_TYPES = [
 	'order_items',
 	'article_read_time',
 	'activity_read_time',
+	'nature_minutes',
+	'trailmarker_added',
 	// mobile_only
 	'distance_covered',
 	'scan_barcode'
@@ -2781,6 +2783,8 @@ export type AIMasteryStep = {
 	min_length?: number;
 	max_length?: number;
 	minutes?: number;
+	// trailmarker_added (optional): keyword the left note must contain.
+	keyword?: string;
 	items?: string[];
 	pairs?: [string, string][];
 	// distance_covered (mobile-only): minimum meters covered on foot/bike.
@@ -2826,6 +2830,7 @@ function masteryStepShape(): Record<string, unknown> {
 		min_length: { type: 'number' },
 		max_length: { type: 'number' },
 		minutes: { type: 'number' },
+		keyword: { type: 'string', maxLength: 30 },
 		items: { type: 'array', maxItems: 12, items: { type: 'string', maxLength: 80 } },
 		pairs: {
 			type: 'array',
@@ -2951,6 +2956,8 @@ TYPE-SPECIFIC FIELDS:
 - article_quiz: activity_type (one of the allowed values), threshold (0.6-1.0 — required quiz percentage).
 - article_read_time: activity_type (allowed value), minutes (5-30 integer).
 - activity_read_time: activity_type (allowed value), minutes (5-30 integer).
+- nature_minutes: minutes (5-30 integer — outdoor minutes the user accumulates after this step unlocks, credited from trails, mindful walks, or health data). Use only for badges about nature, the outdoors, exploration, or physical presence outside.
+- trailmarker_added: keyword (optional single lowercase word the left note must contain — only emit for higher tiers). The user leaves a short place-based note ("trailmark") after this step unlocks. Use for badges about places, community, reflection, or leaving something for the next person.
 - take_photo_classification: label (one of the allowed values), threshold (0.5-0.8).
 - take_photo_validation: prompt (1-2 sentences describing what the photo should show), threshold (0.5-0.75).
 - transcribe_audio: prompt (1-2 sentences describing what the user should say aloud), threshold (0.55-0.8).
@@ -3126,6 +3133,27 @@ function clampMasteryStep(step: AIMasteryStep, ctx: MasteryValidationContext): Q
 				type: 'activity_read_time',
 				description,
 				parameters: [{ type: 'activity_type', value: at as ActivityType }, minutes * 60],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'nature_minutes': {
+			// modest per-step outdoor target; the weekly ring target lives elsewhere
+			const minutes = clampInt(step.minutes, 5, 30, 15);
+			return {
+				type: 'nature_minutes',
+				description,
+				parameters: [minutes],
+				...(cappedReward !== undefined ? { reward: cappedReward } : {})
+			};
+		}
+		case 'trailmarker_added': {
+			const keywordRaw = typeof step.keyword === 'string' ? step.keyword.trim().toLowerCase() : '';
+			const keyword = /^[a-z0-9]{1,30}$/.test(keywordRaw) ? keywordRaw : undefined;
+			const parameters: [string?, number?] = keyword ? [keyword] : [];
+			return {
+				type: 'trailmarker_added',
+				description,
+				parameters,
 				...(cappedReward !== undefined ? { reward: cappedReward } : {})
 			};
 		}
