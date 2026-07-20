@@ -254,6 +254,165 @@ export const trails: Trail[] = [
 		reveal:
 			'The steady, unpredictable sound of moving water is a natural pink-noise field: it masks jarring noise and reliably lowers stress markers, which is why it feels like relief.',
 		seasonal: true
+	},
+	{
+		id: 'trail_moon_watch',
+		title: 'Moon Watch',
+		theme: 'nature',
+		practice: 'sky_watch',
+		description: 'Follow the moon for one evening and watch it move faster than you think.',
+		icon: 'mdi:moon-waning-crescent',
+		rarity: 'normal',
+		curiosity:
+			'The moon rises almost an hour later each night and changes shape on a schedule older than any calendar. Watch it once, on purpose, and it stops being wallpaper.',
+		duration: 10,
+		reflectionPrompt:
+			'Where was the moon when you found it, and how had it moved by the time you left?',
+		reveal:
+			'The moon rises about 50 minutes later each day, and Earth turns it a full moon-width across the sky roughly every two minutes - fast enough to see it shift against a fixed branch if you wait.'
+	},
+	{
+		id: 'trail_after_rain',
+		title: 'After the Rain',
+		theme: 'reflective',
+		practice: 'water_sit',
+		description: 'Go to water right after rain, when the whole land is draining into it.',
+		icon: 'mdi:weather-pouring',
+		rarity: 'rare',
+		curiosity:
+			'In the hour after rain, every stream and gutter runs louder and faster, carrying the sky back toward the sea. It is the most alive water gets, and it only lasts a while.',
+		duration: 12,
+		reflectionPrompt: 'What did the water sound like, and what was it carrying?',
+		reveal:
+			'A single inch of rain drops over 100 tons of water on one acre of ground, and within an hour most of it is moving downhill - which is why streams surge and sing right after a storm.'
+	},
+	{
+		id: 'trail_desire_path',
+		title: 'The Desire Path',
+		theme: 'curiosity',
+		practice: 'wander',
+		description:
+			'Follow the worn shortcuts people have made and see where feet vote with their steps.',
+		icon: 'mdi:map-marker-distance',
+		rarity: 'normal',
+		curiosity:
+			'Look for the dirt shortcuts worn across the grass where the paved path took the long way around. Planners call them desire paths - the map the public draws with its own feet.',
+		duration: 12,
+		reflectionPrompt: 'Where did the unofficial path want to go that the official one refused to?',
+		reveal:
+			'Some universities wait to see where desire paths form across their lawns, then pave those exact lines - letting the crowd design the walkways before a single slab is poured.'
+	},
+	{
+		id: 'trail_skin_of_stones',
+		title: 'The Skin of Stones',
+		theme: 'curiosity',
+		practice: 'texture',
+		description:
+			'Get close to the crusty patches on rock and bark and meet two lives living as one.',
+		icon: 'mdi:texture-box',
+		rarity: 'rare',
+		curiosity:
+			'The grey-green crust on old stone and bark looks like a stain, but it is alive - and it may be centuries old. Almost no one bends down far enough to notice.',
+		duration: 8,
+		reflectionPrompt:
+			'What colors and textures did the crust hold that you never saw from standing height?',
+		reveal:
+			'Lichen is a fungus and an alga living as a single organism, and some arctic map lichens are among the oldest living things on Earth, growing a fraction of a millimeter a year for thousands of years.'
+	},
+	{
+		id: 'trail_one_square_foot',
+		title: 'One Square Foot',
+		theme: 'nature',
+		practice: 'sit_spot',
+		description:
+			'Claim a single square of ground and stay with it until it turns out to be crowded.',
+		icon: 'mdi:vector-square',
+		rarity: 'normal',
+		curiosity:
+			'Pick one square foot of ground and give it a whole quarter hour. What looks like empty dirt is one of the busiest neighborhoods on Earth once you slow down enough to see the traffic.',
+		duration: 15,
+		reflectionPrompt: 'How many living things ended up sharing your one small square?',
+		reveal:
+			'A single handful of healthy soil holds more microorganisms than there are people on Earth - one teaspoon can contain billions of bacteria and miles of fungal threads.'
+	},
+	{
+		id: 'trail_loudest_quiet',
+		title: 'The Loudest Quiet',
+		theme: 'reflective',
+		practice: 'sound_map',
+		description: 'Find the quietest place you can and discover it was never quiet at all.',
+		icon: 'mdi:volume-high',
+		rarity: 'amazing',
+		curiosity:
+			'Go somewhere you think is silent, close your eyes, and wait. True silence almost does not exist outdoors - the quiet is just sound you had stopped hearing.',
+		duration: 8,
+		reflectionPrompt: 'What was the quietest place still telling you, once you actually listened?',
+		reveal:
+			'The quietest room ever measured, a padded anechoic chamber, is so silent that people begin to hear their own heartbeat and blood flow - proof the brain manufactures sound when the world stops supplying it.',
+		premium: true
+	},
+	{
+		id: 'trail_long_shadows',
+		title: 'The Long Shadows',
+		theme: 'creative',
+		practice: 'photo_series',
+		description: 'Chase the last hour of light and photograph the shadows it stretches out long.',
+		icon: 'mdi:weather-sunny',
+		rarity: 'rare',
+		curiosity:
+			'In the last hour before sunset, shadows grow longer than the things that cast them and every edge turns gold. It is the same light painters chased for centuries, and it changes by the minute.',
+		duration: 10,
+		reflectionPrompt: 'Which shadow surprised you by how far it reached?',
+		reveal:
+			'When the sun sits about ten degrees above the horizon, an object throws a shadow nearly six times its own height - which is why late light makes even a fence post look monumental.'
+	},
+	{
+		id: 'trail_first_frost',
+		title: 'First Frost',
+		theme: 'nature',
+		practice: 'slow_look',
+		description: 'Get out on the first cold morning and study the frost before the sun erases it.',
+		icon: 'mdi:snowflake',
+		rarity: 'rare',
+		curiosity:
+			'On the first hard morning of the cold, look closely at the white edge on a leaf or window before the sun takes it. Frost draws the same feathered shapes every year, and it is gone within minutes of the light hitting it.',
+		duration: 8,
+		reflectionPrompt: 'What shapes did the frost make, and what did the sun do to them?',
+		reveal:
+			'Frost is not frozen dew - it forms when water vapor skips the liquid stage entirely and crystallizes straight onto cold surfaces, a process called deposition, which is why it grows in feathery blades instead of round droplets.',
+		seasonal: true
+	},
+	{
+		id: 'trail_leaf_fall',
+		title: 'The Turning Leaves',
+		theme: 'creative',
+		practice: 'photo_series',
+		description: 'Photograph the color coming into the leaves as the year lets go of its green.',
+		icon: 'mdi:leaf-maple',
+		rarity: 'amazing',
+		curiosity:
+			'When the leaves turn, it looks like the tree is painting itself. It is really doing the opposite - and the color you are chasing was hiding in the leaf the whole summer.',
+		duration: 10,
+		reflectionPrompt: 'Which color arrived first where you were, and which held out the longest?',
+		reveal:
+			'Autumn yellows and oranges are always present in the leaf, just masked by green chlorophyll; when the tree stops making chlorophyll for winter the hidden pigments finally show, and the reds are freshly made from trapped sugars.',
+		seasonal: true
+	},
+	{
+		id: 'trail_night_bloom',
+		title: 'The Night Shift',
+		theme: 'mixed',
+		practice: 'sit_spot',
+		description: 'Stay out past dusk beside flowers that only open once everyone has gone inside.',
+		icon: 'mdi:flower-poppy',
+		rarity: 'green',
+		curiosity:
+			'Some flowers keep the night shift - they stay shut all day and open only after dark, pumping out scent for the moths that trade pollen for a meal no one else is awake to claim.',
+		duration: 15,
+		reflectionPrompt: 'What opened, moved, or arrived once the light was gone?',
+		reveal:
+			'Night-blooming flowers such as evening primrose and moonflower can open in a matter of minutes at dusk and depend on night-flying moths; some pale, deep blooms are shaped for a single moth species with a matching tongue.',
+		premium: true
 	}
 ];
 
@@ -482,6 +641,40 @@ export async function addNatureMinutes(
 	}
 
 	return updated;
+}
+
+// sums ledger entries credited at or after `sinceMs`, scanning only the iso weeks overlapping
+// [sinceMs, now] (bounded by the weekly ttl)
+export async function getNatureMinutesSince(
+	env: Bindings,
+	uid: string,
+	sinceMs: number
+): Promise<number> {
+	if (typeof sinceMs !== 'number' || !Number.isFinite(sinceMs)) return 0;
+	const now = Date.now();
+	// never look further back than the weekly ttl (those records have expired anyway)
+	const start = Math.max(sinceMs, now - NATURE_MINUTES_WEEK_TTL * 1000);
+
+	const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+	const weeks = new Set<string>();
+	for (let t = start; t <= now; t += WEEK_MS) {
+		weeks.add(isoWeekKey(new Date(t)));
+		if (weeks.size > 12) break; // hard bound on the scan
+	}
+	weeks.add(isoWeekKey(new Date(now)));
+
+	let total = 0;
+	for (const week of weeks) {
+		const rec = await env.KV.get<NatureMinutes>(weekKey(uid, week), 'json');
+		if (!rec || !Array.isArray(rec.sources)) continue;
+		for (const s of rec.sources) {
+			const at = Date.parse(s.at);
+			if (Number.isFinite(at) && at >= sinceMs && typeof s.minutes === 'number' && s.minutes > 0) {
+				total += s.minutes;
+			}
+		}
+	}
+	return total;
 }
 
 // #endregion
