@@ -10,10 +10,12 @@ import {
 } from '../../content/ferry';
 import ExifReader from 'exifreader';
 import { parseBuffer } from 'music-metadata';
-import { isInsideLocation } from '../../util/util';
+import { isInsideLocation, normalizeId } from '../../util/util';
 import { Bindings } from '../../util/types';
 import { QuestStepResponse } from './tracking';
 import { runAI, AITimeoutError } from '../../util/ai-runtime';
+import { getNatureMinutesSince } from '../trails';
+import { getUserTrailmarks } from '../trailmarks';
 
 const USER_AGENT = '@earth-app/cloud v1.0 (support@earth-app.com)';
 
@@ -53,6 +55,13 @@ export const API_DEVICE_METADATA: QuestDeviceMetadata = {
 	make: 'unknown',
 	model: 'API',
 	os: 'web'
+};
+
+// extra context for cloud-side accrual steps (nature_minutes / trailmarker_added): the user and
+// the instant the current step first became achievable, so we only count what accrued since then
+export type QuestValidationContext = {
+	userId?: string;
+	stepAchievableAt?: number;
 };
 
 export type QuestDeviceMetadata = {
@@ -540,7 +549,8 @@ export async function validateStep(
 	step: QuestStep,
 	response: QuestStepResponse,
 	bindings: Bindings,
-	data: QuestDeviceMetadata
+	data: QuestDeviceMetadata,
+	context?: QuestValidationContext
 ): Promise<{
 	success: boolean;
 	message?: string;
@@ -594,6 +604,12 @@ export async function validateStep(
 		case 'article_read_time':
 		case 'activity_read_time': {
 			return validateReadTimeStep(step, response);
+		}
+		case 'nature_minutes': {
+			return validateNatureMinutesStep(step, response, bindings, context);
+		}
+		case 'trailmarker_added': {
+			return validateTrailmarkerAddedStep(step, response, bindings, context);
 		}
 		case 'describe_text': {
 			return await validateDescribeText(step, response, bindings);
@@ -703,6 +719,107 @@ function validateReadTimeStep(
 	}
 
 	return { success: true, score: response.duration };
+}
+
+async function validateNatureMinutesStep(
+	step: QuestStep,
+	response: QuestStepResponse & { type: 'nature_minutes' },
+	bindings: Bindings,
+	context?: QuestValidationContext
+): Promise<{ success: boolean; message?: string; score?: number }> {
+	if (step.type !== 'nature_minutes') {
+		return { success: false, message: `Expected nature_minutes step, got ${step.type}` };
+	}
+
+	if (response.type !== 'nature_minutes') {
+		return { success: false, message: `Expected nature_minutes response, got ${response.type}` };
+	}
+
+	const [requiredMinutes] = step.parameters;
+	if (
+		typeof requiredMinutes !== 'number' ||
+		!Number.isFinite(requiredMinutes) ||
+		requiredMinutes < 0
+	) {
+		return {
+			success: false,
+			message: 'nature_minutes requires a valid minimum minutes threshold.'
+		};
+	}
+
+	// timing context is required so only minutes accrued since the step unlocked are counted
+	if (!context || !context.userId || typeof context.stepAchievableAt !== 'number') {
+		return {
+			success: false,
+			message: 'Nature minutes could not be validated without quest timing context.'
+		};
+	}
+
+	const accumulated = await getNatureMinutesSince(
+		bindings,
+		context.userId,
+		context.stepAchievableAt
+	);
+	if (accumulated < requiredMinutes) {
+		return {
+			success: false,
+			message: `Accumulated nature minutes (${accumulated}) do not meet the required ${requiredMinutes}.`
+		};
+	}
+
+	return { success: true, score: accumulated };
+}
+
+async function validateTrailmarkerAddedStep(
+	step: QuestStep,
+	response: QuestStepResponse & { type: 'trailmarker_added' },
+	bindings: Bindings,
+	context?: QuestValidationContext
+): Promise<{ success: boolean; message?: string }> {
+	if (step.type !== 'trailmarker_added') {
+		return { success: false, message: `Expected trailmarker_added step, got ${step.type}` };
+	}
+
+	if (response.type !== 'trailmarker_added') {
+		return { success: false, message: `Expected trailmarker_added response, got ${response.type}` };
+	}
+
+	const [keyword, authorId] = step.parameters;
+	const needle =
+		typeof keyword === 'string' && keyword.trim().length > 0 ? keyword.trim().toLowerCase() : null;
+	const requiredAuthor =
+		typeof authorId === 'number' && Number.isFinite(authorId)
+			? normalizeId(String(authorId))
+			: null;
+
+	if (!context || !context.userId || typeof context.stepAchievableAt !== 'number') {
+		return {
+			success: false,
+			message: 'Trailmark step could not be validated without quest timing context.'
+		};
+	}
+
+	const since = context.stepAchievableAt;
+	const marks = await getUserTrailmarks(bindings, context.userId);
+	const match = marks.find((m) => {
+		if (!m || typeof m.note !== 'string') return false;
+		const at = Date.parse(m.created_at);
+		if (!Number.isFinite(at) || at < since) return false;
+		if (needle && !m.note.toLowerCase().includes(needle)) return false;
+		if (requiredAuthor && normalizeId(m.author_uid) !== requiredAuthor) return false;
+		return true;
+	});
+
+	if (!match) {
+		return {
+			success: false,
+			message: needle
+				? `No trailmark containing "${keyword}" was added since this step unlocked.`
+				: 'No qualifying trailmark was added since this step unlocked.'
+		};
+	}
+
+	return { success: true };
 }
 
 async function validateStepAudio(
