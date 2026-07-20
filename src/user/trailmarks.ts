@@ -438,6 +438,12 @@ export async function getTrailmark(env: Bindings, id: string): Promise<Trailmark
 	return await env.KV.get<Trailmark>(markKey(id), 'json');
 }
 
+// the author's own trailmark index (newest first, capped)
+export async function getUserTrailmarks(env: Bindings, uid: string): Promise<Trailmark[]> {
+	const raw = await env.KV.get<Trailmark[]>(userKey(uid), 'json');
+	return Array.isArray(raw) ? raw : [];
+}
+
 export type ThankResult =
 	| { ok: true; thanks: number; authorUid: string; placeLabel?: string }
 	| { ok: false; reason: 'not_found' | 'already_thanked' | 'self' };
