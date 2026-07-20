@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../../../src/user/notifications', () => ({
 	sendUserNotification: vi.fn(async () => undefined),
@@ -7,6 +7,7 @@ vi.mock('../../../src/user/notifications', () => ({
 
 import {
 	QUEST_DELAY_REDUCTION_BY_RANK,
+	advanceAccrualQuestStep,
 	checkStepDelay,
 	downloadStepData,
 	enrichProgressEntries,
@@ -23,6 +24,9 @@ import {
 } from '../../../src/user/quests/tracking';
 import { getImpactPoints } from '../../../src/user/points';
 import { quests } from '../../../src/user/quests';
+import { getQuestHashes } from '../../../src/user/quests/migration';
+import { addNatureMinutes } from '../../../src/user/trails';
+import { createTrailmark } from '../../../src/user/trailmarks';
 import { createMockBindings } from '../../helpers/mock-bindings';
 import { MockKVNamespace } from '../../helpers/mock-kv';
 import { deflate, encrypt } from '../../../src/util/util';
@@ -1146,5 +1150,255 @@ describe('removeQuestStepEntry', () => {
 		const stored = await kv.getWithMetadata('user:quest_progress:924', 'json');
 		expect((stored.value as any[])[5].length).toBe(1);
 		expect((stored.metadata as any).currentStep).toBe(5);
+	});
+});
+
+describe('advanceAccrualQuestStep', () => {
+	// badge grants / trailmark sentiment run through mocked notifications; keep any stray call off the wire
+	beforeEach(() => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok'));
+	});
+
+	function collector() {
+		return createWaitUntilCollector();
+	}
+
+	async function seedCustomQuest(
+		kv: MockKVNamespace,
+		uid: string,
+		quest: any,
+		currentStep: number,
+		priorEntries: any[],
+		startedAt: number
+	) {
+		await kv.put(`custom_quest:${quest.id}`, JSON.stringify(quest), {
+			metadata: { id: quest.id, owner_id: quest.owner_id, title: quest.title, reward: quest.reward }
+		});
+		await kv.put(`user:quest_progress:${uid}`, JSON.stringify(priorEntries), {
+			metadata: {
+				questId: quest.id,
+				currentStep,
+				completed: false,
+				startedAt,
+				hashes: getQuestHashes(quest)
+			}
+		});
+	}
+
+	const singularNatureQuest = (uid: string) => ({
+		id: `nm_singular_${uid}`,
+		title: 'NM Singular',
+		description: 'test',
+		icon: 'mdi:tree',
+		steps: [
+			{ type: 'order_items', description: 'o1', parameters: [['a', 'b', 'c', 'd']] },
+			{ type: 'nature_minutes', description: 'Spend time outside', parameters: [15] },
+			{ type: 'order_items', description: 'o2', parameters: [['a', 'b', 'c', 'd']] }
+		],
+		reward: 100,
+		owner_id: uid,
+		custom: true,
+		premium: false
+	});
+
+	it('advances a SINGULAR nature_minutes step once the ledger meets the target', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const uid = '90001';
+		const startedAt = Date.now() - 120_000;
+
+		await seedCustomQuest(
+			kv,
+			uid,
+			singularNatureQuest(uid),
+			1,
+			[{ type: 'order_items', index: 0, submittedAt: startedAt + 1000 }],
+			startedAt
+		);
+		await addNatureMinutes(bindings, uid, 20, 'trail', 'r1');
+
+		const c = collector();
+		await advanceAccrualQuestStep(uid, 'nature_minutes', bindings, c.ctx as any);
+		await c.flush();
+
+		const after = await getCurrentQuestProgress(uid, bindings);
+		expect(after.currentStepIndex).toBe(2);
+	});
+
+	it('does NOT advance a SINGULAR nature_minutes step while below the target', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const uid = '90002';
+		const startedAt = Date.now() - 120_000;
+
+		await seedCustomQuest(
+			kv,
+			uid,
+			singularNatureQuest(uid),
+			1,
+			[{ type: 'order_items', index: 0, submittedAt: startedAt + 1000 }],
+			startedAt
+		);
+		await addNatureMinutes(bindings, uid, 5, 'trail', 'r1'); // below the 15-minute target
+
+		const c = collector();
+		await advanceAccrualQuestStep(uid, 'nature_minutes', bindings, c.ctx as any);
+		await c.flush();
+
+		const after = await getCurrentQuestProgress(uid, bindings);
+		expect(after.currentStepIndex).toBe(1);
+	});
+
+	it('advances an ALT-GROUP nature_minutes step (catalog quest) once the ledger meets the target', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const uid = '90003';
+		const startedAt = Date.now() - 120_000;
+
+		// first_light_walk step[1] is an alt group that includes a nature_minutes alt
+		await kv.put(
+			`user:quest_progress:${uid}`,
+			JSON.stringify([
+				{
+					type: 'take_photo_validation',
+					index: 0,
+					submittedAt: startedAt + 1000,
+					r2Key: 'x',
+					score: 0.7
+				}
+			]),
+			{
+				metadata: {
+					questId: 'first_light_walk',
+					currentStep: 1,
+					completed: false,
+					startedAt
+				}
+			}
+		);
+		await addNatureMinutes(bindings, uid, 20, 'trail', 'r1');
+
+		const c = collector();
+		await advanceAccrualQuestStep(uid, 'nature_minutes', bindings, c.ctx as any);
+		await c.flush();
+
+		const after = await getCurrentQuestProgress(uid, bindings);
+		expect(after.currentStepIndex).toBe(2);
+		const slot = after.progress[1] as any[];
+		expect(Array.isArray(slot)).toBe(true);
+		expect(slot.some((e) => e.type === 'nature_minutes')).toBe(true);
+	});
+
+	it('advances a SINGULAR trailmarker_added step once a matching trailmark exists', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const uid = '90004';
+		const startedAt = Date.now() - 120_000;
+
+		const quest = {
+			id: `tm_singular_${uid}`,
+			title: 'TM Singular',
+			description: 'test',
+			icon: 'mdi:map-marker',
+			steps: [
+				{ type: 'order_items', description: 'o1', parameters: [['a', 'b', 'c', 'd']] },
+				{ type: 'trailmarker_added', description: 'Leave a note', parameters: [] },
+				{ type: 'order_items', description: 'o2', parameters: [['a', 'b', 'c', 'd']] }
+			],
+			reward: 100,
+			owner_id: uid,
+			custom: true,
+			premium: false
+		};
+		await seedCustomQuest(
+			kv,
+			uid,
+			quest,
+			1,
+			[{ type: 'order_items', index: 0, submittedAt: startedAt + 1000 }],
+			startedAt
+		);
+		await createTrailmark(bindings, {
+			author_uid: uid,
+			geo: { lat: 41.88, lng: -87.62 },
+			note: 'A quiet spot worth remembering.'
+		});
+
+		const c = collector();
+		await advanceAccrualQuestStep(uid, 'trailmarker_added', bindings, c.ctx as any);
+		await c.flush();
+
+		const after = await getCurrentQuestProgress(uid, bindings);
+		expect(after.currentStepIndex).toBe(2);
+	});
+
+	it('advances an ALT-GROUP trailmarker_added step (catalog quest) once a trailmark exists', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const uid = '90005';
+		const startedAt = Date.now() - 120_000;
+
+		// mapmaker step[2] is an alt group that includes a trailmarker_added alt
+		await kv.put(
+			`user:quest_progress:${uid}`,
+			JSON.stringify([
+				{ type: 'take_photo_validation', index: 0, submittedAt: startedAt + 500, r2Key: 'a' },
+				{ type: 'take_photo_list', index: 1, submittedAt: startedAt + 1000, r2Key: 'b' }
+			]),
+			{
+				metadata: {
+					questId: 'mapmaker',
+					currentStep: 2,
+					completed: false,
+					startedAt
+				}
+			}
+		);
+		await createTrailmark(bindings, {
+			author_uid: uid,
+			geo: { lat: 41.88, lng: -87.62 },
+			note: 'A landmark on my daily path.'
+		});
+
+		const c = collector();
+		await advanceAccrualQuestStep(uid, 'trailmarker_added', bindings, c.ctx as any);
+		await c.flush();
+
+		const after = await getCurrentQuestProgress(uid, bindings);
+		expect(after.currentStepIndex).toBe(3);
+		const slot = after.progress[2] as any[];
+		expect(Array.isArray(slot)).toBe(true);
+		expect(slot.some((e) => e.type === 'trailmarker_added')).toBe(true);
+	});
+
+	it('no-ops when there is no active quest', async () => {
+		const bindings = createMockBindings({ KV: new MockKVNamespace() as any });
+		await expect(
+			advanceAccrualQuestStep('90006', 'nature_minutes', bindings)
+		).resolves.toBeUndefined();
+	});
+
+	it('no-ops when the current step is not the accrual type', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const uid = '90007';
+
+		// first_light_walk step[0] is a singular take_photo_validation (not an accrual step)
+		await kv.put(`user:quest_progress:${uid}`, JSON.stringify([]), {
+			metadata: {
+				questId: 'first_light_walk',
+				currentStep: 0,
+				completed: false,
+				startedAt: Date.now() - 10_000
+			}
+		});
+		await addNatureMinutes(bindings, uid, 50, 'trail', 'r1');
+
+		const c = collector();
+		await advanceAccrualQuestStep(uid, 'nature_minutes', bindings, c.ctx as any);
+		await c.flush();
+
+		const after = await getCurrentQuestProgress(uid, bindings);
+		expect(after.currentStepIndex).toBe(0);
 	});
 });
