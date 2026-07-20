@@ -83,6 +83,14 @@ export type QuestStep = {
 			parameters: [ActivityOrType, number]; // activity, minimum read time in seconds
 	  }
 	| {
+			type: 'nature_minutes'; // outdoor minutes, validated in cloud against the nature-minutes ledger
+			parameters: [number]; // target minutes to accumulate since the step first became achievable
+	  }
+	| {
+			type: 'trailmarker_added'; // validated in cloud against the user's own trailmark index
+			parameters: [string?, number?]; // optional keyword the note must contain, optional author id
+	  }
+	| {
 			type: 'transcribe_audio';
 			parameters: [string, number, number?]; // prompt, accuracy threshold, minimum time in seconds
 	  }
@@ -462,6 +470,343 @@ export const quests = [
 			}
 		],
 		reward: 300,
+		permissions: ['camera', 'motion']
+	},
+	{
+		id: 'first_light_walk',
+		title: 'First Light Walk',
+		description:
+			'Head out while the day is still deciding what it wants to be, and gather the quiet of first light.',
+		icon: 'mdi:weather-sunset-up',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of the early morning light on something ordinary.',
+				parameters: ['early morning light falling on an everyday object or scene', 0.5]
+			},
+			[
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt about mornings.',
+					parameters: ['morning']
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe how the morning air feels for 20 seconds.',
+					parameters: ['Describe how the morning air feels.', 0.65, 20],
+					reward: 30
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 15 minutes outside in the early light.',
+					parameters: [15],
+					reward: 40
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 70% accuracy.',
+				parameters: ['NATURE', 0.7],
+				delay: 300
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw the sky the way you saw it this morning.',
+				parameters: ['a morning sky', 0.6]
+			}
+		],
+		reward: 150,
+		permissions: ['camera', 'record']
+	},
+	{
+		id: 'backyard_botanist',
+		title: 'Backyard Botanist',
+		description:
+			'You do not need a forest. Learn to see the wild things already growing at your feet.',
+		icon: 'mdi:sprout',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of a plant growing where no one planted it.',
+				parameters: ['a wild plant or weed growing in a crack, lawn, or untended spot', 0.5]
+			},
+			{
+				type: 'take_photo_list',
+				description: 'Take a photo that includes a leaf, a stem, and a flower or bud.',
+				parameters: [['leaf', 'stem', 'flower'], 0.5],
+				reward: 25
+			},
+			[
+				{
+					type: 'match_terms',
+					description: 'Match each plant part to what it does.',
+					parameters: [
+						'Match each plant part to what it does.',
+						[
+							['Roots', 'Draw up water and anchor the plant'],
+							['Leaves', 'Turn sunlight into food'],
+							['Stem', 'Carry water and hold the plant upright'],
+							['Flower', 'Attract pollinators and make seeds'],
+							['Seed', 'Carry the next generation']
+						]
+					]
+				},
+				{
+					type: 'order_items',
+					description: 'Order the life of a flowering plant from first to last.',
+					parameters: [['seed', 'sprout', 'leaves', 'bud', 'flower', 'fruit']],
+					reward: 25
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 70% accuracy.',
+				parameters: ['NATURE', 0.7],
+				delay: 300
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw the plant you found today.',
+				parameters: ['a plant with leaves and a flower', 0.6]
+			}
+		],
+		reward: 175,
+		permissions: ['camera']
+	},
+	{
+		id: 'sky_report',
+		title: 'Sky Report',
+		description:
+			'The sky puts on a different show every day and almost no one files a report. Be the one who looks up.',
+		icon: 'mdi:weather-partly-cloudy',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of the sky right now, whatever it is doing.',
+				parameters: ['the sky, showing clouds, clear blue, or weather', 0.45]
+			},
+			[
+				{
+					type: 'match_terms',
+					description: 'Match each cloud to what it usually tells you.',
+					parameters: [
+						'Match each cloud type to what it usually means.',
+						[
+							['Cumulus', 'Fair weather, puffy and white'],
+							['Stratus', 'Grey overcast, maybe drizzle'],
+							['Cirrus', 'High and wispy, change on the way'],
+							['Cumulonimbus', 'Tall and dark, storms building'],
+							['Nimbostratus', 'Thick and low, steady rain']
+						]
+					]
+				},
+				{
+					type: 'order_items',
+					description: 'Order these from lowest to highest in the sky.',
+					parameters: [['fog', 'cumulus', 'cirrus', 'jet stream', 'the moon']],
+					reward: 25
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 70% accuracy.',
+				parameters: ['NATURE', 0.7]
+			},
+			{
+				type: 'describe_text',
+				description: 'Describe the sky today in your own words.',
+				parameters: [
+					[
+						{
+							id: 'observation',
+							weight: 0.5,
+							ideal:
+								'The response describes what the sky actually looks like right now with specific detail.'
+						},
+						{
+							id: 'voice',
+							weight: 0.5,
+							ideal:
+								"The response is in the writer's own words and shows genuine attention rather than a generic line."
+						}
+					],
+					0.55,
+					40
+				]
+			}
+		],
+		reward: 150,
+		permissions: ['camera']
+	},
+	{
+		id: 'follow_the_water',
+		title: 'Follow the Water',
+		description:
+			'Every drop near you is going somewhere. Trace a little of that journey and see where water lives around you.',
+		icon: 'mdi:water',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description:
+					'Take a photo of water in any form - a puddle, a stream, a fountain, or rain on a window.',
+				parameters: ['water in any form, such as a puddle, stream, fountain, or rain', 0.45]
+			},
+			{
+				type: 'order_items',
+				description: 'Order the stages of the water cycle.',
+				parameters: [
+					['evaporation', 'condensation', 'clouds', 'precipitation', 'runoff', 'collection']
+				],
+				reward: 25
+			},
+			[
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt about water.',
+					parameters: ['water']
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about nature and complete the quiz with at least 75% accuracy.',
+					parameters: ['NATURE', 0.75],
+					reward: 40
+				}
+			],
+			{
+				type: 'draw_picture',
+				description: 'Draw a river winding through a landscape.',
+				parameters: ['a river winding through a landscape', 0.6],
+				delay: 300
+			}
+		],
+		reward: 140,
+		permissions: ['camera']
+	},
+	{
+		id: 'bark_and_stone',
+		title: 'A Hand on the Bark',
+		description:
+			'Some of the world is meant for your hands, not your eyes. Go touch the outside and report back.',
+		icon: 'mdi:hand-back-right',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a close photo of a rough natural texture - bark, stone, or moss.',
+				parameters: ['a close-up of a rough natural texture such as tree bark, stone, or moss', 0.5]
+			},
+			{
+				type: 'take_photo_list',
+				description: 'Take photos of three different natural textures.',
+				parameters: [['tree bark', 'a rock', 'a leaf'], 0.5],
+				reward: 30
+			},
+			[
+				{
+					type: 'describe_text',
+					description: 'Describe how one texture felt under your fingers.',
+					parameters: [
+						[
+							{
+								id: 'sensory',
+								weight: 0.6,
+								ideal:
+									'The response describes the physical feel of the texture with specific sensory detail.'
+							},
+							{
+								id: 'voice',
+								weight: 0.4,
+								ideal: "The response is in the writer's own words and shows real attention."
+							}
+						],
+						0.55,
+						30
+					]
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe a texture you touched today for 20 seconds.',
+					parameters: ['Describe a texture you touched today.', 0.65, 20],
+					reward: 30
+				}
+			],
+			{
+				type: 'draw_picture',
+				description: 'Draw the pattern you found in the bark or stone.',
+				parameters: ['a close-up texture pattern of bark or stone', 0.55]
+			}
+		],
+		reward: 160,
+		permissions: ['camera', 'record']
+	},
+	{
+		id: 'one_good_walk',
+		title: 'One Good Walk',
+		description:
+			'No route, no goal, no step count to hit. Just a walk that is only about the walk.',
+		icon: 'mdi:walk',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of something you would have walked right past.',
+				parameters: ['a small, easily-overlooked detail found outdoors', 0.45]
+			},
+			[
+				{
+					type: 'distance_covered',
+					description: 'Take a slow walk of at least half a mile.',
+					parameters: [800],
+					mobile_only: true
+				},
+				{
+					type: 'article_read_time',
+					description: 'Read articles about nature for at least 5 minutes.',
+					parameters: ['NATURE', 5 * 60]
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 15 minutes outside on your walk.',
+					parameters: [15],
+					reward: 40
+				}
+			],
+			{
+				type: 'respond_to_prompt',
+				description: 'Respond to a prompt about being outside.',
+				parameters: ['outside'],
+				delay: 300
+			},
+			{
+				type: 'describe_text',
+				description: 'Describe one thing the walk let you notice.',
+				parameters: [
+					[
+						{
+							id: 'noticing',
+							weight: 0.6,
+							ideal: 'The response names a specific thing noticed on the walk with real detail.'
+						},
+						{
+							id: 'voice',
+							weight: 0.4,
+							ideal: "The response is genuine and in the writer's own voice."
+						}
+					],
+					0.55,
+					30
+				]
+			}
+		],
+		reward: 150,
 		permissions: ['camera', 'motion']
 	},
 	// #region rare quests
@@ -963,6 +1308,436 @@ export const quests = [
 		reward: 450,
 		permissions: ['camera']
 	},
+	{
+		id: 'turning_season',
+		title: 'The Turning Season',
+		description: 'The season is changing whether you watch it or not. Catch it in the act.',
+		icon: 'mdi:leaf-maple',
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of one sign that the season is changing.',
+				parameters: [
+					'a visible sign of the season changing, such as buds, fallen leaves, frost, or new growth',
+					0.5
+				]
+			},
+			[
+				{
+					type: 'match_terms',
+					description: 'Match each season to a change it brings.',
+					parameters: [
+						'Match each season to a change it brings to the land.',
+						[
+							['Spring', 'Buds open and migrants return'],
+							['Summer', 'Long light and a full canopy'],
+							['Autumn', 'Leaves color and seeds fall'],
+							['Winter', 'Bare branches and dormant ground']
+						]
+					]
+				},
+				{
+					type: 'order_items',
+					description: 'Order these spring arrivals from earliest to latest.',
+					parameters: [['snowdrops', 'crocus', 'daffodils', 'cherry blossom', 'tulips']],
+					reward: 40
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 80% accuracy.',
+				parameters: ['NATURE', 0.8],
+				delay: 600
+			},
+			{
+				type: 'describe_text',
+				description: 'Describe the season where you are, as if to someone far away.',
+				parameters: [
+					[
+						{
+							id: 'specificity',
+							weight: 0.5,
+							ideal: 'The response describes concrete, local signs of the season with real detail.'
+						},
+						{
+							id: 'voice',
+							weight: 0.5,
+							ideal: "The response is warm and in the writer's own words, not generic."
+						}
+					],
+					0.6,
+					60,
+					400
+				],
+				delay: 900
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw a single tree as it looks this season.',
+				parameters: ['a tree as it appears in the current season', 0.6]
+			}
+		],
+		reward: 350,
+		permissions: ['camera']
+	},
+	{
+		id: 'dawn_chorus',
+		title: 'The Dawn Chorus',
+		description:
+			'Just before sunrise, birds hold the loudest meeting of the day. Set an early alarm and eavesdrop.',
+		icon: 'mdi:bird',
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'transcribe_audio',
+				description: 'Go outside near dawn and describe the sounds you hear for 30 seconds.',
+				parameters: ['Describe the sounds you hear outside near dawn.', 0.65, 30]
+			},
+			[
+				{
+					type: 'match_terms',
+					description: 'Match each bird to its sound.',
+					parameters: [
+						'Match each bird to the sound it is known for.',
+						[
+							['Owl', 'A low hoot after dark'],
+							['Woodpecker', 'A rapid drumming on wood'],
+							['Rooster', 'A crow at first light'],
+							['Dove', 'A soft repeated coo'],
+							['Crow', 'A harsh caw']
+						]
+					]
+				},
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt about birds.',
+					parameters: ['birds'],
+					reward: 40
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 75% accuracy.',
+				parameters: ['NATURE', 0.75],
+				delay: 600
+			},
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of a bird, or a place a bird would sing from.',
+				parameters: [
+					'a bird, or a perch such as a branch, wire, or rooftop where a bird would sing',
+					0.45
+				],
+				delay: 900
+			},
+			{
+				type: 'transcribe_audio',
+				description: 'Describe which sound you would most want to wake up to for 30 seconds.',
+				parameters: ['Describe which morning sound you would most want to wake up to.', 0.65, 30]
+			}
+		],
+		reward: 375,
+		permissions: ['camera', 'record']
+	},
+	{
+		id: 'garden_keeper',
+		title: 'Garden Keeper',
+		description:
+			'A garden is a slow conversation with the ground. Learn its language and tend a small patch of it.',
+		icon: 'mdi:flower-tulip',
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of a garden, a planter, or a single potted plant.',
+				parameters: ['a garden bed, planter, or potted plant', 0.5]
+			},
+			{
+				type: 'order_items',
+				description: 'Order these steps of growing a plant from first to last.',
+				parameters: [
+					[
+						'prepare the soil',
+						'plant the seed',
+						'water it',
+						'watch it sprout',
+						'tend it as it grows',
+						'harvest or bloom'
+					]
+				],
+				reward: 40
+			},
+			[
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about home improvement and complete the quiz with at least 75% accuracy.',
+					parameters: ['HOME_IMPROVEMENT', 0.75]
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about a personal goal and complete the quiz with at least 75% accuracy.',
+					parameters: ['PERSONAL_GOAL', 0.75],
+					reward: 40
+				}
+			],
+			{
+				type: 'describe_text',
+				description: 'Describe something you would like to grow, and why.',
+				parameters: [
+					[
+						{
+							id: 'intention',
+							weight: 0.5,
+							ideal:
+								'The response names something specific the writer wants to grow and a genuine reason.'
+						},
+						{
+							id: 'voice',
+							weight: 0.5,
+							ideal: "The response is personal and in the writer's own words."
+						}
+					],
+					0.55,
+					40
+				],
+				delay: 600
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw the garden you would like to tend.',
+				parameters: ['a small garden with plants and flowers', 0.6]
+			}
+		],
+		reward: 325,
+		permissions: ['camera']
+	},
+	{
+		id: 'color_field',
+		title: 'Color Field',
+		description: 'Pick one color and let it lead you outside. You will start seeing it everywhere.',
+		icon: 'mdi:palette-outline',
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description:
+					'Choose a color, then take a photo of something outdoors that wears it boldly.',
+				parameters: ['an outdoor subject dominated by a single strong color', 0.45]
+			},
+			{
+				type: 'take_photo_list',
+				description: 'Take photos of three more things in your chosen color.',
+				parameters: [['a flower', 'a leaf or plant', 'a human-made object'], 0.5],
+				reward: 50
+			},
+			[
+				{
+					type: 'match_terms',
+					description: 'Match each color to something in nature known for it.',
+					parameters: [
+						'Match each color to a natural thing known for it.',
+						[
+							['Red', 'A cardinal or a ripe berry'],
+							['Orange', 'Autumn leaves or a monarch'],
+							['Yellow', 'A sunflower or a finch'],
+							['Green', 'Moss or new leaves'],
+							['Blue', 'A jay or a clear sky']
+						]
+					]
+				},
+				{
+					type: 'draw_picture',
+					description: 'Draw a scene using mostly your chosen color.',
+					parameters: ['a scene dominated by a single color', 0.55],
+					reward: 50
+				}
+			],
+			{
+				type: 'article_quiz',
+				description: 'Read an article about art and complete the quiz with at least 80% accuracy.',
+				parameters: ['ART', 0.8],
+				delay: 600
+			},
+			{
+				type: 'take_photo_caption',
+				description: 'Take one photo that captures the mood of your color.',
+				parameters: [
+					[
+						{
+							id: 'mood',
+							weight: 0.5,
+							ideal: 'The photo and caption convey a clear mood tied to the chosen color.'
+						},
+						{
+							id: 'composition',
+							weight: 0.3,
+							ideal: 'The photo is thoughtfully composed around the color.'
+						},
+						{
+							id: 'originality',
+							weight: 0.2,
+							ideal: 'The photo shows an original way of seeing the color.'
+						}
+					],
+					'Take one photo that captures the mood of your color.',
+					0.55
+				]
+			}
+		],
+		reward: 400,
+		permissions: ['camera']
+	},
+	{
+		id: 'night_sky_novice',
+		title: 'Night Sky Novice',
+		description:
+			'The stars have not gone anywhere. Give your eyes twenty dark minutes and the sky fills back in.',
+		icon: 'mdi:star-four-points',
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Go outside after dark and take a photo of the night sky.',
+				parameters: ['the night sky after dark, showing sky, stars, or the moon', 0.4]
+			},
+			[
+				{
+					type: 'order_items',
+					description: 'Order these night-sky objects from nearest to farthest from Earth.',
+					parameters: [
+						['the Moon', 'the Sun', 'Jupiter', 'the nearest star', 'the Andromeda galaxy']
+					],
+					reward: 50
+				},
+				{
+					type: 'match_terms',
+					description: 'Match each night-sky sight to what it is.',
+					parameters: [
+						'Match each night-sky sight to what it is.',
+						[
+							['Shooting star', 'A tiny grain of dust burning up'],
+							['The Moon', 'A world reflecting the Sun'],
+							['A planet', 'A steady, non-twinkling light'],
+							['The Milky Way', 'The edge-on view of our galaxy'],
+							['A satellite', 'A moving human-made light']
+						]
+					],
+					reward: 50
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about learning and complete the quiz with at least 80% accuracy.',
+				parameters: ['LEARNING', 0.8],
+				delay: 600
+			},
+			{
+				type: 'transcribe_audio',
+				description: 'Describe what it felt like to look up for 30 seconds.',
+				parameters: ['Describe what it felt like to look up at the night sky.', 0.65, 30]
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw the night sky as you saw it, or wish you could.',
+				parameters: ['a night sky with stars and the moon', 0.6]
+			}
+		],
+		reward: 375,
+		permissions: ['camera', 'record']
+	},
+	{
+		id: 'counting_the_good',
+		title: 'Counting the Good',
+		description:
+			'Attention is a form of thanks. Spend a little of yours on the ordinary things that go right.',
+		icon: 'mdi:hand-heart',
+		premium: true,
+		rarity: 'rare',
+		steps: [
+			{
+				type: 'describe_text',
+				description: 'Name three ordinary things you are glad exist today.',
+				parameters: [
+					[
+						{
+							id: 'specificity',
+							weight: 0.5,
+							ideal:
+								'The response names three concrete, ordinary things rather than vague generalities.'
+						},
+						{
+							id: 'sincerity',
+							weight: 0.5,
+							ideal: 'The response reads as genuine and personal.'
+						}
+					],
+					0.55,
+					30
+				]
+			},
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of one small thing you are grateful for.',
+				parameters: ['an ordinary object or scene the person is grateful for', 0.4],
+				reward: 40
+			},
+			[
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt about gratitude.',
+					parameters: ['gratitude']
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about spirituality and complete the quiz with at least 75% accuracy.',
+					parameters: ['SPIRITUALITY', 0.75],
+					reward: 50
+				},
+				{
+					type: 'trailmarker_added',
+					description: 'Leave a trailmark note of thanks for the next visitor.',
+					parameters: [],
+					reward: 50
+				}
+			],
+			{
+				type: 'transcribe_audio',
+				description: 'Thank someone out loud, even if they cannot hear it, for 30 seconds.',
+				parameters: ['Thank someone out loud for something they did.', 0.65, 30],
+				delay: 600
+			},
+			{
+				type: 'describe_text',
+				description: 'Write one line you want to remember from today.',
+				parameters: [
+					[
+						{
+							id: 'meaning',
+							weight: 0.6,
+							ideal: 'The line captures something meaningful from the day with specificity.'
+						},
+						{
+							id: 'voice',
+							weight: 0.4,
+							ideal: "The line is in the writer's own voice."
+						}
+					],
+					0.5,
+					15,
+					200
+				]
+			}
+		],
+		reward: 300,
+		permissions: ['camera', 'record']
+	},
 	// #region amazing quests
 	{
 		id: 'insect_investigator',
@@ -1225,6 +2000,418 @@ export const quests = [
 		reward: 1300,
 		permissions: ['camera', 'location']
 	},
+	{
+		id: 'wonder_collector',
+		title: 'The Wonder Collector',
+		description:
+			"Curiosity is a muscle. Spend a week finding things that make you say 'wait, really?'",
+		icon: 'mdi:telescope',
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of something outdoors that made you curious.',
+				parameters: ['an outdoor subject that sparks curiosity or a question', 0.45]
+			},
+			[
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about nature and complete the quiz with at least 80% accuracy.',
+					parameters: ['NATURE', 0.8]
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about technology and complete the quiz with at least 80% accuracy.',
+					parameters: ['TECHNOLOGY', 0.8],
+					reward: 50
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about learning and complete the quiz with at least 80% accuracy.',
+					parameters: ['LEARNING', 0.8],
+					reward: 50
+				}
+			],
+			{
+				type: 'describe_text',
+				description: 'Write down a question you cannot stop wondering about.',
+				parameters: [
+					[
+						{
+							id: 'genuine_curiosity',
+							weight: 0.6,
+							ideal: 'The response poses a real, specific question the writer is curious about.'
+						},
+						{
+							id: 'depth',
+							weight: 0.4,
+							ideal: 'The question shows thought rather than a throwaway line.'
+						}
+					],
+					0.55,
+					25
+				],
+				delay: 600
+			},
+			{
+				type: 'match_terms',
+				description: 'Match each everyday wonder to why it happens.',
+				parameters: [
+					'Match each everyday wonder to its cause.',
+					[
+						['Rainbow', 'Sunlight split by raindrops'],
+						['Thunder', 'Air snapping back after lightning'],
+						['Tides', 'The Moon pulling the oceans'],
+						['Sunset colors', 'Blue light scattered away by the air'],
+						['Frost', 'Water vapor freezing straight onto surfaces']
+					]
+				],
+				reward: 50
+			},
+			{
+				type: 'article_read_time',
+				description: 'Spend at least 10 minutes reading about learning.',
+				parameters: ['LEARNING', 10 * 60],
+				delay: 1200
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw the thing you were most curious about this week.',
+				parameters: ['something that made you curious', 0.55]
+			}
+		],
+		reward: 600,
+		permissions: ['camera']
+	},
+	{
+		id: 'four_elements',
+		title: 'The Four Elements',
+		description:
+			'Earth, water, air, fire. The old way of naming the world still holds a surprising amount of truth.',
+		icon: 'mdi:earth',
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Earth: take a photo of soil, stone, or the ground itself.',
+				parameters: ['bare earth, soil, rock, or stony ground', 0.5]
+			},
+			[
+				{
+					type: 'take_photo_validation',
+					description: 'Water: take a photo of water in any form.',
+					parameters: ['water in any form', 0.45],
+					reward: 40
+				},
+				{
+					type: 'take_photo_validation',
+					description: 'Air: take a photo of something being moved by the wind.',
+					parameters: ['something being moved by wind, such as leaves, a flag, or clouds', 0.45],
+					reward: 40
+				}
+			],
+			{
+				type: 'take_photo_validation',
+				description:
+					'Fire: take a photo of a flame or a warm glow (a candle, a lamp, or the low sun).',
+				parameters: ['a flame, warm light, or the low sun', 0.45],
+				delay: 600
+			},
+			{
+				type: 'match_terms',
+				description: 'Match each element to what it gives life.',
+				parameters: [
+					'Match each classical element to what it gives life.',
+					[
+						['Earth', 'Nutrients and a place to root'],
+						['Water', 'The medium every cell needs'],
+						['Air', 'Oxygen and carbon dioxide'],
+						['Fire', 'Warmth and, through the Sun, all energy']
+					]
+				],
+				reward: 50
+			},
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 85% accuracy.',
+				parameters: ['NATURE', 0.85],
+				delay: 1200
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw a single scene that holds all four elements.',
+				parameters: ['a landscape containing earth, water, air, and fire', 0.55]
+			}
+		],
+		reward: 650,
+		permissions: ['camera']
+	},
+	{
+		id: 'long_look',
+		title: 'The Long Look',
+		description:
+			'Almost nothing is boring once you look at it long enough. Prove it to yourself, one patient subject at a time.',
+		icon: 'mdi:eye-outline',
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Pick one living thing and take a photo of it to begin your watch.',
+				parameters: ['a single living thing such as a plant, insect, or bird', 0.45]
+			},
+			{
+				type: 'describe_text',
+				description:
+					'Watch it for several minutes, then describe something it did that you would have missed.',
+				parameters: [
+					[
+						{
+							id: 'observation',
+							weight: 0.6,
+							ideal:
+								'The response describes a specific behavior or detail noticed only through patient watching.'
+						},
+						{
+							id: 'patience',
+							weight: 0.4,
+							ideal: 'The response reflects genuine sustained attention rather than a glance.'
+						}
+					],
+					0.6,
+					50
+				],
+				delay: 300,
+				reward: 60
+			},
+			[
+				{
+					type: 'activity_read_time',
+					description: 'Spend at least 10 minutes with an Activity about Nature.',
+					parameters: [{ type: 'activity_type', value: 'NATURE' }, 10 * 60]
+				},
+				{
+					type: 'article_read_time',
+					description: 'Spend at least 10 minutes reading about relaxation.',
+					parameters: ['RELAXATION', 10 * 60],
+					reward: 50
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 15 minutes outside watching one thing.',
+					parameters: [15],
+					reward: 50
+				}
+			],
+			{
+				type: 'transcribe_audio',
+				description: 'Describe what patience felt like out there for 45 seconds.',
+				parameters: ['Describe what it felt like to watch one thing patiently.', 0.65, 45],
+				delay: 900
+			},
+			{
+				type: 'take_photo_caption',
+				description: 'Take one final photo of your subject and say what changed while you watched.',
+				parameters: [
+					[
+						{
+							id: 'change',
+							weight: 0.5,
+							ideal: 'The caption names what changed in the subject over the watching period.'
+						},
+						{
+							id: 'attention',
+							weight: 0.5,
+							ideal: 'The caption reflects careful, sustained attention.'
+						}
+					],
+					'Photograph your subject and say what changed while you watched.',
+					0.55
+				]
+			}
+		],
+		reward: 550,
+		permissions: ['camera', 'record']
+	},
+	{
+		id: 'mapmaker',
+		title: 'Mapmaker of Small Places',
+		description:
+			'Cartographers mapped the whole world. Map the fifty steps outside your door instead - no one knows them better than you could.',
+		icon: 'mdi:map-marker-path',
+		premium: true,
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of a landmark on your daily path that only you would notice.',
+				parameters: ['a small personal landmark along an everyday route', 0.45]
+			},
+			{
+				type: 'take_photo_list',
+				description: 'Photograph three features you would put on your map.',
+				parameters: [['a tree or plant', 'a path or road', 'a building or structure'], 0.5],
+				reward: 50
+			},
+			[
+				{
+					type: 'order_items',
+					description: 'Order these map scales from smallest area to largest.',
+					parameters: [
+						['a room', 'a building', 'a street', 'a neighborhood', 'a city', 'a country']
+					],
+					reward: 50
+				},
+				{
+					type: 'match_terms',
+					description: 'Match each map symbol to what it means.',
+					parameters: [
+						'Match each common map symbol to what it represents.',
+						[
+							['Blue line', 'A river or stream'],
+							['Green patch', 'Woods or a park'],
+							['Brown contour', 'A change in elevation'],
+							['Dashed line', 'A footpath or trail'],
+							['Star', 'A capital or point of interest']
+						]
+					],
+					reward: 50
+				},
+				{
+					type: 'trailmarker_added',
+					description: 'Leave a trailmark note at a spot on your map.',
+					parameters: [],
+					reward: 50
+				}
+			],
+			{
+				type: 'draw_picture',
+				description: 'Draw a map of the small place you know best.',
+				parameters: ['a hand-drawn map of a small local area', 0.55],
+				delay: 600
+			},
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about travel and complete the quiz with at least 80% accuracy.',
+				parameters: ['TRAVEL', 0.8],
+				delay: 1200
+			},
+			{
+				type: 'describe_text',
+				description: 'Describe the route you would give a friend to your favorite nearby spot.',
+				parameters: [
+					[
+						{
+							id: 'clarity',
+							weight: 0.5,
+							ideal: 'The directions are clear and specific enough to actually follow.'
+						},
+						{
+							id: 'character',
+							weight: 0.5,
+							ideal: 'The description conveys what makes the spot worth visiting.'
+						}
+					],
+					0.55,
+					40
+				]
+			}
+		],
+		reward: 600,
+		permissions: ['camera']
+	},
+	{
+		id: 'keeper_of_seasons',
+		title: 'Keeper of Seasons',
+		description:
+			'Cultures everywhere mark the year with the land. Step into one turning of the season with other people.',
+		icon: 'mdi:calendar-heart',
+		rarity: 'amazing',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of something that marks the time of year where you live.',
+				parameters: [
+					'a seasonal marker such as decorations, produce, weather, or plants of the season',
+					0.45
+				]
+			},
+			[
+				{
+					type: 'attend_event',
+					description: 'Attend a holiday event with at least 20 attendees.',
+					parameters: [{ type: 'activity_type', value: 'HOLIDAY' }, 20],
+					reward: 75
+				},
+				{
+					type: 'attend_event',
+					description: 'Attend a community service event with at least 15 attendees.',
+					parameters: [{ type: 'activity_type', value: 'COMMUNITY_SERVICE' }, 15],
+					reward: 75
+				},
+				{
+					type: 'attend_event',
+					description: 'Attend a family event with at least 10 attendees.',
+					parameters: [{ type: 'activity_type', value: 'FAMILY' }, 10],
+					reward: 75
+				},
+				{
+					type: 'trailmarker_added',
+					description: 'Leave a trailmark note where you marked the season.',
+					parameters: [],
+					reward: 75
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about holidays and complete the quiz with at least 80% accuracy.',
+				parameters: ['HOLIDAY', 0.8],
+				delay: 600
+			},
+			{
+				type: 'match_terms',
+				description: 'Match each season to a celebration tied to it.',
+				parameters: [
+					'Match each season to a kind of celebration tied to it.',
+					[
+						['Spring', 'Planting and renewal festivals'],
+						['Summer', 'Solstice and midsummer gatherings'],
+						['Autumn', 'Harvest festivals'],
+						['Winter', 'Festivals of light in the dark months']
+					]
+				],
+				reward: 50
+			},
+			{
+				type: 'describe_text',
+				description: 'Describe a seasonal tradition that means something to you.',
+				parameters: [
+					[
+						{
+							id: 'personal',
+							weight: 0.5,
+							ideal: 'The response describes a specific tradition personal to the writer.'
+						},
+						{
+							id: 'meaning',
+							weight: 0.5,
+							ideal: 'The response conveys why it matters to them.'
+						}
+					],
+					0.55,
+					50
+				],
+				delay: 1200
+			}
+		],
+		reward: 525,
+		permissions: ['camera', 'location']
+	},
 	// #region green quests
 	{
 		id: 'world_tour',
@@ -1432,6 +2619,254 @@ export const quests = [
 		],
 		reward: 2500,
 		permissions: ['camera']
+	},
+	{
+		id: 'hundred_acre_habit',
+		title: 'The Hundred-Acre Habit',
+		description:
+			'One visit to a wild place is a nice afternoon. Ten visits is a relationship. Begin one.',
+		icon: 'mdi:forest',
+		rarity: 'green',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo at a green space near you: a park, wood, field, or shoreline.',
+				parameters: ['a natural green space such as a park, woods, field, or shoreline', 0.5]
+			},
+			{
+				type: 'take_photo_list',
+				description: 'Photograph three living things sharing that place.',
+				parameters: [['a tree', 'a smaller plant', 'an animal or insect'], 0.5],
+				reward: 50
+			},
+			[
+				{
+					type: 'activity_read_time',
+					description: 'Spend at least 15 minutes with an Activity about Nature.',
+					parameters: [{ type: 'activity_type', value: 'NATURE' }, 15 * 60],
+					reward: 50
+				},
+				{
+					type: 'article_read_time',
+					description: 'Read about nature for at least 15 minutes.',
+					parameters: ['NATURE', 15 * 60],
+					reward: 50
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 20 minutes outside in your green space.',
+					parameters: [20],
+					reward: 50
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about nature and complete the quiz with at least 85% accuracy.',
+				parameters: ['NATURE', 0.85],
+				delay: 3600
+			},
+			{
+				type: 'describe_text',
+				description: 'Describe how the place changed between two of your visits.',
+				parameters: [
+					[
+						{
+							id: 'observation',
+							weight: 0.5,
+							ideal: 'The response describes a specific change observed across visits.'
+						},
+						{
+							id: 'connection',
+							weight: 0.5,
+							ideal: 'The response conveys a growing familiarity with the place.'
+						}
+					],
+					0.6,
+					60,
+					500
+				],
+				delay: 7200
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw the place from memory, the way you carry it now.',
+				parameters: ['a remembered natural landscape', 0.55]
+			}
+		],
+		reward: 800,
+		permissions: ['camera']
+	},
+	{
+		id: 'still_water',
+		title: 'Still Water',
+		description:
+			'Find moving water and give it an unhurried hour. People have gone to water to think for as long as there have been people.',
+		icon: 'mdi:waves-arrow-up',
+		premium: true,
+		rarity: 'green',
+		steps: [
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo beside moving water - a stream, river, lake edge, or fountain.',
+				parameters: ['moving or open water such as a stream, river, lake edge, or fountain', 0.5]
+			},
+			{
+				type: 'transcribe_audio',
+				description: 'Describe the sound of the water where you sit for 30 seconds.',
+				parameters: ['Describe the sound of the water where you are sitting.', 0.6, 30],
+				reward: 50
+			},
+			[
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt about water.',
+					parameters: ['water']
+				},
+				{
+					type: 'article_quiz',
+					description:
+						'Read an article about relaxation and complete the quiz with at least 80% accuracy.',
+					parameters: ['RELAXATION', 0.8],
+					reward: 50
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 20 minutes outside beside the water.',
+					parameters: [20],
+					reward: 50
+				}
+			],
+			{
+				type: 'describe_text',
+				description: 'Sit for a while, then describe what the water carried off while you watched.',
+				parameters: [
+					[
+						{
+							id: 'reflection',
+							weight: 0.6,
+							ideal:
+								'The response reflects genuinely on thoughts that settled while watching the water.'
+						},
+						{
+							id: 'presence',
+							weight: 0.4,
+							ideal: 'The response shows the writer actually spent unhurried time there.'
+						}
+					],
+					0.6,
+					60,
+					500
+				],
+				delay: 900
+			},
+			{
+				type: 'draw_picture',
+				description: 'Draw the surface of the water as it moved.',
+				parameters: ['the moving surface of water', 0.55]
+			}
+		],
+		reward: 850,
+		permissions: ['camera', 'record']
+	},
+	{
+		id: 'year_of_noticing',
+		title: 'A Year of Noticing',
+		description:
+			'The reward for paying attention is a life that feels longer, because you were actually in it. Start the practice that lasts.',
+		icon: 'mdi:calendar-star',
+		rarity: 'green',
+		steps: [
+			{
+				type: 'describe_text',
+				description: 'Write what you hope to notice more of this year.',
+				parameters: [
+					[
+						{
+							id: 'intention',
+							weight: 0.5,
+							ideal: 'The response names something specific the writer wants to pay attention to.'
+						},
+						{
+							id: 'voice',
+							weight: 0.5,
+							ideal: "The response is personal and in the writer's own words."
+						}
+					],
+					0.55,
+					40
+				]
+			},
+			{
+				type: 'take_photo_validation',
+				description: 'Take a photo of the first thing today worth remembering.',
+				parameters: ['a moment or subject worth remembering', 0.4],
+				reward: 40
+			},
+			[
+				{
+					type: 'distance_covered',
+					description: 'Take a mindful walk of at least one mile.',
+					parameters: [1600],
+					mobile_only: true,
+					reward: 60
+				},
+				{
+					type: 'article_read_time',
+					description: 'Read about relaxation for at least 10 minutes.',
+					parameters: ['RELAXATION', 10 * 60]
+				},
+				{
+					type: 'nature_minutes',
+					description: 'Spend at least 15 minutes outside noticing what you usually miss.',
+					parameters: [15],
+					reward: 60
+				}
+			],
+			{
+				type: 'article_quiz',
+				description:
+					'Read an article about a personal goal and complete the quiz with at least 80% accuracy.',
+				parameters: ['PERSONAL_GOAL', 0.8],
+				delay: 3600
+			},
+			[
+				{
+					type: 'respond_to_prompt',
+					description: 'Respond to a prompt about slowing down.',
+					parameters: ['slow']
+				},
+				{
+					type: 'transcribe_audio',
+					description: 'Describe one thing you noticed today that you usually miss for 30 seconds.',
+					parameters: ['Describe one thing you noticed today that you usually miss.', 0.65, 30],
+					reward: 50
+				}
+			],
+			{
+				type: 'describe_text',
+				description: 'Describe the difference between looking and truly seeing, in your own words.',
+				parameters: [
+					[
+						{
+							id: 'insight',
+							weight: 0.6,
+							ideal: 'The response offers a genuine reflection on attention rather than a cliche.'
+						},
+						{
+							id: 'voice',
+							weight: 0.4,
+							ideal: "The response is in the writer's own voice."
+						}
+					],
+					0.6,
+					50,
+					500
+				]
+			}
+		],
+		reward: 1000,
+		permissions: ['camera', 'record', 'motion']
 	},
 	{
 		id: 'reader',
