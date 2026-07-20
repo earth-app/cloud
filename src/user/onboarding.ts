@@ -11,6 +11,9 @@ export type OnboardingStepId =
 	| 'first_quest_completed'
 	| 'first_friend'
 	| 'verify_email'
+	| 'first_trail'
+	| 'first_trailmark'
+	| 'grow_shared_garden'
 	| 'complete';
 
 export const ONBOARDING_STEPS: OnboardingStepId[] = [
@@ -23,6 +26,9 @@ export const ONBOARDING_STEPS: OnboardingStepId[] = [
 	'first_quest_completed',
 	'first_friend',
 	'verify_email',
+	'first_trail',
+	'first_trailmark',
+	'grow_shared_garden',
 	'complete'
 ];
 
