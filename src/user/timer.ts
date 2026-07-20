@@ -1,9 +1,8 @@
 import { AnalyticsCategoryType, logAnalyticsBatch } from '../content/analytics';
-import { Activity, Article, Bindings, Prompt } from '../util/types';
+import { Activity, Article, Bindings, ExecutionCtxLike, Prompt } from '../util/types';
 import { normalizeId } from '../util/util';
 import { addBadgeProgress, TrackerEntry } from './badges';
-import { checkStepDelay, getCurrentQuestProgress, updateQuestProgress } from './quests/tracking';
-import { API_DEVICE_METADATA } from './quests/validation';
+import { advanceAccrualQuestStep } from './quests/tracking';
 
 type TimerState = {
 	startedAt: number;
@@ -73,107 +72,27 @@ async function maybeAdvanceReadTimeQuestStep(
 	rank?: string | null
 ) {
 	try {
-		const questProgress = await getCurrentQuestProgress(userId, bindings);
-		if (!questProgress.quest || questProgress.completed) {
-			return;
-		}
-
 		const readTimeSeconds = await getReadTime(userId, tracker, bindings.KV);
-
-		const currentStepIndex = questProgress.currentStepIndex;
-		const currentStep = questProgress.currentStep;
-		if (!currentStep) {
-			return;
-		}
-
 		const stepType = tracker === 'articles_read_time' ? 'article_read_time' : 'activity_read_time';
-		const currentProgress = questProgress.progress[currentStepIndex];
 
-		let candidateAltIndex: number | undefined;
-		let candidateThreshold: number | undefined;
-
-		if (Array.isArray(currentStep)) {
-			const completedAltIndices = new Set(
-				Array.isArray(currentProgress) ? currentProgress.map((entry) => entry.altIndex ?? 0) : []
-			);
-
-			for (let altIndex = 0; altIndex < currentStep.length; altIndex++) {
-				const step = currentStep[altIndex];
-				if (step.type !== stepType) {
-					continue;
-				}
-
-				if (completedAltIndices.has(altIndex)) {
-					continue;
-				}
-
-				const [, requiredSeconds] = step.parameters;
-				if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
-					continue;
-				}
-
-				candidateAltIndex = altIndex;
-				candidateThreshold = requiredSeconds;
-				break;
+		const pending: Promise<unknown>[] = [];
+		const ctx: ExecutionCtxLike = {
+			waitUntil: (promise) => {
+				pending.push(Promise.resolve(promise));
 			}
-		} else {
-			if (currentStep.type !== stepType) {
-				return;
-			}
+		};
 
-			if (currentProgress) {
-				return;
-			}
-
-			const [, requiredSeconds] = currentStep.parameters;
-			if (typeof requiredSeconds !== 'number' || readTimeSeconds < requiredSeconds) {
-				return;
-			}
-
-			candidateThreshold = requiredSeconds;
-		}
-
-		if (candidateThreshold == null) {
-			return;
-		}
-
-		const delayStatus = await checkStepDelay(
-			userId,
-			currentStepIndex,
-			candidateAltIndex,
-			bindings,
+		await advanceAccrualQuestStep(userId, stepType, bindings, ctx, {
+			gate: (step) => {
+				const required = (step.parameters as unknown[])[1];
+				return typeof required === 'number' && readTimeSeconds >= required;
+			},
+			extra: (step) => ({
+				duration: Math.max(readTimeSeconds, (step.parameters as unknown[])[1] as number)
+			}),
 			rank
-		);
-		if (!delayStatus.available) {
-			return;
-		}
-
-		const waitUntilPromises: Promise<unknown>[] = [];
-		try {
-			await updateQuestProgress(
-				userId,
-				{
-					type: stepType,
-					index: currentStepIndex,
-					...(candidateAltIndex !== undefined ? { altIndex: candidateAltIndex } : {}),
-					duration: Math.max(readTimeSeconds, candidateThreshold)
-				} as any,
-				API_DEVICE_METADATA,
-				bindings,
-				{
-					waitUntil(promise) {
-						waitUntilPromises.push(Promise.resolve(promise));
-					}
-				},
-				rank
-			);
-			await Promise.all(waitUntilPromises);
-		} catch (innerError) {
-			const status = (innerError as { status?: number }).status;
-			if (status && status !== 409) {
-				console.warn('Failed to auto-complete read-time quest step:', innerError);
-			}
-		}
+		});
+		await Promise.all(pending);
 	} catch (error) {
 		console.error('Unexpected error in maybeAdvanceReadTimeQuestStep:', error);
 	}

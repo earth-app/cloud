@@ -9,6 +9,7 @@ import { notifyChallengeStep } from '../challenges';
 import { pushLiveMessage, sendUserNotification } from '../notifications';
 import { tryCache } from '../../util/cache';
 import {
+	API_DEVICE_METADATA,
 	BarcodeResolution,
 	normalizeThreshold,
 	QuestDeviceMetadata,
@@ -1368,6 +1369,69 @@ export async function updateQuestProgress(
 	);
 
 	return { completed, message: validation.message, validated: validation.success };
+}
+
+export type AdvanceStepOptions = {
+	// extra qualifier beyond the type match (activity membership, score/time threshold, ...)
+	gate?: (step: QuestStep) => boolean;
+	// type-specific response payload merged into the submission (eventId, score, duration, ...)
+	extra?: (step: QuestStep) => Record<string, unknown>;
+	// rank drives the per-step delay reduction inside updateQuestProgress
+	rank?: string | null;
+};
+
+export async function advanceAccrualQuestStep(
+	userId: string,
+	type: QuestStep['type'],
+	bindings: Bindings,
+	ctx?: ExecutionCtxLike,
+	opts?: AdvanceStepOptions
+): Promise<void> {
+	try {
+		const active = await getCurrentQuestProgress(userId, bindings, ctx);
+		if (!active.quest || active.completed) return;
+
+		const slot = active.currentStep; // singular step OR alt group at the current index
+		if (!slot) return;
+
+		// the current step (singular) or the first alt matching the type + optional gate
+		const matches = (s: QuestStep) => s.type === type && (!opts?.gate || opts.gate(s));
+		let step: QuestStep;
+		let altIndex: number | undefined;
+		if (Array.isArray(slot)) {
+			const found = slot.findIndex(matches);
+			if (found < 0) return;
+			step = slot[found];
+			altIndex = found;
+		} else {
+			if (!matches(slot)) return;
+			step = slot;
+			altIndex = undefined;
+		}
+
+		const response = {
+			type,
+			index: active.currentStepIndex,
+			...(altIndex !== undefined ? { altIndex } : {}),
+			timestamp: Date.now(),
+			...(opts?.extra ? opts.extra(step) : {})
+		} as QuestStepResponse;
+
+		// validation/delay gate the advance; ignore the result. a no-op (target not met) is expected.
+		await updateQuestProgress(
+			userId,
+			response,
+			API_DEVICE_METADATA,
+			bindings,
+			ctx ?? { waitUntil: () => {} },
+			opts?.rank
+		);
+	} catch (err) {
+		const status = (err as { status?: number })?.status;
+		// expected no-ops: target/validation not met (400), already completed (409), still delayed (425)
+		if (status === 400 || status === 409 || status === 425) return;
+		console.warn(`advanceAccrualQuestStep(${type}) failed for user ${userId}:`, err);
+	}
 }
 
 export async function handleQuizQuestStep(
