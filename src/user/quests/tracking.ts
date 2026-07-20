@@ -60,6 +60,8 @@ export type QuestStepResponse = { type: QuestStep['type']; index: number; altInd
 			score: number;
 	  }
 	| { type: 'match_terms' | 'order_items' | 'respond_to_prompt' } // validated externally via separate endpoints
+	| { type: 'nature_minutes' } // validated in cloud against the nature-minutes ledger, no body
+	| { type: 'trailmarker_added' } // validated in cloud against the trailmark index, no body
 	| { type: 'distance_covered'; distance: number } // accelerometer-derived meters, validated externally
 	| { type: 'describe_text'; text: string }
 	| { type: 'article_read_time' | 'activity_read_time'; duration: number }
@@ -107,7 +109,7 @@ export type QuestStepProgressEntry = {
 			metadata?: Record<string, unknown>;
 	  }
 	// contains no additional data
-	| { type: 'match_terms' | 'order_items' }
+	| { type: 'match_terms' | 'order_items' | 'nature_minutes' | 'trailmarker_added' }
 );
 
 // r2 path for a step's binary payload
@@ -400,6 +402,21 @@ export function getQuestDelayReduction(rank?: string | null): number {
 	return QUEST_DELAY_REDUCTION_BY_RANK[normalized] ?? 0;
 }
 
+// the instant a step first became achievable = the previous step's first completion (or the
+// quest start for step 0)
+export function questStepAchievableAt(
+	progress: (QuestStepProgressEntry | QuestStepProgressEntry[])[],
+	stepIndex: number,
+	startedAt?: number
+): number {
+	if (stepIndex <= 0) return startedAt ?? 0;
+	const prevEntry = progress[stepIndex - 1];
+	if (Array.isArray(prevEntry)) {
+		return prevEntry[0]?.submittedAt ?? 0;
+	}
+	return (prevEntry as QuestStepProgressEntry | undefined)?.submittedAt ?? 0;
+}
+
 export async function checkStepDelay(
 	userId: string,
 	stepIndex: number,
@@ -436,17 +453,7 @@ export async function checkStepDelay(
 	// full bypass for administrators (and any future 100%-off rank)
 	if (reduction >= 1) return { available: true };
 
-	let baseTime: number;
-	if (stepIndex === 0) {
-		baseTime = metadata.startedAt ?? 0;
-	} else {
-		const prevEntry = progress[stepIndex - 1];
-		if (Array.isArray(prevEntry)) {
-			baseTime = (prevEntry as QuestStepProgressEntry[])[0]?.submittedAt ?? 0;
-		} else {
-			baseTime = (prevEntry as QuestStepProgressEntry)?.submittedAt ?? 0;
-		}
-	}
+	const baseTime = questStepAchievableAt(progress, stepIndex, metadata.startedAt);
 
 	const effectiveDelayMs = Math.round(stepDef.delay * (1 - reduction) * 1000);
 	const availableAt = baseTime + effectiveDelayMs;
@@ -1212,8 +1219,15 @@ export async function updateQuestProgress(
 		? ({ ...submittingStep, mobile_only: true } as QuestStep)
 		: submittingStep;
 
+	// timing context for cloud-side accrual steps (nature_minutes / trailmarker_added):
+	// they measure only what accrued since this step first became achievable
+	const stepAchievableAt = questStepAchievableAt(progress, idx, metadata.startedAt);
+
 	// validate step response against step requirements (uses binary data for ai models)
-	const validation = await validateStep(stepForValidation, stepResponse, bindings, device);
+	const validation = await validateStep(stepForValidation, stepResponse, bindings, device, {
+		userId: userId0,
+		stepAchievableAt
+	});
 	recordPhase?.('validate');
 	if (!validation.success) {
 		throw new HTTPException(400, { message: `Step validation failed: ${validation.message}` });
