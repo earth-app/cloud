@@ -108,7 +108,7 @@ import {
 } from './user/challenges';
 import { scoreImage, ScoreResult, scoreText } from './content/ferry';
 import { sendUserNotification } from './user/notifications';
-import { getAllQuests, getQuest, QuestStep } from './user/quests';
+import { getAllQuests, getQuest } from './user/quests';
 import {
 	getCurrentQuestProgress,
 	getCompletedQuestProgress,
@@ -118,6 +118,7 @@ import {
 	removeQuestStepEntry,
 	startQuest,
 	updateQuestProgress,
+	advanceAccrualQuestStep,
 	handleQuizQuestStep,
 	enrichProgressEntries,
 	maybeArchiveCompletedQuest,
@@ -3821,69 +3822,21 @@ app.post('/events/submit_image', async (c) => {
 				await addBadgeProgress(userIdParam, 'event_images_submitted_good', '1', c.env.KV);
 			}
 
-			return Promise.allSettled([
-				(async () => {
-					const quest = await getCurrentQuestProgress(userId.toString(), c.env, c.executionCtx);
-					if (!quest) return;
-
-					async function checkStep(
-						step: QuestStep,
-						score: number,
-						index: number,
-						altIndex?: number
-					) {
-						if (step.type !== 'submit_event_image') return;
-
-						const [activity, threshold] = step.parameters;
-						if (!body.event.activities.includes(activity)) return;
-						if (!score || score < threshold) return;
-
-						await updateQuestProgress(
-							userId.toString(),
-							{
-								type: 'submit_event_image',
-								index,
-								altIndex,
-								eventId: id.toString(),
-								score,
-								timestamp: Date.now()
-							},
-							API_DEVICE_METADATA,
-							c.env,
-							c.executionCtx
-						);
-					}
-
-					const currentStep = quest.currentStep;
-					if (Array.isArray(currentStep)) {
-						await Promise.allSettled(
-							currentStep.map((altStep, altIndex) =>
-								checkStep(altStep, score.score, quest.currentStepIndex, altIndex).catch((err) => {
-									console.error(
-										'Error updating quest progress in event image submission for alt step:',
-										{
-											userId: userId.toString(),
-											eventId: id.toString(),
-											stepIndex: quest.currentStepIndex,
-											altIndex,
-											err
-										}
-									);
-								})
-							)
-						);
-					} else if (currentStep?.type === 'submit_event_image') {
-						await checkStep(currentStep, score.score, quest.currentStepIndex).catch((err) => {
-							console.error('Error updating quest progress in event image submission for step:', {
-								userId: userId.toString(),
-								eventId: id.toString(),
-								stepIndex: quest.currentStepIndex,
-								err
-							});
-						});
-					}
-				})()
-			]);
+			// advance an active submit_event_image quest step (activity match + score threshold)
+			await advanceAccrualQuestStep(
+				userId.toString(),
+				'submit_event_image',
+				c.env,
+				c.executionCtx,
+				{
+					gate: (step) =>
+						step.type === 'submit_event_image' &&
+						body.event.activities.includes(step.parameters[0]) &&
+						!!score.score &&
+						score.score >= step.parameters[1],
+					extra: () => ({ eventId: id.toString(), score: score.score })
+				}
+			);
 		})()
 	);
 
@@ -4372,6 +4325,10 @@ app.post('/trails/:id/complete', async (c) => {
 	if (!result) {
 		return c.text('Trail not found', 404);
 	}
+
+	// a completed trail credits nature minutes; nudge an active nature_minutes quest step forward
+	c.executionCtx.waitUntil(advanceAccrualQuestStep(uid, 'nature_minutes', c.env, c.executionCtx));
+
 	return c.json(result, 200);
 });
 
@@ -4418,6 +4375,9 @@ app.post('/users/nature-minutes', async (c) => {
 		: 'manual';
 
 	const nm = await addNatureMinutes(c.env, uid, body.minutes, kind, body.ref_id, c.executionCtx);
+
+	c.executionCtx.waitUntil(advanceAccrualQuestStep(uid, 'nature_minutes', c.env, c.executionCtx));
+
 	return c.json(nm, 200);
 });
 
@@ -4656,6 +4616,11 @@ app.post('/trailmarks', async (c) => {
 			result.reason === 'invalid_geo' ? 'Invalid geo coordinates' : 'Note is empty after censoring';
 		return c.text(message, 400);
 	}
+
+	// a fresh trailmark may satisfy an active trailmarker_added quest step
+	c.executionCtx.waitUntil(
+		advanceAccrualQuestStep(authorUid, 'trailmarker_added', c.env, c.executionCtx)
+	);
 
 	return c.json(result.trailmark, 201);
 });
