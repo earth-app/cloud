@@ -1401,4 +1401,17 @@ describe('advanceAccrualQuestStep', () => {
 		const after = await getCurrentQuestProgress(uid, bindings);
 		expect(after.currentStepIndex).toBe(0);
 	});
+
+	it('never throws into the accrual caller when the underlying store errors', async () => {
+		const bindings = createMockBindings();
+		vi.spyOn(bindings.KV as any, 'getWithMetadata').mockRejectedValue(new Error('kv exploded'));
+		vi.spyOn(bindings.KV as any, 'get').mockRejectedValue(new Error('kv exploded'));
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		await expect(
+			advanceAccrualQuestStep('90008', 'nature_minutes', bindings)
+		).resolves.toBeUndefined();
+
+		warn.mockRestore();
+	});
 });

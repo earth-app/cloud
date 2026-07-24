@@ -129,6 +129,42 @@ describe('creditContribution', () => {
 			expect(res.expedition.contributors.some((c) => c.uid === '300')).toBe(true);
 		}
 	});
+
+	it('still advances the shared total when the roster is full (no new contributor added)', async () => {
+		// seed past the 24-contributor cap; the roster fills, the shared goal keeps moving
+		const members = Array.from({ length: 30 }, (_, i) => ({
+			uid: String(i + 1),
+			username: `m${i + 1}`
+		}));
+		await startExpedition(env, {
+			owner_uid: '100',
+			title: 'Full Circle',
+			goal: 'nature_minutes',
+			target: 100000,
+			ends_at: future(),
+			members
+		});
+		const before = await getExpeditionByOwner(env, '100');
+		expect(before?.contributors.length).toBe(24);
+
+		const res = await creditContribution(env, '100', '99999', 40, 'newcomer');
+		expect(res.ok).toBe(true);
+		if (res.ok) {
+			// the shared total moved even though the roster could not grow
+			expect(res.expedition.progress).toBe(40);
+			expect(res.expedition.contributors.length).toBe(24);
+			expect(res.expedition.contributors.some((c) => c.uid === '99999')).toBe(false);
+		}
+	});
+
+	it('clamps a negative credit to zero and leaves progress unchanged', async () => {
+		await seed(100);
+		const res = await creditContribution(env, '100', '200', -50, 'alex');
+		expect(res.ok).toBe(true);
+		if (res.ok) {
+			expect(res.expedition.progress).toBe(0);
+		}
+	});
 });
 
 describe('expired status', () => {
@@ -330,6 +366,66 @@ describe('circle expedition + garden routes', () => {
 			body: JSON.stringify({ member_uid: '200', amount: 5 })
 		});
 		expect(response.status).toBe(404);
+	});
+
+	it('contribute rejects a non-positive amount and a missing member_uid', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/circles/100/expedition',
+			{
+				method: 'POST',
+				body: JSON.stringify({ goal: 'nature_minutes', target: 100, ends_at: future() })
+			},
+			true,
+			bindings
+		);
+
+		const zero = await callApp(
+			'/circles/100/expedition/contribute',
+			{ method: 'POST', body: JSON.stringify({ member_uid: '200', amount: 0 }) },
+			true,
+			bindings
+		);
+		expect(zero.response.status).toBe(400);
+
+		const noMember = await callApp(
+			'/circles/100/expedition/contribute',
+			{ method: 'POST', body: JSON.stringify({ amount: 10 }) },
+			true,
+			bindings
+		);
+		expect(noMember.response.status).toBe(400);
+	});
+
+	it('contribute to a completed expedition returns 409 (idempotent double-complete)', async () => {
+		const bindings = createMockBindings();
+		await callApp(
+			'/circles/100/expedition',
+			{
+				method: 'POST',
+				body: JSON.stringify({ goal: 'nature_minutes', target: 50, ends_at: future() })
+			},
+			true,
+			bindings
+		);
+
+		const finish = await callApp(
+			'/circles/100/expedition/contribute',
+			{ method: 'POST', body: JSON.stringify({ member_uid: '200', amount: 50 }) },
+			true,
+			bindings
+		);
+		expect(finish.response.status).toBe(200);
+		const fbody = (await finish.response.json()) as { just_completed: boolean };
+		expect(fbody.just_completed).toBe(true);
+
+		const again = await callApp(
+			'/circles/100/expedition/contribute',
+			{ method: 'POST', body: JSON.stringify({ member_uid: '200', amount: 10 }) },
+			true,
+			bindings
+		);
+		expect(again.response.status).toBe(409);
 	});
 
 	it('garden renders a calm baseline for a circle with no expedition', async () => {

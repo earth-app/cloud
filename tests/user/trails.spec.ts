@@ -5,6 +5,7 @@ import {
 	isTrailLocked,
 	isoWeekKey,
 	getNatureMinutes,
+	getNatureMinutesSince,
 	addNatureMinutes,
 	NATURE_MINUTES_TARGET,
 	startTrailRun,
@@ -152,6 +153,36 @@ describe('nature minutes', () => {
 		await addNatureMinutes(env, '0042', 15, 'healthkit');
 		const nm = await getNatureMinutes(env, '42');
 		expect(nm.minutes).toBe(15);
+	});
+});
+
+describe('nature minutes edge cases', () => {
+	let env: ReturnType<typeof createMockBindings>;
+	beforeEach(() => (env = createMockBindings()));
+
+	it('falls back to an empty ring when the cached week record is malformed', async () => {
+		// a poisoned cache (wrong types) must never crash the ring read
+		await env.KV.put(
+			`nature_minutes:42:${isoWeekKey()}`,
+			JSON.stringify({ minutes: 'oops', sources: 'nope' })
+		);
+		const nm = await getNatureMinutes(env, '42');
+		expect(nm.minutes).toBe(0);
+		expect(nm.sources).toEqual([]);
+		expect(nm.target).toBe(NATURE_MINUTES_TARGET);
+	});
+
+	it('getNatureMinutesSince returns 0 for a non-finite or future cutoff', async () => {
+		await addNatureMinutes(env, '42', 30, 'trail');
+		expect(await getNatureMinutesSince(env, '42', Number.NaN)).toBe(0);
+		expect(await getNatureMinutesSince(env, '42', Date.now() + 3_600_000)).toBe(0);
+	});
+
+	it('getNatureMinutesSince sums entries credited at or after the cutoff', async () => {
+		const before = Date.now() - 1000;
+		await addNatureMinutes(env, '42', 20, 'trail');
+		await addNatureMinutes(env, '42', 15, 'manual');
+		expect(await getNatureMinutesSince(env, '42', before)).toBe(35);
 	});
 });
 
@@ -482,5 +513,36 @@ describe('trail + nature-minutes routes', () => {
 			body: JSON.stringify({ uid: '42', minutes: 0 })
 		});
 		expect(response.status).toBe(400);
+	});
+
+	it('POST /v1/users/nature-minutes rejects a missing (null) minutes value', async () => {
+		const { response } = await callApp('/users/nature-minutes', {
+			method: 'POST',
+			body: JSON.stringify({ uid: '42' })
+		});
+		expect(response.status).toBe(400);
+	});
+
+	it('POST /v1/users/nature-minutes clamps an absurd credit to one day', async () => {
+		const bindings = createMockBindings();
+		const post = await callApp(
+			'/users/nature-minutes',
+			{ method: 'POST', body: JSON.stringify({ uid: '42', minutes: 999999 }) },
+			true,
+			bindings
+		);
+		expect(post.response.status).toBe(200);
+		const body = (await post.response.json()) as { minutes: number };
+		expect(body.minutes).toBe(24 * 60);
+	});
+
+	it('GET /v1/users/nature-minutes ignores a malformed week query and serves the current week', async () => {
+		const { response } = await callApp('/users/nature-minutes?uid=42&week=garbage');
+		expect(response.status).toBe(200);
+		const bad = (await response.json()) as { minutes: number };
+		expect(bad.minutes).toBe(0);
+		// a well-formed but empty future week is honoured
+		const future = await callApp('/users/nature-minutes?uid=42&week=2099-W01');
+		expect(future.response.status).toBe(200);
 	});
 });
