@@ -70,7 +70,7 @@ export interface ScoreResult {
 	breakdown: CriterionResult[];
 }
 
-async function embedTexts(env: Bindings, texts: string[]): Promise<number[][]> {
+export async function embedTexts(env: Bindings, texts: string[]): Promise<number[][]> {
 	const result = new Array<number[] | null>(texts.length).fill(null);
 	const missingIndices: number[] = [];
 	const missingTexts: string[] = [];
@@ -133,7 +133,7 @@ function hashText(text: string): string {
 	return (hash >>> 0).toString(16).padStart(8, '0');
 }
 
-function cosineSimilarity(a: number[], b: number[]): number {
+export function cosineSimilarity(a: number[], b: number[]): number {
 	let dot = 0;
 	let normA = 0;
 	let normB = 0;
