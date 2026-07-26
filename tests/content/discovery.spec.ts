@@ -8,6 +8,10 @@ import {
 	fetchWikidataCandidates,
 	fetchWikipediaCategoryCandidates,
 	MAX_STAGED_PER_RUN,
+	filterSemanticDuplicates,
+	filterSpecificCandidates,
+	isGenreCandidate,
+	lexicalSimilarity,
 	normalizeCandidate,
 	PENDING_TTL_MS,
 	readDiscoveryBlocklist,
@@ -16,13 +20,15 @@ import {
 	readPendingLedger,
 	removeFromDiscoveryBlocklist,
 	runActivityDiscovery,
-	selectCandidates
+	selectCandidates,
+	TRIGRAM_SIMILARITY_LIMIT
 } from '../../src/content/discovery';
 import { createMockBindings } from '../helpers/mock-bindings';
 import { Activity, Bindings } from '../../src/util/types';
 
 vi.mock('../../src/content/boat', () => ({
-	createActivityData: vi.fn()
+	createActivityData: vi.fn(),
+	tagsModel: '@cf/meta/llama-3.1-8b-instruct-fp8'
 }));
 
 import { createActivityData } from '../../src/content/boat';
@@ -70,7 +76,7 @@ function mockSources(
 		categories?: string[];
 		taginfo?: Array<{ value: string; count: number; in_wiki: boolean }>;
 		denied?: string[];
-		catalog?: Array<Record<string, unknown>>;
+		catalog?: string[];
 		stageStatus?: number;
 	} = {}
 ) {
@@ -104,11 +110,15 @@ function mockSources(
 				status
 			});
 		}
+		if (url.includes('/v2/activities/list')) {
+			const items = options.catalog ?? [];
+			if (items.length === 0) return new Response('not found', { status: 404 });
+			return new Response(JSON.stringify({ items, total: items.length, page: 1, limit: 1000 }), {
+				status: 200
+			});
+		}
 		if (url.includes('/v2/activities')) {
-			return new Response(
-				JSON.stringify({ items: options.catalog ?? [], total: (options.catalog ?? []).length }),
-				{ status: 200 }
-			);
+			return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
 		}
 
 		return new Response('{}', { status: 200 });
@@ -346,27 +356,54 @@ describe('selection', () => {
 		expect((await readDiscoveryBlocklist(env)).chess.reason).toBe('denied');
 	});
 
-	const catalogCases: Array<[string, Record<string, unknown>]> = [
-		['id', { id: 'chess', name: 'Something Else', aliases: [] }],
-		['name', { id: 'other_id', name: 'Chess', aliases: [] }],
-		['alias', { id: 'other_id', name: 'Other', aliases: ['chess'] }]
-	];
-
-	for (const [field, entry] of catalogCases) {
-		it(`excludes a candidate matching an existing catalog ${field}`, async () => {
-			mockSources({
-				sport: [
-					['Chess', 200],
-					['Judo', 100]
-				],
-				catalog: [entry]
-			});
-
-			const { selected } = await selectCandidates(env);
-
-			expect(selected.map((candidate) => candidate.id)).toEqual(['judo']);
+	it('excludes a candidate whose id is already in the catalog', async () => {
+		mockSources({
+			sport: [
+				['Chess', 200],
+				['Judo', 100]
+			],
+			catalog: ['chess']
 		});
-	}
+
+		const { selected } = await selectCandidates(env);
+
+		expect(selected.map((candidate) => candidate.id)).toEqual(['judo']);
+	});
+
+	it('reads the whole catalog from the paginated id list', async () => {
+		const fetchSpy = mockSources({ sport: [['Chess', 200]], catalog: ['chess'] });
+
+		await selectCandidates(env);
+
+		const listCall = fetchSpy.mock.calls.find(([url]) =>
+			String(url).includes('/v2/activities/list')
+		);
+		expect(listCall).toBeDefined();
+		expect(String(listCall?.[0])).toContain('limit=1000');
+	});
+
+	it('excludes a spelling variant of a catalogued activity via trigram overlap', async () => {
+		// the separator is not meaningful; "jiu jitsu" is the catalogued "jiujitsu"
+		mockSources({
+			sport: [
+				['Jiu Jitsu', 200],
+				['Judo', 100]
+			],
+			catalog: ['jiujitsu']
+		});
+
+		const { selected } = await selectCandidates(env);
+
+		expect(selected.map((candidate) => candidate.id)).toEqual(['judo']);
+	});
+
+	it('keeps distinct compounds that merely share a head word', async () => {
+		mockSources({ sport: [['Ice Climbing', 200]], catalog: ['rock_climbing'] });
+
+		const { selected } = await selectCandidates(env);
+
+		expect(selected.map((candidate) => candidate.id)).toEqual(['ice_climbing']);
+	});
 
 	it('rotates the survivor list by the stored cursor offset', async () => {
 		const rows: Array<[string, number]> = Array.from({ length: 30 }, (_, index) => [
@@ -576,5 +613,222 @@ describe('runActivityDiscovery', () => {
 		expect(result.funnel.bySource.wikidata_sport).toBe(12);
 		expect(result.funnel.afterCatalog).toBe(12);
 		expect(result.funnel.nextUp.length).toBeGreaterThan(0);
+	});
+});
+
+describe('genre rejection', () => {
+	const genres = [
+		'card_game',
+		'role_playing_game',
+		'board_game',
+		'video_game',
+		'martial_arts',
+		'water_sports',
+		'team_sport',
+		'garden',
+		'music',
+		'climbing_equipment',
+		'chess_tournament',
+		'football_league'
+	];
+
+	for (const id of genres) {
+		it(`rejects ${id} as a category rather than a practice`, () => {
+			expect(isGenreCandidate(id)).toBe(true);
+		});
+	}
+
+	const practices = [
+		'jiujitsu',
+		'bouldering',
+		'gardening',
+		'birdwatching',
+		'kitesurfing',
+		'calligraphy',
+		'sea_kayaking',
+		'sourdough_baking'
+	];
+
+	for (const id of practices) {
+		it(`keeps ${id} as a concrete activity`, () => {
+			expect(isGenreCandidate(id)).toBe(false);
+		});
+	}
+
+	it('drops genre candidates before any AI call and remembers them', async () => {
+		mockSources({
+			sport: [
+				['Card game', 200],
+				['Jiujitsu', 100]
+			]
+		});
+
+		const result = await runActivityDiscovery(env);
+
+		expect(result.staged.map((activity) => activity.id)).toEqual(['jiujitsu']);
+		expect((await readDiscoveryBlocklist(env)).card_game.reason).toBe('rejected_genre');
+		expect(createActivityDataMock).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('specificity gate', () => {
+	function aiReturning(text: string) {
+		env.AI = {
+			run: vi.fn(async (model: string) =>
+				String(model).includes('llama-3.1-8b') ? { response: text } : {}
+			)
+		} as unknown as typeof env.AI;
+	}
+
+	it('drops candidates the model calls BROAD', async () => {
+		mockSources({
+			sport: [
+				['Alpha', 200],
+				['Beta', 100]
+			]
+		});
+		aiReturning('1. BROAD\n2. SPECIFIC');
+
+		const { kept, rejected } = await filterSpecificCandidates(env, [
+			{ id: 'alpha', foldKey: 'alpha', source: 'wikidata_sport', score: 2 },
+			{ id: 'beta', foldKey: 'beta', source: 'wikidata_sport', score: 1 }
+		]);
+
+		expect(rejected.map((candidate) => candidate.id)).toEqual(['alpha']);
+		expect(kept.map((candidate) => candidate.id)).toEqual(['beta']);
+	});
+
+	it('keeps everything when the model is unavailable', async () => {
+		env.AI = {
+			run: vi.fn(async () => {
+				throw new Error('model down');
+			})
+		} as unknown as typeof env.AI;
+
+		const candidates = [
+			{ id: 'alpha', foldKey: 'alpha', source: 'wikidata_sport' as const, score: 1 }
+		];
+		const { kept, rejected } = await filterSpecificCandidates(env, candidates);
+
+		expect(kept).toHaveLength(1);
+		expect(rejected).toHaveLength(0);
+	});
+
+	it('keeps a candidate whose verdict is missing or unparseable', async () => {
+		aiReturning('garbled output');
+
+		const candidates = [
+			{ id: 'alpha', foldKey: 'alpha', source: 'wikidata_sport' as const, score: 1 }
+		];
+
+		await expect(filterSpecificCandidates(env, candidates)).resolves.toMatchObject({
+			kept: candidates,
+			rejected: []
+		});
+	});
+
+	it('sends no request for an empty batch', async () => {
+		const run = vi.fn();
+		env.AI = { run } as unknown as typeof env.AI;
+
+		await filterSpecificCandidates(env, []);
+
+		expect(run).not.toHaveBeenCalled();
+	});
+});
+
+describe('similarity helpers', () => {
+	it('scores separator-only differences as identical', () => {
+		expect(lexicalSimilarity('jiu_jitsu', ['jiujitsu'])).toBe(1);
+	});
+
+	it('scores unrelated activities low', () => {
+		expect(lexicalSimilarity('chess', ['bouldering'])).toBeLessThan(0.3);
+	});
+
+	it('keeps compounds that only share a head word below the limit', () => {
+		expect(lexicalSimilarity('ice_climbing', ['rock_climbing'])).toBeLessThan(
+			TRIGRAM_SIMILARITY_LIMIT
+		);
+	});
+
+	it('returns zero against an empty catalog', () => {
+		expect(lexicalSimilarity('chess', [])).toBe(0);
+	});
+
+	it('drops a semantic duplicate and keeps a distinct candidate', async () => {
+		// identical vectors for the candidate and the catalog entry, distinct for the other
+		const vectors: Record<string, number[]> = {
+			'ocean paddling': [1, 0, 0],
+			'sea kayaking': [1, 0, 0],
+			chess: [0, 1, 0]
+		};
+		env.AI = {
+			run: vi.fn(async (_model: string, input: { text?: string | string[] }) => ({
+				data: (Array.isArray(input.text) ? input.text : [input.text ?? '']).map(
+					(text) => vectors[String(text)] ?? [0, 0, 1]
+				)
+			}))
+		} as unknown as typeof env.AI;
+
+		const { kept, rejected } = await filterSemanticDuplicates(
+			env,
+			[
+				{ id: 'ocean_paddling', foldKey: 'ocean_paddling', source: 'wikidata_sport', score: 2 },
+				{ id: 'chess', foldKey: 'chess', source: 'wikidata_sport', score: 1 }
+			],
+			['sea_kayaking']
+		);
+
+		expect(rejected.map((candidate) => candidate.id)).toEqual(['ocean_paddling']);
+		expect(kept.map((candidate) => candidate.id)).toEqual(['chess']);
+	});
+
+	it('keeps everything when embedding fails', async () => {
+		env.AI = {
+			run: vi.fn(async () => {
+				throw new Error('embeddings down');
+			})
+		} as unknown as typeof env.AI;
+
+		const candidates = [
+			{ id: 'chess', foldKey: 'chess', source: 'wikidata_sport' as const, score: 1 }
+		];
+
+		await expect(filterSemanticDuplicates(env, candidates, ['bouldering'])).resolves.toMatchObject({
+			kept: candidates,
+			rejected: []
+		});
+	});
+});
+
+describe('variety', () => {
+	it('does not fill a run with a single head word', async () => {
+		mockSources({
+			sport: [
+				['Ice climbing', 210],
+				['Rock climbing', 209],
+				['Tree climbing', 208],
+				['Wall climbing', 207],
+				['Chess', 100],
+				['Judo', 99]
+			]
+		});
+
+		const result = await runActivityDiscovery(env);
+		const heads = result.staged.map((activity) => activity.id.split('_').slice(-1)[0]);
+		const climbing = heads.filter((head) => head === 'climbing').length;
+
+		expect(climbing).toBeLessThanOrEqual(2);
+		expect(result.staged.length).toBeGreaterThan(climbing);
+	});
+
+	it('records the staged activity types so later runs can vary', async () => {
+		mockSources({ sport: [['Jiujitsu', 200]] });
+
+		await runActivityDiscovery(env);
+
+		const recent = JSON.parse((await env.KV.get('activity_discovery:recent_types')) ?? '[]');
+		expect(recent).toContain('SPORT');
 	});
 });
