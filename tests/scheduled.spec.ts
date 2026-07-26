@@ -11,6 +11,7 @@ var mocks: {
 	retrieveEvents: ReturnType<typeof vi.fn>;
 	createEvent: ReturnType<typeof vi.fn>;
 	postEvent: ReturnType<typeof vi.fn>;
+	runActivityDiscovery: ReturnType<typeof vi.fn>;
 };
 
 function createMocks() {
@@ -24,7 +25,8 @@ function createMocks() {
 		postArticle: vi.fn(),
 		retrieveEvents: vi.fn(),
 		createEvent: vi.fn(),
-		postEvent: vi.fn()
+		postEvent: vi.fn(),
+		runActivityDiscovery: vi.fn()
 	};
 }
 
@@ -43,6 +45,10 @@ vi.mock('../src/content/boat', () => ({
 	postEvent: (mocks ??= createMocks()).postEvent
 }));
 
+vi.mock('../src/content/discovery', () => ({
+	runActivityDiscovery: (mocks ??= createMocks()).runActivityDiscovery
+}));
+
 vi.mock('../src/util/mantle2', () => ({
 	postArticle: (mocks ??= createMocks()).postArticle,
 	postPrompt: (mocks ??= createMocks()).postPrompt
@@ -58,6 +64,7 @@ beforeEach(() => {
 	mocks.retrieveLeaderboard.mockResolvedValue([]);
 	mocks.createPrompt.mockResolvedValue('Prompt?');
 	mocks.postPrompt.mockResolvedValue({ id: 'p1' });
+	mocks.runActivityDiscovery.mockResolvedValue({ staged: [], considered: 0, funnel: {} });
 	mocks.findArticle.mockResolvedValue([
 		[
 			{
@@ -337,5 +344,54 @@ describe('scheduled', () => {
 		} as any);
 
 		expect(spy).toHaveBeenCalled();
+	});
+});
+
+describe('hourly activity discovery', () => {
+	const controller = { cron: '0 * * * *' } as ScheduledController;
+	const ctx = {
+		waitUntil: vi.fn(),
+		passThroughOnException: vi.fn()
+	} as unknown as ExecutionContext;
+
+	it('runs discovery after the prompt is posted, in that order', async () => {
+		await scheduled(controller, createMockBindings(), ctx);
+
+		expect(mocks.createPrompt).toHaveBeenCalledTimes(1);
+		expect(mocks.postPrompt).toHaveBeenCalledTimes(1);
+		expect(mocks.runActivityDiscovery).toHaveBeenCalledTimes(1);
+
+		const [createOrder] = mocks.createPrompt.mock.invocationCallOrder;
+		const [postOrder] = mocks.postPrompt.mock.invocationCallOrder;
+		const [discoverOrder] = mocks.runActivityDiscovery.mock.invocationCallOrder;
+		expect(createOrder).toBeLessThan(postOrder);
+		expect(postOrder).toBeLessThan(discoverOrder);
+	});
+
+	it('swallows a discovery failure so the hourly prompt is never lost', async () => {
+		mocks.runActivityDiscovery.mockRejectedValueOnce(new Error('wikidata down'));
+
+		await expect(scheduled(controller, createMockBindings(), ctx)).resolves.toBeUndefined();
+		expect(mocks.postPrompt).toHaveBeenCalledTimes(1);
+	});
+
+	it('still propagates a prompt failure and never reaches discovery', async () => {
+		mocks.createPrompt.mockRejectedValueOnce(new Error('ai down'));
+
+		await expect(scheduled(controller, createMockBindings(), ctx)).rejects.toThrow('ai down');
+		expect(mocks.runActivityDiscovery).not.toHaveBeenCalled();
+	});
+
+	it('does not run discovery on the other cron schedules', async () => {
+		for (const cron of ['0 */4 * * *', '0 0 */4 * *', '0 2 * * *']) {
+			vi.clearAllMocks();
+			mocks.retrieveLeaderboard.mockResolvedValue([]);
+			mocks.findArticle.mockResolvedValue([[], []]);
+			mocks.retrieveEvents.mockResolvedValue([]);
+
+			await scheduled({ cron } as ScheduledController, createMockBindings(), ctx);
+
+			expect(mocks.runActivityDiscovery).not.toHaveBeenCalled();
+		}
 	});
 });

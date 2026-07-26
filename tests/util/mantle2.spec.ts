@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fetchReportableContentText, requestContentRemoval } from '../../src/util/mantle2';
+import {
+	fetchReportableContentText,
+	getDeniedStagedActivityIds,
+	postStagedActivity,
+	requestContentRemoval
+} from '../../src/util/mantle2';
 import { createMockBindings } from '../helpers/mock-bindings';
 
 afterEach(() => {
@@ -90,5 +95,101 @@ describe('requestContentRemoval', () => {
 	it('returns false when fetch throws', async () => {
 		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('network'));
 		expect(await requestContentRemoval(createMockBindings(), 'rep-1')).toBe(false);
+	});
+});
+
+describe('postStagedActivity', () => {
+	const activity = {
+		id: 'bouldering',
+		name: 'Bouldering',
+		description: 'A generated description of the proposed activity.',
+		aliases: ['climbing'],
+		types: ['SPORT'],
+		fields: { icon: 'mdi:climbing' }
+	} as unknown as Parameters<typeof postStagedActivity>[1];
+
+	it('posts to the staging endpoint with the admin bearer and default source', async () => {
+		const bindings = createMockBindings();
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ id: 12, fails_open: true }), { status: 201 })
+			);
+
+		const result = await postStagedActivity(bindings, activity);
+
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+		expect(url).toBe(`${bindings.MANTLE_URL}/v2/activities/staged`);
+		expect(init.method).toBe('POST');
+		expect((init.headers as Record<string, string>).Authorization).toBe(
+			`Bearer ${bindings.ADMIN_API_KEY}`
+		);
+		expect((init.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+
+		const body = JSON.parse(init.body as string);
+		expect(body.source).toBe('cloud_discovery');
+		expect(body.types).toEqual(['SPORT']);
+		expect(body.id).toBe('bouldering');
+		expect(result?.id).toBe(12);
+	});
+
+	it('resolves null on a 409 so a wiped ledger cannot become a throw loop', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('conflict', { status: 409 }));
+
+		await expect(postStagedActivity(createMockBindings(), activity)).resolves.toBeNull();
+	});
+
+	it('throws with the status and body on a server error', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('boom', { status: 500 }));
+
+		await expect(postStagedActivity(createMockBindings(), activity)).rejects.toThrow(/500.*boom/);
+	});
+
+	it('throws when the response carries no id', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('{}', { status: 201 }));
+
+		await expect(postStagedActivity(createMockBindings(), activity)).rejects.toThrow(
+			'no ID returned'
+		);
+	});
+
+	it('logs loudly when a cloud submission comes back fail-CLOSED', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: 4, fails_open: false, submitter_kind: 'organizer' }), {
+				status: 201
+			})
+		);
+
+		await postStagedActivity(createMockBindings(), activity);
+
+		expect(error).toHaveBeenCalledWith(
+			expect.stringContaining('fail-CLOSED'),
+			expect.objectContaining({ submitter_kind: 'organizer' })
+		);
+	});
+});
+
+describe('getDeniedStagedActivityIds', () => {
+	it('returns the denied activity ids', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					items: [{ activity: { id: 'amateurism' } }, { activity: { id: 'fandom' } }]
+				}),
+				{ status: 200 }
+			)
+		);
+
+		const ids = await getDeniedStagedActivityIds(createMockBindings());
+
+		expect(String(fetchSpy.mock.calls[0][0])).toContain('/v2/activities/staged?state=denied');
+		expect(ids).toEqual(['amateurism', 'fandom']);
+	});
+
+	it('degrades to an empty list rather than throwing', async () => {
+		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('network down'));
+
+		await expect(getDeniedStagedActivityIds(createMockBindings())).resolves.toEqual([]);
 	});
 });
