@@ -218,6 +218,12 @@ import {
 	thankTrailmark,
 	TRAILMARK_LIMITS
 } from './user/trailmarks';
+import {
+	MAX_STAGED_PER_RUN,
+	readDiscoveryLedger,
+	removeFromDiscoveryBlocklist,
+	runActivityDiscovery
+} from './content/discovery';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -660,6 +666,46 @@ app.get('/activity/:id', async (c) => {
 		}),
 		200
 	);
+});
+
+// Activity Discovery
+
+// paths here are BARE; index.ts mounts this app under /v1
+app.post('/admin/activities/discover', async (c) => {
+	let body: { dry_run?: boolean; limit?: number } = {};
+	try {
+		body = await c.req.json<{ dry_run?: boolean; limit?: number }>();
+	} catch {
+		// a bare POST is a dry run, so an unparseable/absent body is not an error
+	}
+
+	// defaults to true so a bare POST never spends AI budget or writes
+	const dryRun = body.dry_run !== false;
+	const limit = body.limit
+		? Math.max(1, Math.min(MAX_STAGED_PER_RUN, Math.floor(body.limit)))
+		: undefined;
+
+	try {
+		const result = await runActivityDiscovery(c.env, { dryRun, limit });
+		return c.json({ ...result, dry_run: dryRun }, 200);
+	} catch (err) {
+		console.error('Activity discovery run failed', err);
+		return c.text('Failed to run activity discovery', 500);
+	}
+});
+
+app.get('/admin/activities/discover/ledger', async (c) => {
+	return c.json(await readDiscoveryLedger(c.env), 200);
+});
+
+app.delete('/admin/activities/discover/ledger', async (c) => {
+	const key = c.req.query('key')?.trim();
+	if (!key) {
+		return c.text('key query parameter is required', 400);
+	}
+
+	const removed = await removeFromDiscoveryBlocklist(c.env, key);
+	return c.json({ key, removed }, 200);
 });
 
 // Marketing Studio
