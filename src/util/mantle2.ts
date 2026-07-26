@@ -100,6 +100,98 @@ export async function postActivity(bindings: Bindings, activity: Activity): Prom
 	return data;
 }
 
+export type StagedActivityState =
+	'pending' | 'approved' | 'denied' | 'expired_published' | 'expired_denied' | 'withdrawn';
+
+export type StagedActivity = {
+	id: number;
+	activity: Activity;
+	note: string | null;
+	state: StagedActivityState;
+	submitter_kind: 'organizer' | 'admin' | 'cloud';
+	submitter: { id: string; username: string } | null;
+	source: string;
+	submitted_at: string;
+	expires_at: string;
+	expires_in_seconds: number;
+	fails_open: boolean;
+	decided_at: string | null;
+	reviewer: { id: string; username: string } | null;
+	review_notes: string | null;
+	published_activity_id: string | null;
+};
+
+export async function postStagedActivity(
+	bindings: Bindings,
+	activity: Activity,
+	source: string = 'cloud_discovery'
+): Promise<StagedActivity | null> {
+	const url = `${bindings.MANTLE_URL || 'https://api.earth-app.com'}/v2/activities/staged`;
+	const res = await fetch(url, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+		},
+		body: JSON.stringify({ ...activity, source })
+	});
+
+	// mantle2 already knows this id; treat as an idempotent success so a wiped KV ledger
+	// cannot turn into a throw loop
+	if (res.status === 409) {
+		console.warn(`Activity "${activity.id}" is already staged or already exists; skipping`);
+		return null;
+	}
+
+	if (!res.ok) {
+		const errorText = await res.text();
+		throw new Error(`Failed to stage activity: ${res.status} ${res.statusText} - ${errorText}`);
+	}
+
+	const data = await res.json<StagedActivity>();
+	if (!data || !data.id) {
+		throw new Error('Failed to stage activity, no ID returned');
+	}
+
+	if (data.fails_open === false) {
+		// cloud submissions must resolve as admin-staged; organizer means the wrong
+		// credential was used and the whole batch will silently evaporate at 48h
+		console.error('Activity discovery: staged submission is fail-CLOSED, check the credential', {
+			id: data.id,
+			submitter_kind: data.submitter_kind
+		});
+	}
+
+	return data;
+}
+
+/**
+ * Activity ids an administrator has denied, so discovery stops re-proposing them.
+ */
+export async function getDeniedStagedActivityIds(bindings: Bindings): Promise<string[]> {
+	const root = bindings.MANTLE_URL || 'https://api.earth-app.com';
+
+	try {
+		const res = await fetch(`${root}/v2/activities/staged?state=denied&limit=100`, {
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+			}
+		});
+		if (!res.ok) return [];
+
+		const data = await res.json<{ items?: StagedActivity[] }>();
+		return (data?.items ?? [])
+			.map((item) => item?.activity?.id)
+			.filter((id): id is string => typeof id === 'string' && id.length > 0);
+	} catch (err) {
+		console.warn('Failed to fetch denied staged activities', {
+			error: err instanceof Error ? err.message : String(err)
+		});
+		return [];
+	}
+}
+
 export async function postPrompt(prompt: string, bindings: Bindings): Promise<Prompt> {
 	if (!prompt || prompt.length < 10) {
 		throw new Error('Prompt must be at least 10 characters long');

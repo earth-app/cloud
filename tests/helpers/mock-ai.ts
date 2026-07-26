@@ -141,7 +141,7 @@ export function createEarthApiFetchMock() {
 						description:
 							'Gourd art transforms hard-shelled fruit into decorative and functional pieces through carving, painting, and engraving.',
 						aliases: ['gourding'],
-						activity_types: ['ART']
+						types: ['ART']
 					}
 				]
 			});
