@@ -3,6 +3,7 @@ import {
 	fetchReportableContentText,
 	getDeniedStagedActivityIds,
 	postStagedActivity,
+	retrieveActivityIds,
 	requestContentRemoval
 } from '../../src/util/mantle2';
 import { createMockBindings } from '../helpers/mock-bindings';
@@ -191,5 +192,70 @@ describe('getDeniedStagedActivityIds', () => {
 		vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('network down'));
 
 		await expect(getDeniedStagedActivityIds(createMockBindings())).resolves.toEqual([]);
+	});
+});
+
+describe('retrieveActivityIds', () => {
+	it('reads bare ids at 1000 per page', async () => {
+		const bindings = createMockBindings();
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ items: ['chess', 'judo'], total: 2 }), { status: 200 })
+			);
+
+		const ids = await retrieveActivityIds(bindings);
+
+		const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+		expect(url).toBe(`${bindings.MANTLE_URL}/v2/activities/list?limit=1000&page=1`);
+		expect((init.headers as Record<string, string>).Authorization).toBe(
+			`Bearer ${bindings.ADMIN_API_KEY}`
+		);
+		expect(ids).toEqual(['chess', 'judo']);
+	});
+
+	it('follows pagination until a short page', async () => {
+		const full = Array.from({ length: 1000 }, (_, index) => `activity_${index}`);
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ items: full, total: 1002 }), { status: 200 })
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ items: ['tail_one', 'tail_two'], total: 1002 }), {
+					status: 200
+				})
+			);
+
+		const ids = await retrieveActivityIds(createMockBindings());
+
+		expect(ids).toHaveLength(1002);
+		expect(ids.at(-1)).toBe('tail_two');
+	});
+
+	it('treats a 404 as the end of the catalog', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response('No activities found', { status: 404 })
+		);
+
+		await expect(retrieveActivityIds(createMockBindings())).resolves.toEqual([]);
+	});
+
+	it('degrades to what it already has when a page fails', async () => {
+		const full = Array.from({ length: 1000 }, (_, index) => `activity_${index}`);
+		vi.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ items: full, total: 2000 }), { status: 200 })
+			)
+			.mockRejectedValueOnce(new Error('network down'));
+
+		await expect(retrieveActivityIds(createMockBindings())).resolves.toHaveLength(1000);
+	});
+
+	it('ignores non-string entries', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ items: ['chess', 42, null] }), { status: 200 })
+		);
+
+		await expect(retrieveActivityIds(createMockBindings())).resolves.toEqual(['chess']);
 	});
 });
