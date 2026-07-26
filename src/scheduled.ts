@@ -8,6 +8,7 @@ import {
 	retrieveEvents
 } from './content/boat';
 import { postArticle, postPrompt } from './util/mantle2';
+import { runActivityDiscovery } from './content/discovery';
 import { retrieveLeaderboard, TOP_LEADERBOARD_COUNT } from './user/journies';
 import { retrievePointsLeaderboard, TOP_POINTS_LEADERBOARD_COUNT } from './user/points';
 import { Bindings } from './util/types';
@@ -28,6 +29,22 @@ export default async function scheduled(
 		const prompt = await createPrompt(env.AI);
 		await postPrompt(prompt, env);
 		console.log('Created new prompt:', prompt);
+
+		// discovery is strictly best-effort and runs AFTER the prompt is posted, so an
+		// upstream/AI/mantle2 failure here can never cost the hourly prompt
+		try {
+			const result = await runActivityDiscovery(env);
+			console.log(
+				`Activity discovery: staged ${result.staged.length}/${result.considered} candidates`,
+				result.staged.map((activity) => activity.id)
+			);
+		} catch (err) {
+			// flatten the error so the actual cause is visible in logs
+			console.error('Activity discovery failed; continuing', {
+				error: err instanceof Error ? err.message : String(err),
+				stack: err instanceof Error ? err.stack : undefined
+			});
+		}
 
 		console.log('Finished at', new Date().toISOString());
 		return;
