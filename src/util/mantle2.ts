@@ -76,6 +76,54 @@ export async function retrieveActivities(bindings: Bindings): Promise<Activity[]
 	return allActivities;
 }
 
+/**
+ * Every activity id in the catalog.
+ *
+ * `/v2/activities/list` returns bare ids at up to 1000 per page, so the whole catalog is
+ * one or two requests instead of the paged full-object walk `retrieveActivities` does.
+ */
+export async function retrieveActivityIds(bindings: Bindings): Promise<string[]> {
+	const root = bindings.MANTLE_URL || 'https://api.earth-app.com';
+	const limit = 1000;
+	const ids: string[] = [];
+	let page = 1;
+
+	while (page <= 20) {
+		let res: Response;
+		try {
+			res = await fetch(`${root}/v2/activities/list?limit=${limit}&page=${page}`, {
+				method: 'GET',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
+				}
+			});
+		} catch (err) {
+			console.error('Failed to retrieve activity ids', {
+				page,
+				error: err instanceof Error ? err.message : String(err)
+			});
+			break;
+		}
+
+		// the endpoint 404s rather than returning an empty page once it runs out
+		if (res.status === 404) break;
+		if (!res.ok) {
+			console.error(`Failed to retrieve activity ids: ${res.status} ${res.statusText}`);
+			break;
+		}
+
+		const data = await res.json<{ items?: string[]; total?: number }>();
+		const items = (data?.items ?? []).filter((id): id is string => typeof id === 'string');
+		ids.push(...items);
+
+		if (items.length < limit) break;
+		page++;
+	}
+
+	return ids;
+}
+
 export async function postActivity(bindings: Bindings, activity: Activity): Promise<Activity> {
 	const url = `${bindings.MANTLE_URL || 'https://api.earth-app.com'}/v2/activities`;
 	const res = await fetch(url, {
