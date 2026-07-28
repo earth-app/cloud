@@ -25,7 +25,9 @@ const CATALOG_EMBED_KEY = 'activity_discovery:catalog_embeddings';
 
 export const MAX_STAGED_PER_RUN = 5;
 export const DISCOVERY_DEADLINE_MS = 120_000;
-export const PENDING_TTL_MS = 72 * 60 * 60 * 1000;
+// must outlive mantle2's 60h cloud fail-open window, or a still-pending submission gets
+// re-proposed before it resolves
+export const PENDING_TTL_MS = 96 * 60 * 60 * 1000;
 export const LOCK_TTL_SECONDS = 600;
 export const CATALOG_CACHE_TTL = 3600;
 export const CURSOR_STRIDE = MAX_STAGED_PER_RUN * 4;
@@ -741,7 +743,7 @@ export async function removeFromDiscoveryBlocklist(
 }
 
 /**
- * Pending submissions, pruned on read at 72h (24h fail-open plus slack).
+ * Pending submissions, pruned on read at 96h (60h fail-open plus slack).
  */
 export async function readPendingLedger(
 	env: Bindings,

@@ -203,7 +203,7 @@ export async function postStagedActivity(
 
 	if (data.fails_open === false) {
 		// cloud submissions must resolve as admin-staged; organizer means the wrong
-		// credential was used and the whole batch will silently evaporate at 48h
+		// credential was used and the whole batch will silently evaporate after a week
 		console.error('Activity discovery: staged submission is fail-CLOSED, check the credential', {
 			id: data.id,
 			submitter_kind: data.submitter_kind
