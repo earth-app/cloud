@@ -28,6 +28,8 @@ import {
 	sanitizeForContentType,
 	userProfilePhotoPrompt,
 	validateActivityDescription,
+	inferActivityTags,
+	selectActivityIcon,
 	validateActivityTags,
 	validateArticleSummary,
 	validateArticleTitle,
@@ -70,6 +72,77 @@ describe('validateActivityDescription', () => {
 	it('returns fallback when invalid and throwOnFailure=false', () => {
 		const result = validateActivityDescription('short', 'gardening', false);
 		expect(result.toLowerCase()).toContain('gardening');
+	});
+});
+
+describe('inferActivityTags', () => {
+	it('recovers real tags from the name and description when the model returns nothing', () => {
+		const tags = inferActivityTags(
+			'bouldering',
+			'A form of rock climbing performed on short walls outdoors without ropes.'
+		);
+		expect(tags).toContain('SPORT');
+		expect(tags).not.toContain('OTHER');
+	});
+
+	it('ranks the tag with the most keyword hits first', () => {
+		const tags = inferActivityTags(
+			'watercolor painting',
+			'An art practice using paint and pigment to draw and illustrate scenes.'
+		);
+		expect(tags[0]).toBe('ART');
+	});
+
+	it('caps at four tags', () => {
+		const tags = inferActivityTags(
+			'everything',
+			'sport outdoor fitness craft art game learn comput club relax pet home fashion travel invest charity family hobby'
+		);
+		expect(tags.length).toBeLessThanOrEqual(4);
+	});
+
+	it('returns nothing rather than guessing when no keyword matches', () => {
+		expect(inferActivityTags('zzzz', 'qqqq wwww')).toEqual([]);
+	});
+});
+
+describe('selectActivityIcon', () => {
+	it('prefers a lexical match over an unrelated icon in a better set', () => {
+		// the old logic took the first mdi result regardless of relevance
+		expect(selectActivityIcon(['mdi:art-track', 'lucide:gourd'], 'gourd')).toBe('lucide:gourd');
+	});
+
+	it('breaks ties on set preference when overlap is equal', () => {
+		expect(selectActivityIcon(['nimbus:chess', 'mdi:chess'], 'chess')).toBe('mdi:chess');
+	});
+
+	it('prefers the tighter name when set and overlap match', () => {
+		expect(selectActivityIcon(['mdi:chess-king-outline', 'mdi:chess'], 'chess')).toBe('mdi:chess');
+	});
+
+	it('matches on a token prefix so plurals still resolve', () => {
+		expect(selectActivityIcon(['mdi:kayaking'], 'kayak')).toBe('mdi:kayaking');
+	});
+
+	it('ignores style suffixes when scoring so a real match wins', () => {
+		// 'outline'/'round'/'fill' are style tokens, not meaning; only chess should score
+		expect(selectActivityIcon(['mdi:outline-round-fill', 'lucide:chess'], 'chess')).toBe(
+			'lucide:chess'
+		);
+	});
+
+	it('falls back to a rounded icon in the best set when nothing shares a token', () => {
+		expect(selectActivityIcon(['nimbus:wat', 'mdi:leaf', 'ph:plant-rounded'], 'gardening')).toBe(
+			'ph:plant-rounded'
+		);
+	});
+
+	it('falls back to plain set preference when nothing is rounded either', () => {
+		expect(selectActivityIcon(['nimbus:wat', 'mdi:zzz'], 'bouldering')).toBe('mdi:zzz');
+	});
+
+	it('returns null for an empty result set', () => {
+		expect(selectActivityIcon([], 'anything')).toBeNull();
 	});
 });
 

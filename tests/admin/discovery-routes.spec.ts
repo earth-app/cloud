@@ -40,6 +40,7 @@ beforeEach(() => {
 	runDiscoveryMock.mockReset();
 	runDiscoveryMock.mockResolvedValue({
 		staged: [],
+		candidates: [],
 		considered: 3,
 		funnel: {
 			raw: 10,
@@ -49,6 +50,8 @@ beforeEach(() => {
 			afterBlocklist: 7,
 			afterPending: 6,
 			afterCatalog: 5,
+			afterGenre: 5,
+			afterSimilarity: 4,
 			selected: 3,
 			staged: 0,
 			failed: 0,
