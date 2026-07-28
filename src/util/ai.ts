@@ -1478,6 +1478,241 @@ export function validateActivityDescription(
 	}
 }
 
+// keyword -> tag, scanned against the activity name and description; deliberately narrow
+// so a match is high-confidence rather than merely plausible
+const TAG_KEYWORDS: Array<[ActivityType, string[]]> = [
+	[
+		'SPORT',
+		[
+			'sport',
+			'athletic',
+			'race',
+			'racing',
+			'team',
+			'match',
+			'tournament',
+			'ball',
+			'wrestling',
+			'boxing',
+			'martial',
+			'fencing',
+			'archery',
+			'ski',
+			'surf',
+			'skate',
+			'cycling',
+			'swim',
+			'run',
+			'climb'
+		]
+	],
+	[
+		'NATURE',
+		[
+			'outdoor',
+			'nature',
+			'forest',
+			'mountain',
+			'hiking',
+			'trail',
+			'camp',
+			'wildlife',
+			'bird',
+			'garden',
+			'river',
+			'ocean',
+			'beach',
+			'fishing',
+			'foraging'
+		]
+	],
+	[
+		'HEALTH',
+		[
+			'fitness',
+			'exercise',
+			'workout',
+			'yoga',
+			'wellness',
+			'strength',
+			'cardio',
+			'stretch',
+			'nutrition',
+			'mindful'
+		]
+	],
+	[
+		'CREATIVE',
+		[
+			'craft',
+			'making',
+			'build',
+			'design',
+			'weav',
+			'knit',
+			'sew',
+			'pottery',
+			'woodwork',
+			'origami',
+			'model'
+		]
+	],
+	['ART', ['art', 'paint', 'draw', 'sculpt', 'photograph', 'calligraphy', 'illustration', 'print']],
+	[
+		'ENTERTAINMENT',
+		[
+			'game',
+			'play',
+			'puzzle',
+			'perform',
+			'theatre',
+			'theater',
+			'music',
+			'dance',
+			'sing',
+			'film',
+			'magic'
+		]
+	],
+	['LEARNING', ['learn', 'study', 'language', 'read', 'research', 'history', 'science']],
+	[
+		'TECHNOLOGY',
+		['comput', 'program', 'coding', 'electronic', 'robot', 'drone', 'radio', 'digital']
+	],
+	['SOCIAL', ['club', 'group', 'community', 'social', 'meetup', 'volunteer', 'debate']],
+	['RELAXATION', ['relax', 'meditat', 'calm', 'leisure', 'rest', 'spa']],
+	['SPIRITUALITY', ['spiritual', 'meditat', 'prayer', 'ritual', 'zen']],
+	['PETS', ['pet', 'dog', 'cat', 'animal', 'aquarium', 'horse', 'equestrian']],
+	['HOME_IMPROVEMENT', ['home', 'renovat', 'repair', 'furniture', 'interior', 'diy']],
+	['FASHION', ['fashion', 'style', 'clothing', 'jewelry', 'costume', 'cosplay']],
+	['TRAVEL', ['travel', 'tour', 'explor', 'journey', 'voyage', 'sail']],
+	['FINANCE', ['invest', 'finance', 'budget', 'trading', 'collect']],
+	['COMMUNITY_SERVICE', ['charity', 'volunteer', 'donat', 'service']],
+	['FAMILY', ['family', 'children', 'parent']],
+	['HOBBY', ['hobby', 'collect', 'amateur', 'enthusiast']]
+];
+
+/**
+ * Deterministic tag inference from the activity name and description.
+ *
+ * Used when the tags model fails or returns only OTHER. A transient AI blip otherwise
+ * produces the exact value the discovery quality gate rejects, throwing away a candidate
+ * that was already enriched.
+ */
+export function inferActivityTags(activity: string, description?: string): ActivityType[] {
+	const haystack = `${activity} ${description ?? ''}`.toLowerCase();
+	const scored: Array<{ tag: ActivityType; hits: number }> = [];
+
+	for (const [tag, keywords] of TAG_KEYWORDS) {
+		const hits = keywords.reduce((sum, word) => (haystack.includes(word) ? sum + 1 : sum), 0);
+		if (hits > 0) scored.push({ tag, hits });
+	}
+
+	if (scored.length === 0) return [];
+
+	return scored
+		.sort((a, b) => b.hits - a.hits)
+		.slice(0, 4)
+		.map((entry) => entry.tag);
+}
+
+// preferred icon sets, best first; index doubles as the ranking weight
+export const PREFERRED_ICON_SETS = [
+	'mdi',
+	'material-symbols',
+	'material-symbols-light',
+	'carbon',
+	'lucide',
+	'ph',
+	'solar',
+	'heroicons',
+	'cib',
+	'map',
+	'circum',
+	'nimbus'
+];
+
+const ICON_STOP_TOKENS = new Set([
+	'outline',
+	'round',
+	'rounded',
+	'sharp',
+	'fill',
+	'filled',
+	'alt',
+	'bold',
+	'duotone',
+	'line',
+	'thin',
+	'light',
+	'two',
+	'tone'
+]);
+
+function iconTokens(iconId: string): string[] {
+	const name = iconId.includes(':') ? iconId.slice(iconId.indexOf(':') + 1) : iconId;
+	return name
+		.split(/[-_]/)
+		.map((token) => token.toLowerCase())
+		.filter((token) => token.length > 2 && !ICON_STOP_TOKENS.has(token));
+}
+
+/**
+ * Pick the best iconify result for an activity.
+ *
+ * The old logic took the first icon from the first preferred set, which is whatever order
+ * the API happened to return; "gourd art" could land on `mdi:art-track`. This scores
+ * lexical overlap with the query first and only uses set preference to break ties, so an
+ * exactly-named icon in a lesser set beats an unrelated icon in mdi.
+ */
+export function selectActivityIcon(icons: string[], query: string): string | null {
+	if (!icons || icons.length === 0) return null;
+
+	const queryTokens = query
+		.toLowerCase()
+		.split(/[\s_-]+/)
+		.filter((token) => token.length > 2);
+	if (queryTokens.length === 0) return icons[0] ?? null;
+
+	const isRounded = (id: string) => /(^|[-_:])(?:round|rounded)(?=($|[-_:]))/i.test(id);
+
+	let best: { id: string; score: number } | null = null;
+	for (const id of icons) {
+		const tokens = iconTokens(id);
+		if (tokens.length === 0) continue;
+
+		const overlap = queryTokens.filter((token) =>
+			tokens.some((candidate) => candidate === token || candidate.startsWith(token))
+		).length;
+		if (overlap === 0) continue;
+
+		const setIndex = PREFERRED_ICON_SETS.findIndex((set) => id.startsWith(`${set}:`));
+		const setScore = setIndex === -1 ? 0 : PREFERRED_ICON_SETS.length - setIndex;
+
+		// overlap dominates; set preference and roundedness only break ties, and a shorter
+		// icon name is a tighter match ("mdi:chess" over "mdi:chess-king-outline")
+		const score =
+			overlap * 1000 + setScore * 10 + (isRounded(id) ? 5 : 0) - Math.min(tokens.length, 4);
+
+		if (!best || score > best.score) best = { id, score };
+	}
+
+	if (best) return best.id;
+
+	// nothing shared a token; fall back to the old heuristic of a rounded icon in the most
+	// preferred set, which is a better default than an arbitrary result
+	for (const set of PREFERRED_ICON_SETS) {
+		const found = icons.find((id) => id.startsWith(`${set}:`) && isRounded(id));
+		if (found) return found;
+	}
+	for (const set of PREFERRED_ICON_SETS) {
+		const found = icons.find((id) => id.startsWith(`${set}:`));
+		if (found) return found;
+	}
+
+	return icons.find(isRounded) ?? null;
+}
+
 export function validateActivityTags(tagsResponse: string, activityName: string): ActivityType[] {
 	try {
 		if (!tagsResponse || typeof tagsResponse !== 'string') {
@@ -1843,22 +2078,30 @@ and is at least 150 words long but no more than 250 words.`;
 };
 
 export const activityTagsSystemMessage = `
-You are a categorization expert. Given an activity name, output ONLY the appropriate tags from this list:
+You are a categorization expert. Given an activity name and description, output ONLY the appropriate tags from this list:
 
 VALID TAGS: ${ocean.com.earthapp.activity.ActivityType.values()
 	.map((t) => `"${t.name.toUpperCase()}"`)
 	.join(', ')}
 
 RULES:
-- Output: Up to 5 tags separated by commas
+- Output: 2 to 4 tags separated by commas, most relevant first
 - Format: Exact tag names only, uppercase, no quotes
-- Example: SPORT,HEALTH,NATURE,TRAVEL
+- Example: SPORT,HEALTH,NATURE
 - No explanations, context, or other text
 - Must use tags from the list above exactly as shown
-- Choose the most relevant and general tags that apply
+- Tag what the participant actually DOES, not the subject matter
+- OTHER is a last resort; never pair it with another tag
 
 If uncertain, default to fewer tags rather than incorrect ones.
 `;
+
+export function activityTagsPrompt(activity: string, description?: string): string {
+	// the description is already generated by this point and carries far more signal than
+	// a bare two-word name
+	if (!description) return `'${activity}'`;
+	return `Activity: '${activity}'\nDescription: ${description.slice(0, 600)}`;
+}
 
 // Article Prompts
 

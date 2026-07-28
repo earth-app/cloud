@@ -98,16 +98,25 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			tagsResult = await ai.run(tagsModel, {
 				messages: [
 					{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
-					{ role: 'user', content: `'${activity}'` }
+					{ role: 'user', content: prompts.activityTagsPrompt(activity, desc) }
 				]
 			});
 		} catch (aiError) {
 			console.error('AI model failed for activity tags', { activity, error: aiError });
-			// Continue with default tags rather than failing completely
-			tagsResult = { response: 'OTHER' };
+			tagsResult = { response: '' };
 		}
 
-		const tags = prompts.validateActivityTags(tagsResult?.response || '', activity);
+		let tags = prompts.validateActivityTags(tagsResult?.response || '', activity);
+
+		// a bare OTHER means the model failed rather than that the activity is genuinely
+		// uncategorizable, and it is the exact value discovery's quality gate rejects
+		if (tags.length === 1 && tags[0] === 'OTHER') {
+			const inferred = prompts.inferActivityTags(activity, desc);
+			if (inferred.length > 0) {
+				console.warn('Activity tags fell back to keyword inference', { activity, inferred });
+				tags = inferred;
+			}
+		}
 
 		// Find aliases
 		let aliases: string[] = [];
@@ -122,49 +131,31 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			);
 		}
 
-		// Find icon
-		const preferredSets = [
-			'mdi',
-			'material-symbols',
-			'material-symbols-light',
-			'carbon',
-			'lucide',
-			'ph',
-			'cib',
-			'carbon',
-			'solar',
-			'heroicons',
-			'map',
-			'circum',
-			'nimbus'
-		]; // preferred icon sets in order
+		// Find icon; try the full name, then the head noun, then each alias, so a compound
+		// like "gourd art" still resolves when only "gourd" has an icon
+		const headNoun = activity.split(/\s+/).slice(-1)[0];
+		const iconQueries = [activity, headNoun, ...aliases].filter(
+			(query, index, all) => query && query.length > 2 && all.indexOf(query) === index
+		);
 
-		const searchUrl = `https://api.iconify.design/search?query=${encodeURIComponent(activity)}&prefixes=${preferredSets.join(',')}`;
-		let icon = await fetch(searchUrl)
-			.then(async (res) => res.json<{ icons: string[]; total: number }>())
-			.then((data) => {
-				if (data.total === 0) return null;
+		let icon: string | null = null;
+		for (const query of iconQueries) {
+			const searchUrl =
+				`https://api.iconify.design/search?query=${encodeURIComponent(query)}` +
+				`&prefixes=${prompts.PREFERRED_ICON_SETS.join(',')}&limit=64`;
 
-				// Prefer icons that contain "round" or "rounded"
-				const iconsAll = data?.icons || [];
-				const isRounded = (id: string) => /(^|[-_:])(?:round|rounded)(?=($|[-_:]))/i.test(id);
+			try {
+				const data = await fetch(searchUrl).then(async (res) =>
+					res.json<{ icons: string[]; total: number }>()
+				);
+				if (!data?.total) continue;
 
-				for (const set of preferredSets) {
-					const found = iconsAll.find((icon) => icon.startsWith(set + ':') && isRounded(icon));
-					if (found) return found;
-				}
-
-				const anyRounded = iconsAll.find((icon) => isRounded(icon));
-				if (anyRounded) return anyRounded;
-				const icons = data?.icons || [];
-
-				for (const set of preferredSets) {
-					const found = icons.find((icon) => icon.startsWith(set + ':'));
-					if (found) return found;
-				}
-
-				return icons[0]; // fallback to first icon if no preferred set found
-			});
+				icon = prompts.selectActivityIcon(data.icons || [], query);
+				if (icon) break;
+			} catch (iconError) {
+				console.warn('Iconify search failed', { query, error: iconError });
+			}
+		}
 
 		const activityData = {
 			id: id,
