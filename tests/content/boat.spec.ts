@@ -93,16 +93,30 @@ function makeEvent(id: string, name: string): Event {
 }
 
 describe('createActivityData', () => {
-	it('throws when description generation repeatedly fails', async () => {
+	it('reports an unreachable model as transient so the caller can retry it', async () => {
 		const ai = {
 			run: vi.fn(async () => {
 				throw new Error('model down');
 			})
 		} as any;
 
-		await expect(createActivityData('gardening', 'gardening', ai)).rejects.toThrow(
-			'Activity data creation failed'
-		);
+		// the model never answered, so this says nothing about the candidate
+		await expect(createActivityData('gardening', 'gardening', ai)).rejects.toMatchObject({
+			name: 'ActivityDataError',
+			reason: 'ai_unavailable'
+		});
+	});
+
+	it('reports a candidate the model answered about but could not describe as permanent', async () => {
+		const ai = {
+			run: vi.fn(async () => ({ response: 'no.' }))
+		} as any;
+
+		// three answers that all fail validation means the candidate is not describable
+		await expect(createActivityData('aquarist', 'aquarist', ai)).rejects.toMatchObject({
+			name: 'ActivityDataError',
+			reason: 'invalid_candidate'
+		});
 	});
 
 	it('creates activity data with aliases and icon when model outputs are valid', async () => {

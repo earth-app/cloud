@@ -7,6 +7,7 @@ import {
 	fetchTaginfoCandidates,
 	fetchWikidataCandidates,
 	fetchWikipediaCategoryCandidates,
+	fetchWikivoyageCandidates,
 	MAX_STAGED_PER_RUN,
 	filterSemanticDuplicates,
 	filterSpecificCandidates,
@@ -26,12 +27,18 @@ import {
 import { createMockBindings } from '../helpers/mock-bindings';
 import { Activity, Bindings } from '../../src/util/types';
 
-vi.mock('../../src/content/boat', () => ({
-	createActivityData: vi.fn(),
-	tagsModel: '@cf/meta/llama-3.1-8b-instruct-fp8'
-}));
+// keep the real ActivityDataError; discovery branches on `instanceof` to decide whether a
+// failure is permanent, so a stubbed class would silently make every failure transient
+vi.mock('../../src/content/boat', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('../../src/content/boat')>();
+	return {
+		...actual,
+		createActivityData: vi.fn(),
+		tagsModel: '@cf/meta/llama-3.1-8b-instruct-fp8'
+	};
+});
 
-import { createActivityData } from '../../src/content/boat';
+import { ActivityDataError, createActivityData } from '../../src/content/boat';
 
 const createActivityDataMock = vi.mocked(createActivityData);
 
@@ -73,6 +80,8 @@ function mockSources(
 	options: {
 		sport?: Array<[string, number]>;
 		hobby?: Array<[string, number]>;
+		practice?: Array<[string, number]>;
+		wikivoyage?: string[];
 		categories?: string[];
 		taginfo?: Array<{ value: string; count: number; in_wiki: boolean }>;
 		denied?: string[];
@@ -84,10 +93,16 @@ function mockSources(
 		const url = typeof input === 'string' ? input : input.toString();
 
 		if (url.includes('query.wikidata.org')) {
-			const isSport = decodeURIComponent(url).includes('wd:Q31629');
-			return new Response(sparqlBody(isSport ? (options.sport ?? []) : (options.hobby ?? [])), {
-				status: 200
-			});
+			const query = decodeURIComponent(url);
+			const rows = query.includes('wd:Q31629')
+				? (options.sport ?? [])
+				: query.includes('wd:Q11417')
+					? (options.practice ?? [])
+					: (options.hobby ?? []);
+			return new Response(sparqlBody(rows), { status: 200 });
+		}
+		if (url.includes('en.wikivoyage.org')) {
+			return new Response(categoryBody(options.wikivoyage ?? []), { status: 200 });
 		}
 		if (url.includes('en.wikipedia.org')) {
 			return new Response(categoryBody(options.categories ?? []), { status: 200 });
@@ -170,6 +185,27 @@ describe('sources', () => {
 		expect(decodeURIComponent(fetchSpy.mock.calls[0][0] as string)).toContain('wd:Q47728');
 	});
 
+	it('queries the practice classes, which hold named practices rather than genres', async () => {
+		const fetchSpy = mockSources({ practice: [['Muay Thai', 60]] });
+
+		const candidates = await fetchWikidataCandidates('practice');
+
+		const query = decodeURIComponent(fetchSpy.mock.calls[0][0] as string);
+		expect(query).toContain('wd:Q11417');
+		expect(query).toContain('wd:Q61065');
+		expect(candidates[0]).toMatchObject({ id: 'muay_thai', source: 'wikidata_practice' });
+	});
+
+	it('pulls travel-flavoured activities from wikivoyage', async () => {
+		const fetchSpy = mockSources({ wikivoyage: ['Geocaching', 'Urban sketching'] });
+
+		const candidates = await fetchWikivoyageCandidates();
+
+		expect(fetchSpy.mock.calls[0][0] as string).toContain('en.wikivoyage.org');
+		expect(candidates.map((candidate) => candidate.id)).toContain('geocaching');
+		expect(candidates[0]?.source).toBe('wikivoyage_activities');
+	});
+
 	it('returns an empty list when WDQS rate limits, without throwing', async () => {
 		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
 			new Response('rate limited', { status: 429, headers: { 'Retry-After': '30' } })
@@ -227,6 +263,19 @@ describe('normalizeCandidate', () => {
 		['Sports culture', null],
 		['Board games', 'board_games'],
 		['Martial arts', 'martial_arts'],
+		// agent nouns are people, not activities; "aquarist" burned three description
+		// attempts in production before failing
+		['Aquarist', null],
+		['Philatelist', null],
+		['Mountaineer', null],
+		['Stamp collector', null],
+		['Bird fancier', null],
+		['Photographer', null],
+		['Gardener', null],
+		// -er is not treated as an agent suffix, so these survive
+		['Soccer', 'soccer'],
+		['Gardening', 'gardening'],
+		['Bouldering', 'bouldering'],
 		["Men's Marathon", null],
 		['a very long four word phrase', null],
 		['The Sport', null],
@@ -453,7 +502,7 @@ describe('runActivityDiscovery', () => {
 		expect(createActivityDataMock.mock.calls.length).toBeLessThanOrEqual(MAX_STAGED_PER_RUN);
 	});
 
-	it('blocklists a candidate whose enrichment throws and keeps going', async () => {
+	it('blocklists a candidate the model answered about but could not describe', async () => {
 		mockSources({
 			sport: [
 				['Chess', 200],
@@ -461,13 +510,42 @@ describe('runActivityDiscovery', () => {
 			]
 		});
 		createActivityDataMock.mockImplementationOnce(async () => {
-			throw new Error('all attempts failed validation');
+			throw new ActivityDataError('not describable', 'invalid_candidate');
 		});
 
 		const result = await runActivityDiscovery(env);
 
 		expect(result.staged.map((activity) => activity.id)).toEqual(['judo']);
 		expect((await readDiscoveryBlocklist(env)).chess.reason).toBe('rejected_ai');
+	});
+
+	it('does NOT blocklist when the model was unavailable, so the next run retries', async () => {
+		mockSources({
+			sport: [
+				['Chess', 200],
+				['Judo', 100]
+			]
+		});
+		createActivityDataMock.mockImplementationOnce(async () => {
+			throw new ActivityDataError('workers ai 500', 'ai_unavailable');
+		});
+
+		const result = await runActivityDiscovery(env);
+
+		expect(result.staged.map((activity) => activity.id)).toEqual(['judo']);
+		// an outage says nothing about the candidate; blocklisting it would lose it forever
+		expect(await readDiscoveryBlocklist(env)).not.toHaveProperty('chess');
+	});
+
+	it('treats an unrecognized error shape as transient rather than blocklisting', async () => {
+		mockSources({ sport: [['Chess', 200]] });
+		createActivityDataMock.mockImplementationOnce(async () => {
+			throw new Error('something unexpected');
+		});
+
+		await runActivityDiscovery(env);
+
+		expect(await readDiscoveryBlocklist(env)).not.toHaveProperty('chess');
 	});
 
 	it('aborts the run after three consecutive enrichment failures', async () => {
