@@ -42,10 +42,31 @@ export const quizModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
 export const promptModel = '@cf/openai/gpt-oss-120b';
 export const badgeMasteryModel = '@cf/google/gemma-4-26b-a4b-it';
 
+export type ActivityDataFailure = 'invalid_candidate' | 'ai_unavailable';
+
+/**
+ * Why enrichment failed, so callers can tell a bad candidate from a bad afternoon.
+ *
+ * Discovery permanently blocklists `invalid_candidate` but retries `ai_unavailable` on the
+ * next run; conflating them meant a Workers AI outage burned good candidates forever.
+ */
+export class ActivityDataError extends Error {
+	readonly reason: ActivityDataFailure;
+
+	constructor(message: string, reason: ActivityDataFailure) {
+		super(message);
+		this.name = 'ActivityDataError';
+		this.reason = reason;
+	}
+}
+
 export async function createActivityData(id: string, activity: string, ai: Ai) {
 	try {
 		let desc: string | null = null;
 		let lastError: Error | null = null;
+		// a model that never answered says nothing about the candidate; one that answered and
+		// failed validation three times says the candidate is not describable
+		let modelAnswered = false;
 		const maxRetries = 3;
 		const temperatureRamp = [0.2, 0.5, 0.8];
 
@@ -61,6 +82,8 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 					max_tokens: 512,
 					temperature: temperatureRamp[attempt - 1]
 				});
+
+				modelAnswered = true;
 
 				const rawDesc = description?.response || '';
 				// Validate with throwOnFailure=true to enable retry logic
@@ -79,16 +102,17 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 				if (attempt === maxRetries) {
 					console.error('All attempts to generate valid activity description failed', {
 						activity,
-						desc,
-						error: lastError
+						reason: modelAnswered ? 'invalid_candidate' : 'ai_unavailable',
+						error: lastError.message
 					});
 				}
 			}
 		}
 
 		if (!desc) {
-			throw new Error(
-				`Failed to generate valid description for activity "${activity}" after ${maxRetries} attempts: ${lastError?.message}`
+			throw new ActivityDataError(
+				`Failed to generate a valid description for "${activity}" after ${maxRetries} attempts: ${lastError?.message}`,
+				modelAnswered ? 'invalid_candidate' : 'ai_unavailable'
 			);
 		}
 
@@ -172,9 +196,20 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 
 		return activityData;
 	} catch (error) {
-		console.error('Error creating activity data:', error);
-		throw new Error(
-			`Activity data creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+		// flatten the error; a bare Error object serializes to a stack with no message in the
+		// Workers log viewer, which is how "aquarist" showed up as an unexplained failure
+		console.error('Error creating activity data', {
+			activity,
+			reason: error instanceof ActivityDataError ? error.reason : 'unknown',
+			error: error instanceof Error ? error.message : String(error)
+		});
+
+		// rethrow as-is so the caller keeps the reason and can decide whether to blocklist
+		if (error instanceof ActivityDataError) throw error;
+
+		throw new ActivityDataError(
+			`Activity data creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+			'ai_unavailable'
 		);
 	}
 }
