@@ -1,4 +1,4 @@
-import { createActivityData, tagsModel } from './boat';
+import { ActivityDataError, createActivityData, tagsModel } from './boat';
 import { cosineSimilarity, embedTexts } from './ferry';
 import {
 	getDeniedStagedActivityIds,
@@ -60,7 +60,12 @@ export const DISCOVERY_SEED_CATEGORIES = [
 ];
 
 export type DiscoverySource =
-	'wikidata_sport' | 'wikidata_hobby' | 'wikipedia_categories' | 'osm_taginfo';
+	| 'wikidata_sport'
+	| 'wikidata_hobby'
+	| 'wikidata_practice'
+	| 'wikipedia_categories'
+	| 'wikivoyage_activities'
+	| 'osm_taginfo';
 
 export type Candidate = {
 	id: string;
@@ -105,13 +110,26 @@ export type DiscoveryResult = {
 // #region Sources
 
 const SOURCE_PRIORITY: Record<DiscoverySource, number> = {
+	// practice classes yield the most specific names, so they win ties
+	wikidata_practice: 4,
 	wikidata_sport: 3,
 	wikidata_hobby: 3,
 	osm_taginfo: 2,
+	wikivoyage_activities: 2,
 	wikipedia_categories: 1
 };
 
-const SPARQL_QUERIES: Record<'sport' | 'hobby', string> = {
+const SPARQL_QUERIES: Record<'sport' | 'hobby' | 'practice', string> = {
+	// Q61065 water sport, Q11417 martial art, Q877729 handicraft; these classes are where the
+	// named practices live (Muay Thai, skimboarding, pyrography) rather than the genres
+	practice: `SELECT ?itemLabel ?links WHERE {
+  VALUES ?c { wd:Q61065 wd:Q11417 wd:Q877729 }
+  { ?item wdt:P31 ?c } UNION { ?item wdt:P279 ?c }
+  ?item wikibase:sitelinks ?links .
+  FILTER(?links >= 10)
+  FILTER NOT EXISTS { ?sub wdt:P279 ?item }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+} ORDER BY DESC(?links) LIMIT 300`,
 	// Q31629 = "type of sport"
 	sport: `SELECT ?itemLabel ?links WHERE {
   ?item wdt:P31 wd:Q31629 ; wikibase:sitelinks ?links .
@@ -141,8 +159,10 @@ const SPARQL_QUERIES: Record<'sport' | 'hobby', string> = {
  * item with subclasses is a genre ("card game", "martial arts"), not something a person
  * actually does.
  */
-export async function fetchWikidataCandidates(kind: 'sport' | 'hobby'): Promise<Candidate[]> {
-	const source: DiscoverySource = kind === 'sport' ? 'wikidata_sport' : 'wikidata_hobby';
+export async function fetchWikidataCandidates(
+	kind: 'sport' | 'hobby' | 'practice'
+): Promise<Candidate[]> {
+	const source = `wikidata_${kind}` as DiscoverySource;
 	const url = `https://query.wikidata.org/sparql?format=json&query=${encodeURIComponent(
 		SPARQL_QUERIES[kind]
 	)}`;
@@ -188,6 +208,49 @@ export async function fetchWikidataCandidates(kind: 'sport' | 'hobby'): Promise<
 		});
 		return [];
 	}
+}
+
+export const WIKIVOYAGE_SEED_CATEGORIES = ['Activities', 'Outdoor life', 'Sports', 'Hiking'];
+
+/**
+ * Wikivoyage activity categories.
+ *
+ * Travel writing names things people do rather than things people study, so this yields
+ * candidates the encyclopedia categories miss (geocaching, urban sketching, agritourism).
+ */
+export async function fetchWikivoyageCandidates(): Promise<Candidate[]> {
+	const candidates: Candidate[] = [];
+
+	for (const category of WIKIVOYAGE_SEED_CATEGORIES) {
+		const url =
+			`https://en.wikivoyage.org/w/api.php?action=query&list=categorymembers` +
+			`&cmtitle=${encodeURIComponent(`Category:${category}`)}` +
+			`&cmtype=page&cmlimit=200&format=json&formatversion=2`;
+
+		try {
+			const res = await fetch(url, {
+				headers: { 'User-Agent': DISCOVERY_USER_AGENT },
+				signal: AbortSignal.timeout(15_000)
+			});
+			if (!res.ok) continue;
+
+			const body = await res.json<{ query?: { categorymembers?: Array<{ title?: string }> } }>();
+			for (const member of body?.query?.categorymembers ?? []) {
+				const normalized = normalizeCandidate(member.title ?? '');
+				if (!normalized) continue;
+				candidates.push({ ...normalized, source: 'wikivoyage_activities', score: 1 });
+			}
+		} catch (err) {
+			console.warn('Activity discovery: wikivoyage walk failed', {
+				category,
+				error: err instanceof Error ? err.message : String(err)
+			});
+		}
+
+		await sleep(150);
+	}
+
+	return candidates;
 }
 
 /**
@@ -319,6 +382,8 @@ export async function collectCandidates(): Promise<{
 
 	record(await fetchWikidataCandidates('sport'));
 	record(await fetchWikidataCandidates('hobby'));
+	record(await fetchWikidataCandidates('practice'));
+	record(await fetchWikivoyageCandidates());
 
 	// subcategory titles are category names, so they widen the walk one level rather than
 	// becoming candidates themselves
@@ -384,6 +449,55 @@ const STOPWORDS = new Set([
 
 const LEADING_ARTICLES = new Set(['the', 'a', 'an', 'of', 'in', 'on', 'at', 'for', 'with', 'and']);
 
+// a person who does the thing is not the thing; "aquarist" reached the AI and burned three
+// description attempts before failing, because no valid activity description exists for it.
+// -er is deliberately absent: it would reject "soccer".
+const AGENT_NOUN_SUFFIXES = [
+	'ist',
+	'ists',
+	'eer',
+	'eers',
+	'ographer',
+	'ographers',
+	'ologist',
+	'ologists',
+	'phile',
+	'philes',
+	'man',
+	'men',
+	'woman',
+	'women',
+	'person',
+	'people'
+];
+const AGENT_NOUN_WORDS = new Set([
+	'keeper',
+	'keepers',
+	'player',
+	'players',
+	'collector',
+	'collectors',
+	'enthusiast',
+	'enthusiasts',
+	'fancier',
+	'fanciers',
+	'rider',
+	'riders',
+	'racer',
+	'racers',
+	'gardener',
+	'gardeners'
+]);
+
+function isAgentNoun(word: string): boolean {
+	if (AGENT_NOUN_WORDS.has(word)) return true;
+	// "artist" and "florist" are short enough that the suffix is most of the word; require
+	// a real stem so "list" and "mist" survive
+	return AGENT_NOUN_SUFFIXES.some(
+		(suffix) => word.endsWith(suffix) && word.length >= suffix.length + 4
+	);
+}
+
 function singularize(word: string): string {
 	if (word.endsWith('ies') && word.length > 4) return `${word.slice(0, -3)}y`;
 	if (word.endsWith('sses') || word.endsWith('shes') || word.endsWith('ches')) {
@@ -417,6 +531,8 @@ export function normalizeCandidate(raw: string): { id: string; foldKey: string }
 	// reject only when the whole phrase is generic; "board games" and "martial arts" are
 	// real activities even though they contain a stopword
 	if (words.every((word) => STOPWORDS.has(word))) return null;
+	// the head noun carries the meaning; "aquarist" and "stamp collector" are both people
+	if (isAgentNoun(words[words.length - 1])) return null;
 	if (!/^[a-z]+(?: [a-z]+){0,2}$/.test(words.join(' '))) return null;
 
 	const id = words.join('_');
@@ -1075,15 +1191,26 @@ export async function runActivityDiscovery(
 			} catch (err) {
 				failed++;
 				consecutiveAiFailures++;
-				// only throws after all 3 temperature-ramped attempts failed validation, which
-				// in practice means it is not a describable activity; retrying next hour burns
-				// the same calls for the same result
-				await addToDiscoveryBlocklist(env, candidate.foldKey, 'rejected_ai', startedAt);
-				console.warn('Activity discovery: AI enrichment failed; blocklisting candidate', {
-					id: candidate.id,
-					source: candidate.source,
-					error: err instanceof Error ? err.message : String(err)
-				});
+
+				// blocklist only when the model answered and the answer was unusable three
+				// times, which means the candidate is not a describable activity. an outage
+				// says nothing about the candidate, so leave it for the next run.
+				const permanent = err instanceof ActivityDataError && err.reason === 'invalid_candidate';
+				if (permanent) {
+					await addToDiscoveryBlocklist(env, candidate.foldKey, 'rejected_ai', startedAt);
+				}
+
+				console.warn(
+					permanent
+						? 'Activity discovery: candidate is not describable; blocklisting'
+						: 'Activity discovery: AI unavailable; leaving candidate for the next run',
+					{
+						id: candidate.id,
+						source: candidate.source,
+						error: err instanceof Error ? err.message : String(err)
+					}
+				);
+
 				if (consecutiveAiFailures >= MAX_CONSECUTIVE_AI_FAILURES) {
 					console.error('Activity discovery: 3 consecutive AI failures, aborting run');
 					break;
