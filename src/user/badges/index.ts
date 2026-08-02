@@ -1415,6 +1415,28 @@ export type RepairBadgeProgressResult = {
 	granted: string[];
 };
 
+// single home for the badge-unlock copy; both the cron repair pass and the live grant path
+// call this so the two can't drift. source 'badge' is what drives the unlock ribbon in crust/sky
+function notifyBadgesUnlocked(
+	bindings: Bindings,
+	userId: string,
+	badgeIds: string[]
+): Promise<Response> {
+	const names = badgeIds.map((id) => badges.find((b) => b.id === id)?.name ?? id);
+
+	return sendUserNotification(
+		bindings,
+		userId,
+		names.length > 1 ? 'New Badges Unlocked!' : 'New Badge Unlocked!',
+		names.length > 1
+			? `You've unlocked the following badges: ${names.join(', ')}.`
+			: `You've unlocked the "${names[0]}" badge!`,
+		undefined,
+		'success',
+		'badge'
+	);
+}
+
 export async function repairDuplicateBadgeProgress(
 	bindings: Bindings
 ): Promise<RepairBadgeProgressResult> {
@@ -1532,20 +1554,7 @@ export async function repairDuplicateBadgeProgress(
 	// best-effort.
 	for (const [userId, badgeIds] of grantsByUser) {
 		try {
-			const names = badgeIds.map((id) => {
-				const b = badges.find((x) => x.id === id);
-				return b ? b.name : id;
-			});
-			await sendUserNotification(
-				bindings,
-				userId,
-				names.length > 1 ? 'New Badges Unlocked!' : 'New Badge Unlocked!',
-				names.length > 1
-					? `You've unlocked the following badges: ${names.join(', ')}.`
-					: `You've unlocked the "${names[0]}" badge!`,
-				undefined,
-				'success'
-			);
+			await notifyBadgesUnlocked(bindings, userId, badgeIds);
 		} catch (err) {
 			console.error('repairDuplicateBadgeProgress: notification failed for user', userId, err);
 		}
@@ -1607,23 +1616,7 @@ export async function checkAndGrantBadges(
 
 	// send notification
 	if (newlyGranted.length > 0) {
-		ctx.waitUntil(
-			sendUserNotification(
-				bindings,
-				normalizedUserId,
-				newlyGranted.length > 1 ? 'New Badges Unlocked!' : 'New Badge Unlocked!',
-				newlyGranted.length > 1
-					? `You've unlocked the following badges: ${newlyGranted
-							.map((id) => {
-								const badge = badges.find((b) => b.id === id);
-								return badge ? badge.name : id;
-							})
-							.join(', ')}.`
-					: `You've unlocked the "${badges.find((b) => b.id === newlyGranted[0])?.name}" badge!`,
-				undefined,
-				'success'
-			)
-		);
+		ctx.waitUntil(notifyBadgesUnlocked(bindings, normalizedUserId, newlyGranted));
 	}
 
 	return newlyGranted;

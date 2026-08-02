@@ -454,6 +454,8 @@ export async function thankTrailmark(
 	env: Bindings,
 	id: string,
 	thankerUid: string,
+	// mirrors the `username` wire field; not surfaced because the copy is anonymous and
+	// `source` carries the category, not the actor
 	thankerUsername?: string,
 	ctx?: { waitUntil(p: Promise<unknown>): void }
 ): Promise<ThankResult> {
@@ -485,8 +487,8 @@ export async function thankTrailmark(
 			? `A visitor thanked the note you left at ${placeLabel}.`
 			: 'A visitor thanked a note you left along the way.',
 		undefined,
-		'trailmark',
-		thankerUsername ? `@${thankerUsername}` : 'trailmark'
+		'success',
+		'trailmark'
 	).catch(() => {});
 
 	if (ctx) ctx.waitUntil(notify);

@@ -467,12 +467,45 @@ export async function checkStepDelay(
 	return { available: true };
 }
 
+function completionNotifiedKey(userId: string, questId: string): string {
+	return `user:quest_completion_notified:${userId}:${questId}`;
+}
+
+// 30 days: startQuest 409s on a quest already in history, so a completion is once-per-user
+// and the guard only has to outlive archive retries and stale quest_progress reads
+const COMPLETION_NOTIFIED_TTL = 60 * 60 * 24 * 30;
+
+/**
+ * Sends the quest-completion notification at most once per (user, quest). Both the
+ * step-submission path and the archive-recovery path reach a completion, and the latter is
+ * re-entered on every progress read until the deleted active key propagates.
+ */
+async function notifyQuestCompletedOnce(
+	bindings: Bindings,
+	userId0: string,
+	quest: Quest | CustomQuest
+): Promise<void> {
+	const key = completionNotifiedKey(userId0, quest.id);
+	if (await bindings.KV.get(key)) return;
+
+	await sendUserNotification(
+		bindings,
+		userId0,
+		`Quest "${quest.title}" Completed!`,
+		`You have successfully completed the quest and earned ${quest.reward} impact points!`,
+		undefined,
+		'success',
+		'quest'
+	);
+	await bindings.KV.put(key, '1', { expirationTtl: COMPLETION_NOTIFIED_TTL });
+}
+
 /**
  * If the active progress KV entry is marked completed but was never archived
  * (e.g. the background task crashed), archive it now and send the completion
  * notification.  Safe to call multiple times — archiveCompletedQuest is idempotent
  * because it overwrites the same R2 key and only appends to the history index if
- * the quest is not already present.
+ * the quest is not already present, and the notification is KV-deduped.
  */
 export async function maybeArchiveCompletedQuest(
 	userId: string,
@@ -493,15 +526,7 @@ export async function maybeArchiveCompletedQuest(
 	const doArchive = async () => {
 		await archiveCompletedQuest(userId0, res.metadata!.questId, progress, bindings);
 		if (quest) {
-			await sendUserNotification(
-				bindings,
-				userId0,
-				`Quest "${quest.title}" Completed!`,
-				`You have successfully completed the quest and earned ${quest.reward} impact points!`,
-				undefined,
-				'success',
-				'quest'
-			);
+			await notifyQuestCompletedOnce(bindings, userId0, quest);
 		}
 	};
 
@@ -1354,15 +1379,7 @@ export async function updateQuestProgress(
 						await markBadgeMastered(userId0, masteredBadgeId, bindings.KV);
 					}
 
-					await sendUserNotification(
-						bindings,
-						userId0,
-						`Quest "${quest.title}" Completed!`,
-						`You have successfully completed the quest and earned ${quest.reward} impact points!`,
-						undefined,
-						'success',
-						'quest'
-					);
+					await notifyQuestCompletedOnce(bindings, userId0, quest);
 				}
 			})()
 		])

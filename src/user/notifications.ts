@@ -58,6 +58,12 @@ export async function pushLiveMessage(
 	}
 }
 
+/**
+ * `source` is overloaded today: most callsites pass a CATEGORY (`cloud`, `quest`, `badge`,
+ * `trailmark`) which crust lowercases and matches against a fixed list, while the four
+ * challenges.ts callsites pass an ACTOR HANDLE (`@username`) that matches no category.
+ * Both are rendered raw to the user, so pick a category unless you mean the handle.
+ */
 export async function sendUserNotification(
 	bindings: Bindings,
 	id: string,
