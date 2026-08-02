@@ -22,6 +22,7 @@ import {
 	startQuest,
 	updateQuestProgress
 } from '../../../src/user/quests/tracking';
+import { sendUserNotification } from '../../../src/user/notifications';
 import { getImpactPoints } from '../../../src/user/points';
 import { quests } from '../../../src/user/quests';
 import { getQuestHashes } from '../../../src/user/quests/migration';
@@ -759,6 +760,48 @@ describe('quest lifecycle helpers', () => {
 		expect(archived).not.toBeNull();
 		expect(archived?.questId).toBe('fun_facts');
 		expect(Array.isArray(archived?.progress)).toBe(true);
+	});
+
+	it('sends the completion notification once across repeated archive recovery', async () => {
+		const kv = new MockKVNamespace();
+		const cache = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any, CACHE: cache as any });
+		const notify = vi.mocked(sendUserNotification);
+		notify.mockClear();
+
+		// archiveCompletedQuest deletes the active key, but kv reads are eventually consistent,
+		// so a second progress read can still land on the completed entry
+		const seedCompleted = () =>
+			kv.put(
+				'user:quest_progress:910',
+				JSON.stringify([
+					{ type: 'article_quiz', index: 0, submittedAt: Date.now(), scoreKey: 'k', score: 90 }
+				]),
+				{
+					metadata: {
+						questId: 'fun_facts',
+						currentStep: 2,
+						completed: true,
+						startedAt: Date.now() - 10_000
+					}
+				}
+			);
+
+		const completions = () =>
+			notify.mock.calls.filter(
+				(call) => call[1] === '910' && String(call[2]).includes('Completed!')
+			);
+
+		await seedCompleted();
+		await maybeArchiveCompletedQuest('910', bindings);
+		expect(completions()).toHaveLength(1);
+		expect(completions()[0][5]).toBe('success');
+		expect(completions()[0][6]).toBe('quest');
+		expect(await kv.get('user:quest_completion_notified:910:fun_facts')).toBe('1');
+
+		await seedCompleted();
+		await maybeArchiveCompletedQuest('910', bindings);
+		expect(completions()).toHaveLength(1);
 	});
 });
 

@@ -9,9 +9,10 @@ import {
 	getGrantedBadges,
 	grantBadge,
 	isBadgeGranted,
+	repairDuplicateBadgeProgress,
 	resetBadgeProgress
 } from '../../../src/user/badges';
-import { createMockBindings } from '../../helpers/mock-bindings';
+import { createMockBindings, notificationPayloads } from '../../helpers/mock-bindings';
 import { MockKVNamespace } from '../../helpers/mock-kv';
 import * as points from '../../../src/user/points';
 
@@ -360,6 +361,100 @@ describe('checkAndGrantBadges', () => {
 		const granted = await checkAndGrantBadges('8', 'articles_read', bindings, ctx as any);
 		expect(granted).toEqual(expect.arrayContaining(['article_enthusiast', 'avid_reader']));
 		expect(granted.length).toBeGreaterThan(1);
+	});
+
+	// crust/sky drive the badge-unlock ribbon off source === 'badge', not off the title
+	it('tags the grant notification with source badge', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response('ok', { status: 200 }));
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const pending: Promise<unknown>[] = [];
+		const ctx = { waitUntil: vi.fn((promise: Promise<unknown>) => void pending.push(promise)) };
+
+		await addBadgeProgress(
+			'21',
+			'articles_read',
+			Array.from({ length: 10 }, (_, i) => `grant-${i}`),
+			kv as any
+		);
+
+		const granted = await checkAndGrantBadges('21', 'articles_read', bindings, ctx as any);
+		expect(granted).toContain('article_enthusiast');
+		await Promise.all(pending);
+
+		const payloads = notificationPayloads(fetchSpy as any);
+		expect(payloads).toHaveLength(1);
+		expect(payloads[0].source).toBe('badge');
+		expect(payloads[0].type).toBe('success');
+		expect(payloads[0].title).toBe('New Badge Unlocked!');
+	});
+});
+
+describe('repairDuplicateBadgeProgress', () => {
+	it('deduplicates tracker entries and reports nothing when there is no drift', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+
+		const now = Date.now();
+		await kv.put(
+			'user:badge_tracker:22:articles_read',
+			JSON.stringify([
+				{ date: now, value: '1' },
+				{ date: now, value: '1' },
+				{ date: now, value: '2' }
+			])
+		);
+
+		const result = await repairDuplicateBadgeProgress(bindings);
+		expect(result).toEqual({ granted: [], revoked: [] });
+
+		const tracker = (await kv.get('user:badge_tracker:22:articles_read', 'json')) as {
+			value: string;
+		}[];
+		expect(tracker.map((entry) => entry.value)).toEqual(['1', '2']);
+	});
+
+	it('backfills a missed grant and notifies with source badge', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValue(new Response('ok', { status: 200 }));
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+
+		// progress recorded without the grant ever landing (the case the cron exists for)
+		await addBadgeProgress(
+			'23',
+			'articles_read',
+			Array.from({ length: 10 }, (_, i) => `repair-${i}`),
+			kv as any
+		);
+		expect(await isBadgeGranted('23', 'article_enthusiast', kv as any)).toBe(false);
+
+		const result = await repairDuplicateBadgeProgress(bindings);
+		expect(result.granted).toContain('23:article_enthusiast');
+		expect(await isBadgeGranted('23', 'article_enthusiast', kv as any)).toBe(true);
+
+		const payloads = notificationPayloads(fetchSpy as any);
+		expect(payloads).toHaveLength(1);
+		expect(payloads[0].source).toBe('badge');
+		expect(payloads[0].type).toBe('success');
+		expect(payloads[0].title).toBe('New Badge Unlocked!');
+	});
+
+	it('revokes a granted badge whose tracker no longer satisfies the threshold', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('ok', { status: 200 }));
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+
+		await addBadgeProgress('24', 'articles_read', ['only-one'], kv as any);
+		await grantBadge('24', 'article_enthusiast', kv as any);
+
+		const result = await repairDuplicateBadgeProgress(bindings);
+		expect(result.revoked).toContain('24:article_enthusiast');
+		expect(await isBadgeGranted('24', 'article_enthusiast', kv as any)).toBe(false);
 	});
 });
 

@@ -59,6 +59,24 @@ export class MockR2Bucket {
 	}
 }
 
+export type NotificationPayload = {
+	title: string;
+	description: string;
+	link?: string;
+	type: string;
+	source: string;
+};
+
+// sendUserNotification posts to mantle over fetch; reads the wire payloads back off a fetch spy
+export function notificationPayloads(spy: { mock: { calls: unknown[][] } }): NotificationPayload[] {
+	return spy.mock.calls
+		.filter((call) => typeof call[0] === 'string' && call[0].includes('/notifications'))
+		.map(
+			(call) =>
+				JSON.parse(String((call[1] as { body?: unknown }).body ?? '{}')) as NotificationPayload
+		);
+}
+
 export function createMockExecutionCtx(): ExecutionCtxLike {
 	return {
 		waitUntil: vi.fn((promise: Promise<unknown>) => {
