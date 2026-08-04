@@ -1,6 +1,7 @@
 // boat - ai content generation
 
-import { com } from '@earth-app/ocean';
+import { ACTIVITY_TYPE } from '../util/enums';
+import { searchAll } from './scrape';
 
 import {
 	Activity,
@@ -238,15 +239,14 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 	console.debug('Generated article topic:', topic);
 
 	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
-	const tags = com.earthapp.activity.ActivityType.values()
-		.filter((t) => t !== com.earthapp.activity.ActivityType.OTHER)
+	const tags = ACTIVITY_TYPE.filter((t) => t !== 'OTHER')
 		.sort(() => Math.random() - 0.5)
 		.slice(0, tagCount)
 		.map((t) =>
-			t.name
+			t
 				.replace(/_/g, ' ')
 				.toLowerCase()
-				.replace(/\b\w/g, (c) => c.toUpperCase())
+				.replace(/\b\w/g, (c: string) => c.toUpperCase())
 				.trim()
 		);
 
@@ -352,29 +352,15 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 	return [selectedArticles, tags];
 }
 
-let HAS_PUBMED_API_KEY = false;
 export async function findArticles(
 	query: string,
 	bindings: Bindings,
 	pageLimit: number = 1
 ): Promise<OceanArticle[]> {
-	if (!HAS_PUBMED_API_KEY && bindings.NCBI_API_KEY) {
-		com.earthapp.ocean.boat.Scraper.setApiKey('PubMed', bindings.NCBI_API_KEY);
-		HAS_PUBMED_API_KEY = true;
-	}
-
 	const query0 = query.replace(/\+/g, ' ').replace(/[^a-zA-Z0-9\s]/g, '');
 
-	const res = await com.earthapp.ocean.boat.searchAllAsPromise(
-		com.earthapp.ocean.boat.Scraper.Companion,
-		query0,
-		pageLimit
-	);
-	const results = res
-		.asJsReadonlyArrayView()
-		.map(async (item) => JSON.parse(item.toJson()) satisfies OceanArticle);
-
-	return await batchProcess(results);
+	// keys are passed per-call now; ocean held them in a module-level mutable map
+	return await searchAll(query0, pageLimit, { PubMed: bindings.NCBI_API_KEY ?? '' });
 }
 
 export async function createArticle(

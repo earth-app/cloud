@@ -1,4 +1,4 @@
-import { com } from '@earth-app/ocean';
+import { ACTIVITY_TYPE } from '../../util/enums';
 import type { Quest, QuestStep } from '../quests';
 import { ActivityType, Bindings, Rarity } from '../../util/types';
 import { normalizeId } from '../../util/util';
@@ -128,7 +128,7 @@ export function labelsForBadge(badge: Badge): string[] {
 }
 
 export function activityTypeNames(): ActivityType[] {
-	return com.earthapp.activity.ActivityType.values().map((t) => t.name as ActivityType);
+	return [...ACTIVITY_TYPE];
 }
 
 const RARITY_ORDER: Record<Rarity, number> = { normal: 0, rare: 1, amazing: 2, green: 3 };

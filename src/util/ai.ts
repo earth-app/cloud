@@ -1,4 +1,4 @@
-import * as ocean from '@earth-app/ocean';
+import { ACTIVITY_TYPE, type Visibility } from './enums';
 import {
 	ActivityType,
 	Article,
@@ -1734,9 +1734,7 @@ export function validateActivityTags(tagsResponse: string, activityName: string)
 		// Sanitize the tags response
 		const sanitized = sanitizeForContentType(tagsResponse, 'tags');
 
-		const validTags = ocean.com.earthapp.activity.ActivityType.values().map((t) =>
-			t.name.trim().toUpperCase()
-		);
+		const validTags = ACTIVITY_TYPE.map((t) => t.trim().toUpperCase());
 
 		const normalize = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
 		const canonicalByNormalized = new Map(validTags.map((t) => [normalize(t), t]));
@@ -2091,9 +2089,7 @@ and is at least 150 words long but no more than 250 words.`;
 export const activityTagsSystemMessage = `
 You are a categorization expert. Given an activity name and description, output ONLY the appropriate tags from this list:
 
-VALID TAGS: ${ocean.com.earthapp.activity.ActivityType.values()
-	.map((t) => `"${t.name.toUpperCase()}"`)
-	.join(', ')}
+VALID TAGS: ${ACTIVITY_TYPE.map((t) => `"${t.toUpperCase()}"`).join(', ')}
 
 RULES:
 - Output: 2 to 4 tags separated by commas, most relevant first
@@ -2929,13 +2925,13 @@ export type UserProfilePromptData = {
 	username: string;
 	bio: string;
 	created_at: string;
-	visibility: typeof ocean.com.earthapp.Visibility.prototype.name;
+	visibility: Visibility;
 	country: string;
 	full_name: string;
 	activities: Array<{
 		name: string;
 		description: string;
-		types: (typeof ocean.com.earthapp.activity.ActivityType.prototype.name)[];
+		types: ActivityType[];
 		aliases: string[];
 	}>;
 };

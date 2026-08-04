@@ -1,9 +1,9 @@
+import type { AccountType } from './util/enums';
 import { Hono, type Context } from 'hono';
 import { Bindings } from './util/types';
 import { bearerAuth } from 'hono/bearer-auth';
 import { getCookie } from 'hono/cookie';
 import { normalizeId } from './util/util';
-import { com } from '@earth-app/ocean';
 
 const ws = new Hono<{ Bindings: Bindings }>();
 const TICKET_TTL_SECONDS = 60;
@@ -150,13 +150,13 @@ ws.get('/users/:id/ticket', async (c) => {
 
 	let userData: {
 		id: string;
-		account?: { account_type: typeof com.earthapp.account.AccountType.prototype.name };
+		account?: { account_type: AccountType };
 	};
 
 	try {
 		userData = await userCheck.json<{
 			id: string;
-			account?: { account_type: typeof com.earthapp.account.AccountType.prototype.name };
+			account?: { account_type: AccountType };
 		}>();
 	} catch (error) {
 		console.error('[ws.ticket.issue] failed to parse mantle user payload', {

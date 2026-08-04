@@ -1,4 +1,3 @@
-import { com } from '@earth-app/ocean';
 import { ScoreResult } from '../content/ferry';
 
 export type Bindings = {
@@ -26,9 +25,9 @@ export type ExecutionCtxLike = {
 	waitUntil(promise: Promise<unknown>): void;
 };
 
-export type AccountType = typeof com.earthapp.account.AccountType.prototype.name;
-export type ActivityType = typeof com.earthapp.activity.ActivityType.prototype.name;
-export type Privacy = typeof com.earthapp.account.Privacy.prototype.name;
+import type { AccountType, ActivityType, Privacy, Visibility } from './enums';
+
+export type { AccountType, ActivityType, Privacy, Visibility };
 
 export type Activity = {
 	id: string;

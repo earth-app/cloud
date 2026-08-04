@@ -15,7 +15,6 @@
   },
   "dependencies": {
     "@earth-app/moho": "^1.1.0",
-    "@earth-app/ocean": "^1.1.0",
     "@types/bun": "^1.3.14",
     "@types/pako": "^2.0.4",
     "exifreader": "^4.41.3",

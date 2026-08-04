@@ -1,4 +1,4 @@
-import { com, kotlin } from '@earth-app/ocean';
+import { parseActivities, recommendActivity } from './content/recommend';
 import { Hono } from 'hono';
 
 import {
@@ -1269,66 +1269,26 @@ app.delete('/users/:id', async (c) => {
 });
 
 app.post('/users/recommend_activities', async (c) => {
-	const body = await c.req.json<{
-		all: {
-			type: 'com.earthapp.activity.Activity';
-			id: string;
-			name: string;
-			description: string;
-			aliases: string[];
-			activity_types: ActivityType[];
-		}[];
-		user: {
-			type: 'com.earthapp.activity.Activity';
-			id: string;
-			name: string;
-			description: string;
-			aliases: string[];
-			activity_types: ActivityType[];
-		}[];
-	}>();
+	const body = await c.req.json<{ all: unknown; user: unknown }>();
 
-	if (!body.all || !body.user) {
-		return c.text('Invalid request body', 400);
-	}
+	const all = parseActivities(body?.all);
+	const user = parseActivities(body?.user);
 
-	if (!Array.isArray(body.all) || !Array.isArray(body.user)) {
+	if (!Array.isArray(body?.all) || !Array.isArray(body?.user)) {
 		return c.text('Invalid request body format', 400);
 	}
 
-	if (body.all.length === 0 || body.user.length === 0) {
+	if (all.length === 0 || user.length === 0) {
 		return c.text('No activities or user data provided', 400);
 	}
 
-	const all = kotlin.collections.KtList.fromJsArray(
-		body.all.map(
-			(a) =>
-				com.earthapp.Exportable.Companion.fromJson(
-					JSON.stringify(a)
-				) as com.earthapp.activity.Activity
-		)
-	);
-	const user = kotlin.collections.KtList.fromJsArray(
-		body.user.map(
-			(u) =>
-				com.earthapp.Exportable.Companion.fromJson(
-					JSON.stringify(u)
-				) as com.earthapp.activity.Activity
-		)
-	);
-
 	const seen = new Set<string>();
-	const recommended = com.earthapp.ocean
-		.recommendActivity(all, user)
-		.asJsReadonlyArrayView()
-		.map((a) => JSON.parse(a.toJson()))
-		.filter((a) => {
-			const id = String(a.id);
-			if (seen.has(id)) return false;
-			seen.add(id);
+	const recommended = recommendActivity(all, user).filter((a) => {
+		if (seen.has(a.id)) return false;
+		seen.add(a.id);
 
-			return true;
-		});
+		return true;
+	});
 
 	return c.json(recommended, 200);
 });
