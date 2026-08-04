@@ -247,6 +247,44 @@ describe('event entry classification', () => {
 		}
 	});
 
+	it('flags subdivision words outside the old whitelist as place birthdays', () => {
+		// moho names first-level subdivisions after whatever the country calls
+		// them, so these must not fall through to a generic kind
+		const subdivisionSources = [
+			'birthdays/ru/federal_subjects.csv',
+			'birthdays/gb/subdivisions.csv',
+			'birthdays/es/communities.csv',
+			'birthdays/gl/municipalities.csv',
+			'birthdays/sv/departments.csv',
+			'birthdays/bw/districts.csv',
+			'birthdays/mx/states.csv',
+			'birthdays/hu/counties.csv'
+		];
+		for (const source of subdivisionSources) {
+			expect(isPlaceBirthdaySource(source)).toBe(true);
+			expect(classifyEventEntry({ name: "Somewhere's Birthday", source })).toBe('place_birthday');
+		}
+	});
+
+	it('keeps organization files out of the place catch-all', () => {
+		// colleges live under a country directory and must stay organizations
+		for (const source of ['birthdays/us/colleges.csv', 'birthdays/ca/colleges.csv']) {
+			expect(isPlaceBirthdaySource(source)).toBe(false);
+			expect(classifyEventEntry({ name: "A University's Birthday", source })).toBe(
+				'organization_birthday'
+			);
+		}
+	});
+
+	it('classifies sports clubs and governing bodies as organizations', () => {
+		for (const source of ['sports/clubs.csv', 'sports/organizations.csv']) {
+			expect(isPlaceBirthdaySource(source)).toBe(false);
+			expect(classifyEventEntry({ name: "AC Milan's Birthday", source })).toBe(
+				'organization_birthday'
+			);
+		}
+	});
+
 	it('rejects non-place birthday sources', () => {
 		const nonPlaceSources = [
 			'birthdays/companies.csv',

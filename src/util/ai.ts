@@ -1131,15 +1131,22 @@ export type EventEntryKind =
 	| 'birthday'
 	| 'general';
 
+// Any birthday file under a country directory is a place. A whitelist of
+// subdivision words went stale as soon as moho added countries that do not use
+// them - federal_subjects, communities, municipalities, departments,
+// subdivisions - so the organization patterns below are checked first and this
+// is the catch-all.
 const PLACE_BIRTHDAY_SOURCE_PATTERNS = [
 	/^birthdays\/countries\.csv$/,
-	/^birthdays\/[^/]+\/(?:cities|counties|provinces|territories|states|regions)\.csv$/
+	/^birthdays\/[^/]+\/[^/]+\.csv$/
 ];
 
 const ORGANIZATION_BIRTHDAY_SOURCE_PATTERNS = [
 	/^birthdays\/companies\.csv$/,
 	/^birthdays\/international_orgs\.csv$/,
-	/^birthdays\/[^/]+\/colleges\.csv$/
+	/^birthdays\/[^/]+\/colleges\.csv$/,
+	/^sports\/clubs\.csv$/,
+	/^sports\/organizations\.csv$/
 ];
 
 function normalizeMohoSource(source?: string): string {
@@ -1153,6 +1160,10 @@ function normalizeMohoSource(source?: string): string {
 export function isPlaceBirthdaySource(source?: string): boolean {
 	const normalizedSource = normalizeMohoSource(source);
 	if (!normalizedSource) {
+		return false;
+	}
+
+	if (isOrganizationBirthdaySource(normalizedSource)) {
 		return false;
 	}
 
