@@ -16,7 +16,7 @@
   "dependencies": {
     "@earth-app/moho": "^1.1.0",
     "@types/bun": "^1.3.14",
-    "@types/pako": "^2.0.4",
+    "@types/pako": "^3.0.0",
     "exifreader": "^4.42.0",
     "hono": "^4.13.0",
     "music-metadata": "^11.14.0",
