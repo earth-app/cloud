@@ -87,57 +87,62 @@ function mockSources(
 		denied?: string[];
 		catalog?: string[];
 		stageStatus?: number;
+		onStage?: (body: Record<string, unknown>) => void;
 	} = {}
 ) {
-	return vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
-		const url = typeof input === 'string' ? input : input.toString();
+	return vi
+		.spyOn(globalThis, 'fetch')
+		.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+			const url = typeof input === 'string' ? input : input.toString();
 
-		if (url.includes('query.wikidata.org')) {
-			const query = decodeURIComponent(url);
-			const rows = query.includes('wd:Q31629')
-				? (options.sport ?? [])
-				: query.includes('wd:Q11417')
-					? (options.practice ?? [])
-					: (options.hobby ?? []);
-			return new Response(sparqlBody(rows), { status: 200 });
-		}
-		if (url.includes('en.wikivoyage.org')) {
-			return new Response(categoryBody(options.wikivoyage ?? []), { status: 200 });
-		}
-		if (url.includes('en.wikipedia.org')) {
-			return new Response(categoryBody(options.categories ?? []), { status: 200 });
-		}
-		if (url.includes('taginfo.openstreetmap.org')) {
-			return new Response(taginfoBody(options.taginfo ?? []), { status: 200 });
-		}
-		if (url.includes('/v2/activities/staged?state=denied')) {
-			return new Response(
-				JSON.stringify({
-					items: (options.denied ?? []).map((id) => ({ activity: { id } }))
-				}),
-				{ status: 200 }
-			);
-		}
-		if (url.includes('/v2/activities/staged')) {
-			const status = options.stageStatus ?? 201;
-			if (status === 409) return new Response('conflict', { status: 409 });
-			return new Response(JSON.stringify({ id: 7, fails_open: true, submitter_kind: 'cloud' }), {
-				status
-			});
-		}
-		if (url.includes('/v2/activities/list')) {
-			const items = options.catalog ?? [];
-			if (items.length === 0) return new Response('not found', { status: 404 });
-			return new Response(JSON.stringify({ items, total: items.length, page: 1, limit: 1000 }), {
-				status: 200
-			});
-		}
-		if (url.includes('/v2/activities')) {
-			return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
-		}
+			if (url.includes('query.wikidata.org')) {
+				const query = decodeURIComponent(url);
+				const rows = query.includes('wd:Q31629')
+					? (options.sport ?? [])
+					: query.includes('wd:Q11417')
+						? (options.practice ?? [])
+						: (options.hobby ?? []);
+				return new Response(sparqlBody(rows), { status: 200 });
+			}
+			if (url.includes('en.wikivoyage.org')) {
+				return new Response(categoryBody(options.wikivoyage ?? []), { status: 200 });
+			}
+			if (url.includes('en.wikipedia.org')) {
+				return new Response(categoryBody(options.categories ?? []), { status: 200 });
+			}
+			if (url.includes('taginfo.openstreetmap.org')) {
+				return new Response(taginfoBody(options.taginfo ?? []), { status: 200 });
+			}
+			if (url.includes('/v2/activities/staged?state=denied')) {
+				return new Response(
+					JSON.stringify({
+						items: (options.denied ?? []).map((id) => ({ activity: { id } }))
+					}),
+					{ status: 200 }
+				);
+			}
+			if (url.includes('/v2/activities/staged')) {
+				options.onStage?.(JSON.parse(String(init?.body ?? '{}')));
 
-		return new Response('{}', { status: 200 });
-	});
+				const status = options.stageStatus ?? 201;
+				if (status === 409) return new Response('conflict', { status: 409 });
+				return new Response(JSON.stringify({ id: 7, fails_open: false, submitter_kind: 'cloud' }), {
+					status
+				});
+			}
+			if (url.includes('/v2/activities/list')) {
+				const items = options.catalog ?? [];
+				if (items.length === 0) return new Response('not found', { status: 404 });
+				return new Response(JSON.stringify({ items, total: items.length, page: 1, limit: 1000 }), {
+					status: 200
+				});
+			}
+			if (url.includes('/v2/activities')) {
+				return new Response(JSON.stringify({ items: [], total: 0 }), { status: 200 });
+			}
+
+			return new Response('{}', { status: 200 });
+		});
 }
 
 let env: Bindings;
@@ -323,7 +328,13 @@ describe('ledgers', () => {
 		expect(await readDiscoveryBlocklist(env)).toEqual({});
 	});
 
-	it('prunes pending entries older than the 72 hour window on read', async () => {
+	// a TTL shorter than mantle2's cloud review window re-proposes rows that are still
+	// pending, which burns AI calls and comes back as a 409 every time
+	it('keeps pending entries alive past mantle2 seven-day cloud review window', () => {
+		expect(PENDING_TTL_MS).toBeGreaterThan(7 * 24 * 60 * 60 * 1000);
+	});
+
+	it('prunes pending entries older than the retention window on read', async () => {
 		const now = 10_000_000_000;
 		await env.KV.put(
 			'activity_discovery:pending',
@@ -487,6 +498,36 @@ describe('runActivityDiscovery', () => {
 		expect(result.staged).toHaveLength(MAX_STAGED_PER_RUN);
 		expect(createActivityDataMock).toHaveBeenCalledTimes(MAX_STAGED_PER_RUN);
 		expect(result.funnel.staged).toBe(MAX_STAGED_PER_RUN);
+	});
+
+	// the whole staging contract in one pass: stage -> pending guard -> auto-denial comes
+	// back from mantle2 -> blocklisted -> never proposed again
+	it('stages, holds the candidate pending, then blocklists it once mantle2 auto-denies', async () => {
+		const sport: Array<[string, number]> = [['Chess', 200]];
+		const posted: Array<Record<string, unknown>> = [];
+		mockSources({ sport, onStage: (body) => posted.push(body) });
+
+		const first = await runActivityDiscovery(env);
+		expect(first.staged.map((activity) => activity.id)).toEqual(['chess']);
+		// the exact body mantle2's StagingController validates
+		expect(posted).toHaveLength(1);
+		expect(posted[0]).toMatchObject({ id: 'chess', source: 'cloud_discovery', types: ['SPORT'] });
+
+		// still pending on the mantle2 side, so the next run must not spend an AI call on it
+		mockSources({ sport });
+		const second = await runActivityDiscovery(env);
+		expect(second.staged).toHaveLength(0);
+		expect(second.funnel.afterPending).toBe(0);
+
+		// mantle2's cron denied it; expired_denied has to reach the blocklist or discovery
+		// re-proposes it the moment the pending entry ages out
+		await env.KV.delete('activity_discovery:pending');
+		mockSources({ sport, denied: ['chess'] });
+		const third = await runActivityDiscovery(env);
+
+		expect(third.staged).toHaveLength(0);
+		expect(third.funnel.afterBlocklist).toBe(0);
+		expect((await readDiscoveryBlocklist(env)).chess.reason).toBe('denied');
 	});
 
 	it('clamps an explicit limit to the per-run cap', async () => {

@@ -201,10 +201,11 @@ export async function postStagedActivity(
 		throw new Error('Failed to stage activity, no ID returned');
 	}
 
-	if (data.fails_open === false) {
-		// cloud submissions must resolve as admin-staged; organizer means the wrong
-		// credential was used and the whole batch will silently evaporate after a week
-		console.error('Activity discovery: staged submission is fail-CLOSED, check the credential', {
+	// fails_open is false for everything now, so the credential check has to read the kind:
+	// organizer means the wrong secret was used and the row gets the 14-day window plus the
+	// verified-publisher checks on approval
+	if (data.submitter_kind !== 'cloud') {
+		console.error('Activity discovery: staged as the wrong submitter kind, check the credential', {
 			id: data.id,
 			submitter_kind: data.submitter_kind
 		});
@@ -214,13 +215,18 @@ export async function postStagedActivity(
 }
 
 /**
- * Activity ids an administrator has denied, so discovery stops re-proposing them.
+ * Activity ids that were denied, so discovery stops re-proposing them.
+ *
+ * expired_denied is the common case now that nothing auto-publishes: most submissions are
+ * resolved by mantle2's cron, not by a reviewer clicking Deny. Newest first and capped at a
+ * page, because the caller folds the result into a durable KV blocklist.
  */
 export async function getDeniedStagedActivityIds(bindings: Bindings): Promise<string[]> {
 	const root = bindings.MANTLE_URL || 'https://api.earth-app.com';
+	const query = 'state=denied,expired_denied&limit=100&sort=desc';
 
 	try {
-		const res = await fetch(`${root}/v2/activities/staged?state=denied&limit=100`, {
+		const res = await fetch(`${root}/v2/activities/staged?${query}`, {
 			headers: {
 				'Content-Type': 'application/json',
 				Authorization: `Bearer ${bindings.ADMIN_API_KEY}`

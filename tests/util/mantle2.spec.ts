@@ -111,11 +111,11 @@ describe('postStagedActivity', () => {
 
 	it('posts to the staging endpoint with the admin bearer and default source', async () => {
 		const bindings = createMockBindings();
-		const fetchSpy = vi
-			.spyOn(globalThis, 'fetch')
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ id: 12, fails_open: true }), { status: 201 })
-			);
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: 12, fails_open: false, submitter_kind: 'cloud' }), {
+				status: 201
+			})
+		);
 
 		const result = await postStagedActivity(bindings, activity);
 
@@ -154,7 +154,7 @@ describe('postStagedActivity', () => {
 		);
 	});
 
-	it('logs loudly when a cloud submission comes back fail-CLOSED', async () => {
+	it('logs loudly when a submission comes back as the wrong submitter kind', async () => {
 		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
 		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
 			new Response(JSON.stringify({ id: 4, fails_open: false, submitter_kind: 'organizer' }), {
@@ -165,9 +165,23 @@ describe('postStagedActivity', () => {
 		await postStagedActivity(createMockBindings(), activity);
 
 		expect(error).toHaveBeenCalledWith(
-			expect.stringContaining('fail-CLOSED'),
+			expect.stringContaining('wrong submitter kind'),
 			expect.objectContaining({ submitter_kind: 'organizer' })
 		);
+	});
+
+	// fails_open is false for every row now, so it must not be read as a credential signal
+	it('stays quiet on a fail-closed cloud row', async () => {
+		const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ id: 5, fails_open: false, submitter_kind: 'cloud' }), {
+				status: 201
+			})
+		);
+
+		await postStagedActivity(createMockBindings(), activity);
+
+		expect(error).not.toHaveBeenCalled();
 	});
 });
 
@@ -184,7 +198,11 @@ describe('getDeniedStagedActivityIds', () => {
 
 		const ids = await getDeniedStagedActivityIds(createMockBindings());
 
-		expect(String(fetchSpy.mock.calls[0][0])).toContain('/v2/activities/staged?state=denied');
+		// expired_denied is the common case: mantle2's cron denies unreviewed rows, so
+		// asking for state=denied alone would let every auto-denial be re-proposed forever
+		const url = String(fetchSpy.mock.calls[0][0]);
+		expect(url).toContain('/v2/activities/staged?state=denied,expired_denied');
+		expect(url).toContain('sort=desc');
 		expect(ids).toEqual(['amateurism', 'fandom']);
 	});
 
