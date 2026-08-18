@@ -2,18 +2,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
 	addToDiscoveryBlocklist,
+	auditActivityCatalog,
+	candidateTitle,
+	classifyCandidate,
+	classifyShortDescription,
 	collectCandidates,
 	DISCOVERY_USER_AGENT,
 	fetchTaginfoCandidates,
 	fetchWikidataCandidates,
 	fetchWikipediaCategoryCandidates,
+	fetchWikipediaListCandidates,
 	fetchWikivoyageCandidates,
+	hasPracticeShapedName,
+	headPhrase,
+	isRejectedNature,
+	isSameSubject,
 	MAX_STAGED_PER_RUN,
 	filterSemanticDuplicates,
 	filterSpecificCandidates,
 	isGenreCandidate,
 	lexicalSimilarity,
 	normalizeCandidate,
+	screenByShortDescription,
+	WIKIPEDIA_LIST_PAGES,
 	PENDING_TTL_MS,
 	readDiscoveryBlocklist,
 	readDiscoveryCursor,
@@ -949,5 +960,368 @@ describe('variety', () => {
 
 		const recent = JSON.parse((await env.KV.get('activity_discovery:recent_types')) ?? '[]');
 		expect(recent).toContain('SPORT');
+	});
+});
+
+describe('headPhrase', () => {
+	it('reads the leading noun phrase and stops at a preposition', () => {
+		expect(headPhrase('Dock with moorings for yachts')).toEqual(['dock']);
+		expect(headPhrase('Genus of fishes')).toEqual(['genus']);
+	});
+
+	it('drops articles', () => {
+		expect(headPhrase('A form of rock climbing')).toEqual(['form']);
+	});
+
+	// breaking on "and" read "Outdoor team stick and ball game" as an ORGANIZATION off "team"
+	it('does not break on and/or', () => {
+		expect(headPhrase('Outdoor team stick and ball game')).toEqual([
+			'outdoor',
+			'team',
+			'stick',
+			'and',
+			'ball',
+			'game'
+		]);
+	});
+
+	it('stops at a relative pronoun', () => {
+		expect(headPhrase('Person who makes artifacts from copper')).toEqual(['person']);
+	});
+});
+
+describe('classifyShortDescription', () => {
+	it('reads practices as activities', () => {
+		expect(classifyShortDescription('Form of rock climbing')).toBe('activity');
+		expect(classifyShortDescription('Picking up litter while jogging')).toBe('activity');
+		expect(classifyShortDescription('Boardsport')).toBe('activity');
+		expect(classifyShortDescription('Track and field event')).toBe('activity');
+	});
+
+	// a process head IS the activity, whatever it operates on
+	it('reads a process head as an activity even over an organism complement', () => {
+		expect(classifyShortDescription('Study of plant life')).toBe('activity');
+		expect(classifyShortDescription('Art of decorating fabric with a needle')).toBe('activity');
+	});
+
+	// a taxonomic head inherits its complement, so the same word can go either way
+	it('resolves a taxonomic head through its complement', () => {
+		expect(classifyShortDescription('Type of bathhouse')).toBe('place');
+		expect(classifyShortDescription('Form of rock climbing')).toBe('activity');
+	});
+
+	it('rejects the natures that are not activities', () => {
+		expect(classifyShortDescription('Dock with moorings for yachts')).toBe('place');
+		expect(classifyShortDescription('Artisan who makes and repairs watches')).toBe('person');
+		expect(classifyShortDescription('Person who makes artifacts from copper')).toBe('person');
+		expect(classifyShortDescription('Genus of fishes')).toBe('organism');
+		expect(classifyShortDescription('Resinous mixture produced by honey bees')).toBe('substance');
+		expect(classifyShortDescription('Brand of polymer clay')).toBe('object');
+		expect(classifyShortDescription('Insect mounting tool')).toBe('object');
+	});
+
+	// english compounds head right; scanning left first read this as an organism
+	it('takes the rightmost head of a compound', () => {
+		expect(classifyShortDescription('Insect mounting tool')).toBe('object');
+	});
+
+	it('flags a named local institution as a place', () => {
+		expect(classifyShortDescription('Living agricultural museum in Tucson, Arizona')).toBe('place');
+	});
+
+	it('flags disambiguation and word-gloss pages as ambiguous', () => {
+		expect(classifyShortDescription('Topics referred to by the same term')).toBe('ambiguous');
+		expect(classifyShortDescription('French loan-word meaning "cabinet-maker"')).toBe('ambiguous');
+	});
+
+	it('returns unknown with no description to read', () => {
+		expect(classifyShortDescription(null)).toBe('unknown');
+		expect(classifyShortDescription('   ')).toBe('unknown');
+	});
+
+	// the regressions the head-noun rewrite fixed
+	it('does not read a modifier as the subject', () => {
+		expect(classifyShortDescription('Variant of football played on a court')).not.toBe('place');
+		expect(classifyShortDescription('Method of cooking food')).not.toBe('substance');
+	});
+});
+
+describe('hasPracticeShapedName', () => {
+	it('recognises a gerund head', () => {
+		expect(hasPracticeShapedName('sailing')).toBe(true);
+		expect(hasPracticeShapedName('soap_making')).toBe(true);
+		expect(hasPracticeShapedName('pigeon_keeping')).toBe(true);
+	});
+
+	it('does not fire on short -ing words or plain nouns', () => {
+		expect(hasPracticeShapedName('koi')).toBe(false);
+		expect(hasPracticeShapedName('marina')).toBe(false);
+		expect(hasPracticeShapedName('string')).toBe(false);
+	});
+});
+
+describe('isSameSubject', () => {
+	it('accepts a title that only differs by casing or spacing', () => {
+		expect(isSameSubject('milk_glass', 'Milk glass')).toBe(true);
+		expect(isSameSubject('marina', 'Marina')).toBe(true);
+	});
+
+	// wikipedia redirects the practice to the object it involves
+	it('detects a redirect that changed the subject', () => {
+		expect(isSameSubject('soap_making', 'Soap')).toBe(false);
+		expect(isSameSubject('pressure_cooking', 'Pressure cooker')).toBe(false);
+	});
+});
+
+describe('classifyCandidate', () => {
+	// "Soap making" redirects to "Soap", whose description is about a substance
+	it('trusts a practice-shaped name over a drifted description', () => {
+		expect(classifyCandidate('soap_making', 'Substance used for cleaning', 'Soap')).toBe(
+			'activity'
+		);
+		expect(classifyCandidate('yoyoing', 'Toy', 'Yo-yo')).toBe('activity');
+	});
+
+	it('ignores a rejection drawn from a different subject', () => {
+		expect(classifyCandidate('luthiery', 'Craftsman of stringed instruments', 'Luthier')).toBe(
+			'unknown'
+		);
+	});
+
+	it('keeps a rejection when the subject matches', () => {
+		expect(classifyCandidate('marina', 'Dock with moorings for yachts', 'Marina')).toBe('place');
+		expect(classifyCandidate('koi', 'Colored varieties of Amur carp', 'Koi')).toBe('organism');
+	});
+});
+
+describe('isRejectedNature', () => {
+	it('rejects things, places, people and organisms', () => {
+		for (const nature of ['person', 'place', 'organism', 'substance', 'object', 'work'] as const) {
+			expect(isRejectedNature(nature)).toBe(true);
+		}
+	});
+
+	// rejecting on ambiguity cost wushu, taiji, sanda and barre to catch pitch and miniature
+	it('does not reject an ambiguous title or an unscreened one', () => {
+		expect(isRejectedNature('ambiguous')).toBe(false);
+		expect(isRejectedNature('unknown')).toBe(false);
+		expect(isRejectedNature('activity')).toBe(false);
+	});
+});
+
+describe('candidateTitle', () => {
+	it('cases only the first letter, leaving normalization to the api', () => {
+		expect(candidateTitle('milk_glass')).toBe('Milk glass');
+		expect(candidateTitle('bouldering')).toBe('Bouldering');
+	});
+});
+
+describe('normalizeCandidate rejections', () => {
+	// "tennis in bosnia" and "sport in wales" both come off the category walk
+	it('rejects a practice bound to a place or qualifier by a medial preposition', () => {
+		expect(normalizeCandidate('Tennis in Bosnia')).toBeNull();
+		expect(normalizeCandidate('Rules of golf')).toBeNull();
+		expect(normalizeCandidate('Sport in Wales')).toBeNull();
+	});
+
+	// "History of X" is deliberately stripped to X by the existing prefix rule, so the medial
+	// check must not fire on what is left
+	it('keeps the subject of a stripped list/history prefix', () => {
+		expect(normalizeCandidate('History of chess')?.id).toBe('chess');
+	});
+
+	it('still accepts a plain two or three word practice', () => {
+		expect(normalizeCandidate('Rock climbing')?.id).toBe('rock_climbing');
+		expect(normalizeCandidate('Stained glass art')?.id).toBe('stained_glass_art');
+	});
+
+	// trades reached the live catalogue as activities
+	it('rejects trade names', () => {
+		expect(normalizeCandidate('Watchmaker')).toBeNull();
+		expect(normalizeCandidate('Coppersmith')).toBeNull();
+		expect(normalizeCandidate('Shipwright')).toBeNull();
+		expect(normalizeCandidate('Fishmonger')).toBeNull();
+		expect(normalizeCandidate('Art dealer')).toBeNull();
+	});
+
+	it('does not reject a practice that merely ends in -er', () => {
+		expect(normalizeCandidate('Soccer')?.id).toBe('soccer');
+	});
+});
+
+describe('screenByShortDescription', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const candidate = (id: string) => ({
+		id,
+		foldKey: id,
+		source: 'wikidata_sport' as const,
+		score: 1
+	});
+
+	const stubWikipedia = (pages: Array<{ title: string; desc?: string }>) => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					query: {
+						pages: pages.map((p) => ({
+							title: p.title,
+							pageprops: p.desc ? { 'wikibase-shortdesc': p.desc } : {}
+						}))
+					}
+				})
+			})
+		);
+	};
+
+	it('drops candidates whose description names a thing', async () => {
+		stubWikipedia([
+			{ title: 'Marina', desc: 'Dock with moorings for yachts' },
+			{ title: 'Bouldering', desc: 'Form of rock climbing' }
+		]);
+
+		const result = await screenByShortDescription([candidate('marina'), candidate('bouldering')]);
+		expect(result.kept.map((c) => c.id)).toEqual(['bouldering']);
+		expect(result.rejected.map((r) => r.candidate.id)).toEqual(['marina']);
+		expect(result.rejected[0]!.evidence.nature).toBe('place');
+	});
+
+	// a wikipedia outage must degrade precision, not halt discovery
+	it('keeps everything when the lookup fails', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+
+		const result = await screenByShortDescription([candidate('marina'), candidate('koi')]);
+		expect(result.kept).toHaveLength(2);
+		expect(result.rejected).toHaveLength(0);
+	});
+
+	it('keeps a candidate with no short description', async () => {
+		stubWikipedia([{ title: 'Cittacotte' }]);
+
+		const result = await screenByShortDescription([candidate('cittacotte')]);
+		expect(result.kept).toHaveLength(1);
+		expect(result.evidence.get('cittacotte')?.nature).toBe('unknown');
+	});
+
+	it('does no work for an empty batch', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+
+		expect((await screenByShortDescription([])).kept).toEqual([]);
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+});
+
+describe('auditActivityCatalog', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('reports what does not look like an activity, without changing anything', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					query: {
+						pages: [
+							{ title: 'Marina', pageprops: { 'wikibase-shortdesc': 'Dock with moorings' } },
+							{
+								title: 'Koi',
+								pageprops: { 'wikibase-shortdesc': 'Colored varieties of Amur carp' }
+							},
+							{
+								title: 'Bouldering',
+								pageprops: { 'wikibase-shortdesc': 'Form of rock climbing' }
+							},
+							{
+								title: 'Pitch',
+								pageprops: { 'wikibase-shortdesc': 'Topics referred to by the same term' }
+							}
+						]
+					}
+				})
+			})
+		);
+
+		const audit = await auditActivityCatalog(createMockBindings(), [
+			'marina',
+			'koi',
+			'bouldering',
+			'pitch'
+		]);
+
+		expect(audit.checked).toBe(4);
+		expect(audit.findings.map((f) => f.id)).not.toContain('bouldering');
+
+		const marina = audit.findings.find((f) => f.id === 'marina');
+		expect(marina?.recommendation).toBe('delete');
+		expect(marina?.nature).toBe('place');
+
+		// an ambiguous title is a review item, not a deletion
+		expect(audit.findings.find((f) => f.id === 'pitch')?.recommendation).toBe('review');
+	});
+
+	it('sorts confident deletions ahead of review items', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					query: {
+						pages: [
+							{
+								title: 'Pitch',
+								pageprops: { 'wikibase-shortdesc': 'Topics referred to by the same term' }
+							},
+							{ title: 'Marina', pageprops: { 'wikibase-shortdesc': 'Dock with moorings' } }
+						]
+					}
+				})
+			})
+		);
+
+		const audit = await auditActivityCatalog(createMockBindings(), ['pitch', 'marina']);
+		expect(audit.findings[0]!.recommendation).toBe('delete');
+	});
+});
+
+describe('WIKIPEDIA_LIST_PAGES', () => {
+	// every obvious guess here is a redlink, so the titles are pinned and must not be "tidied"
+	it('pins titles that actually exist', () => {
+		expect(WIKIPEDIA_LIST_PAGES).toContain('List of sports');
+		expect(WIKIPEDIA_LIST_PAGES).not.toContain('List of hobbies');
+		expect(WIKIPEDIA_LIST_PAGES).not.toContain('List of crafts');
+	});
+});
+
+describe('fetchWikipediaListCandidates', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('keeps existing article-space links only', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({
+					parse: {
+						links: [
+							{ title: 'Bouldering', ns: 0, exists: true },
+							{ title: 'Talk:Bouldering', ns: 1, exists: true },
+							{ title: 'Nonexistent sport', ns: 0 }
+						]
+					}
+				})
+			})
+		);
+
+		const found = await fetchWikipediaListCandidates('List of sports');
+		expect(found.map((c) => c.id)).toEqual(['bouldering']);
+		expect(found[0]!.source).toBe('wikipedia_lists');
+	});
+
+	it('returns nothing when the page walk fails', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+		expect(await fetchWikipediaListCandidates('List of sports')).toEqual([]);
 	});
 });

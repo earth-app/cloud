@@ -51,6 +51,8 @@ beforeEach(() => {
 			afterPending: 6,
 			afterCatalog: 5,
 			afterGenre: 5,
+			afterNature: 5,
+			natureRejects: {},
 			afterSimilarity: 4,
 			selected: 3,
 			staged: 0,
@@ -171,5 +173,73 @@ describe('/v1/admin/activities/discover/ledger', () => {
 		const response = await call('/v1/admin/activities/discover/ledger', { method: 'DELETE' });
 
 		expect(response.status).toBe(400);
+	});
+});
+
+describe('POST /v1/admin/activities/audit', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const stubCatalogAndWikipedia = () =>
+		vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input.toString();
+
+			if (url.includes('/v2/activities/list')) {
+				return new Response(
+					JSON.stringify({ items: ['marina', 'bouldering'], total: 2, page: 1, limit: 1000 }),
+					{ status: 200 }
+				);
+			}
+			if (url.includes('en.wikipedia.org')) {
+				return new Response(
+					JSON.stringify({
+						query: {
+							pages: [
+								{ title: 'Marina', pageprops: { 'wikibase-shortdesc': 'Dock with moorings' } },
+								{
+									title: 'Bouldering',
+									pageprops: { 'wikibase-shortdesc': 'Form of rock climbing' }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response('not found', { status: 404 });
+		});
+
+	it('requires the admin bearer', async () => {
+		expect((await call('/v1/admin/activities/audit', { method: 'POST' }, false)).status).toBe(401);
+	});
+
+	it('audits the live catalogue on a bare POST', async () => {
+		stubCatalogAndWikipedia();
+
+		const res = await call('/v1/admin/activities/audit', { method: 'POST' });
+		expect(res.status).toBe(200);
+
+		const body = (await res.json()) as { checked: number; findings: Array<{ id: string }> };
+		expect(body.checked).toBe(2);
+		expect(body.findings.map((f) => f.id)).toEqual(['marina']);
+	});
+
+	it('audits an explicit id list when one is given', async () => {
+		stubCatalogAndWikipedia();
+
+		const res = await call('/v1/admin/activities/audit', {
+			method: 'POST',
+			body: JSON.stringify({ ids: ['marina'] })
+		});
+
+		const body = (await res.json()) as { checked: number };
+		expect(body.checked).toBe(1);
+	});
+
+	// report-only: an audit must never stage, delete or blocklist
+	it('does not write to the blocklist', async () => {
+		stubCatalogAndWikipedia();
+
+		await call('/v1/admin/activities/audit', { method: 'POST' });
+		expect(await readDiscoveryBlocklist(env)).toEqual({});
 	});
 });
