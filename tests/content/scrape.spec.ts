@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
 	createArticle,
+	feedKeywords,
 	formatAuthors,
+	inflateInvertedAbstract,
 	isUsablePage,
 	normalizeLink,
 	parseFeed,
 	REGISTERED_SCRAPERS,
 	stripHtml,
+	termHits,
+	type Page,
 	type PageMetadata
 } from '../../src/content/scrape';
 
@@ -187,9 +191,10 @@ describe('isUsablePage', () => {
 });
 
 describe('registry', () => {
-	// the same sources ocean registered, so article variety does not silently shrink
-	it('keeps all 15 sources', () => {
-		expect(REGISTERED_SCRAPERS).toHaveLength(15);
+	// a floor, not an exact count, so adding a source is not a test edit; the point is that
+	// article variety cannot silently shrink
+	it('keeps at least 25 sources', () => {
+		expect(REGISTERED_SCRAPERS.length).toBeGreaterThanOrEqual(25);
 	});
 
 	it('names every source uniquely', () => {
@@ -197,8 +202,140 @@ describe('registry', () => {
 		expect(new Set(names).size).toBe(names.length);
 	});
 
-	it('covers the four non-rss journals', () => {
+	it('covers the seven journal sources', () => {
 		const names = REGISTERED_SCRAPERS.map((s) => s.name);
-		expect(names).toEqual(expect.arrayContaining(['PubMed', 'DOAJ', 'IMEJ', 'SpringerOpen']));
+		expect(names).toEqual(
+			expect.arrayContaining([
+				'PubMed',
+				'DOAJ',
+				'IMEJ',
+				'SpringerOpen',
+				'Europe PMC',
+				'PLOS',
+				'OpenAlex'
+			])
+		);
+	});
+
+	it('drops the sources that failed the drop-in bar', () => {
+		const urls = REGISTERED_SCRAPERS.map((s) => s.baseUrl);
+		// 301s to a page with no feed
+		expect(urls.some((url) => url.includes('newscientist.com'))).toBe(false);
+		// 403 anti-scraping
+		expect(urls.some((url) => url.includes('rei.com'))).toBe(false);
+	});
+
+	it('marks every source as a journal or a magazine', () => {
+		for (const scraper of REGISTERED_SCRAPERS) {
+			expect(['journal', 'magazine']).toContain(scraper.kind);
+		}
+	});
+
+	// selection prefers a general-audience piece, so the magazines have to outnumber the journals
+	it('weights the registry toward general-audience sources', () => {
+		const magazines = REGISTERED_SCRAPERS.filter((s) => s.kind === 'magazine');
+		const journals = REGISTERED_SCRAPERS.filter((s) => s.kind === 'journal');
+		expect(magazines.length).toBeGreaterThan(journals.length);
+	});
+});
+
+describe('feedKeywords', () => {
+	// the regression that mattered: no keywords meant findArticle dropped every feed item, so
+	// only the journal APIs could ever publish
+	it('reads rss category bodies', () => {
+		expect(
+			feedKeywords('<item><category>Nature</category><category>Birds</category></item>')
+		).toEqual(['Nature', 'Birds']);
+	});
+
+	it('reads atom term attributes', () => {
+		expect(
+			feedKeywords('<entry><category term="Ecology"/><category term="Soil"/></entry>')
+		).toEqual(['Ecology', 'Soil']);
+	});
+
+	it('splits conjoined values and folds duplicates case-insensitively', () => {
+		expect(feedKeywords('<category>Art, Craft</category><category>art</category>')).toEqual([
+			'Art',
+			'Craft'
+		]);
+	});
+
+	it('drops cdata markup, overlong values and empties', () => {
+		const long = 'x'.repeat(40);
+		expect(feedKeywords(`<category><![CDATA[<b>Hiking</b>]]></category>`)).toEqual(['Hiking']);
+		expect(feedKeywords(`<category>${long}</category>`)).toEqual([]);
+		expect(feedKeywords('<category></category>')).toEqual([]);
+	});
+
+	it('caps at 25 values', () => {
+		const many = Array.from({ length: 40 }, (_, i) => `<category>t${i}</category>`).join('');
+		expect(feedKeywords(many)).toHaveLength(25);
+	});
+
+	it('returns nothing for a feed with no categories', () => {
+		expect(feedKeywords('<item><title>t</title></item>')).toEqual([]);
+	});
+});
+
+describe('parseFeed keywords', () => {
+	it('carries feed categories onto the page', () => {
+		const xml =
+			'<rss><channel><title>Feed</title><link>https://f.com</link>' +
+			'<item><title>T</title><link>https://f.com/a</link><description>Body</description>' +
+			'<category>Nature</category></item></channel></rss>';
+
+		expect(parseFeed(xml, 'https://f.com/feed')[0]!.keywords).toEqual(['Nature']);
+	});
+});
+
+describe('termHits', () => {
+	const page = (over: Partial<Page> = {}): Page => ({
+		url: 'https://a.com/1',
+		title: 'Beekeeping in cities',
+		author: 'A',
+		source: 'S',
+		date: '2026',
+		links: {},
+		abstract: 'Hives on rooftops',
+		content: 'Urban apiaries',
+		theme_color: '#fff',
+		keywords: ['Pollinators'],
+		...over
+	});
+
+	it('counts terms across title, abstract, content and keywords', () => {
+		expect(termHits(page(), ['beekeeping'])).toBe(1);
+		expect(termHits(page(), ['rooftops'])).toBe(1);
+		expect(termHits(page(), ['apiaries'])).toBe(1);
+		expect(termHits(page(), ['pollinators'])).toBe(1);
+	});
+
+	it('counts each matching term once and ignores misses', () => {
+		expect(termHits(page(), ['beekeeping', 'rooftops', 'volcanology'])).toBe(2);
+	});
+
+	it('is zero for an empty term list', () => {
+		expect(termHits(page(), [])).toBe(0);
+	});
+});
+
+describe('inflateInvertedAbstract', () => {
+	it('rebuilds word order from the position index', () => {
+		expect(inflateInvertedAbstract({ Urban: [0], foraging: [1], is: [2], common: [3] })).toBe(
+			'Urban foraging is common'
+		);
+	});
+
+	it('handles a word repeated at several positions', () => {
+		expect(inflateInvertedAbstract({ a: [0, 2], b: [1] })).toBe('a b a');
+	});
+
+	it('skips holes and invalid positions rather than emitting undefined', () => {
+		expect(inflateInvertedAbstract({ a: [0], b: [2], c: [-1] })).toBe('a b');
+	});
+
+	it('returns empty for a missing index', () => {
+		expect(inflateInvertedAbstract(undefined)).toBe('');
 	});
 });
