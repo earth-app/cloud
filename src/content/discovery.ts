@@ -64,8 +64,34 @@ export type DiscoverySource =
 	| 'wikidata_hobby'
 	| 'wikidata_practice'
 	| 'wikipedia_categories'
+	| 'wikipedia_lists'
 	| 'wikivoyage_activities'
 	| 'osm_taginfo';
+
+/**
+ * Hand-curated Wikipedia list and outline articles.
+ *
+ * A category walk collects whatever anyone ever filed under a category, which is how a bridge in
+ * Tokyo and a genus of cichlid ended up in the catalogue. These pages are lists a person wrote and
+ * maintains, so nearly every blue link on them is genuinely a thing people do.
+ *
+ * Titles are pinned because most obvious guesses do not exist -- "List of hobbies", "List of
+ * crafts", "List of outdoor activities" and "List of individual sports" are all redlinks.
+ */
+export const WIKIPEDIA_LIST_PAGES = [
+	'List of sports',
+	'Outline of sports',
+	'List of dances',
+	'List of martial arts',
+	'List of water sports',
+	'List of winter sports',
+	'List of racket sports',
+	'Outline of crafts',
+	'List of art media',
+	'List of board games',
+	'List of games',
+	'Hobby'
+];
 
 export type Candidate = {
 	id: string;
@@ -75,7 +101,7 @@ export type Candidate = {
 };
 
 export type BlocklistReason =
-	'denied' | 'rejected_ai' | 'rejected_genre' | 'rejected_similar' | 'invalid';
+	'denied' | 'rejected_ai' | 'rejected_genre' | 'rejected_nature' | 'rejected_similar' | 'invalid';
 export type BlocklistEntry = { reason: BlocklistReason; at: number };
 export type PendingEntry = { staged_at: number; staged_id: string; activity_id: string };
 export type DiscoveryCursor = { offset: number; run: number; rotated_at: number };
@@ -89,6 +115,9 @@ export type DiscoveryFunnel = {
 	afterPending: number;
 	afterCatalog: number;
 	afterGenre: number;
+	afterNature: number;
+	// what the short-description screen decided the rejects actually were
+	natureRejects: Record<string, number>;
 	afterSimilarity: number;
 	selected: number;
 	staged: number;
@@ -110,8 +139,10 @@ export type DiscoveryResult = {
 // #region Sources
 
 const SOURCE_PRIORITY: Record<DiscoverySource, number> = {
-	// practice classes yield the most specific names, so they win ties
+	// practice classes yield the most specific names, so they win ties; curated lists rank with
+	// them because a human maintains the membership
 	wikidata_practice: 4,
+	wikipedia_lists: 4,
 	wikidata_sport: 3,
 	wikidata_hobby: 3,
 	osm_taginfo: 2,
@@ -321,9 +352,51 @@ export async function fetchWikipediaSubcategories(category: string): Promise<str
 }
 
 /**
- * OSM taginfo; real-world sport vocabulary already in snake_case.
+ * Blue links on a curated list or outline article.
+ *
+ * @param page article title, from {@link WIKIPEDIA_LIST_PAGES}
  */
-export async function fetchTaginfoCandidates(key: 'sport' | 'leisure'): Promise<Candidate[]> {
+export async function fetchWikipediaListCandidates(page: string): Promise<Candidate[]> {
+	const url =
+		`https://en.wikipedia.org/w/api.php?action=parse&prop=links&format=json` +
+		`&formatversion=2&redirects=1&page=${encodeURIComponent(page)}`;
+
+	try {
+		const res = await fetch(url, {
+			headers: { 'User-Agent': DISCOVERY_USER_AGENT },
+			signal: AbortSignal.timeout(15_000)
+		});
+		if (!res.ok) return [];
+
+		const body = await res.json<{
+			parse?: { links?: Array<{ title?: string; ns?: number; exists?: boolean }> };
+		}>();
+
+		const candidates: Candidate[] = [];
+		for (const link of body?.parse?.links ?? []) {
+			// ns 0 is article space; a redlink names nothing that can be screened
+			if (link.ns !== 0 || !link.exists) continue;
+			const normalized = normalizeCandidate(link.title ?? '');
+			if (!normalized) continue;
+			candidates.push({ ...normalized, source: 'wikipedia_lists', score: 1 });
+		}
+
+		return candidates;
+	} catch (err) {
+		console.warn(`Activity discovery: list walk failed for ${page}`, {
+			error: err instanceof Error ? err.message : String(err)
+		});
+		return [];
+	}
+}
+
+/**
+ * OSM taginfo; real-world sport vocabulary already in snake_case.
+ *
+ * `sport` only. The `leisure` key was removed: its values name FACILITIES, not practices, and it
+ * is where `marina`, `slipway`, `pitch` and `sauna` entered the live catalogue.
+ */
+export async function fetchTaginfoCandidates(key: 'sport'): Promise<Candidate[]> {
 	const url =
 		`https://taginfo.openstreetmap.org/api/4/key/values?key=${key}` +
 		`&page=1&rp=200&sortname=count_all&sortorder=desc`;
@@ -401,8 +474,12 @@ export async function collectCandidates(): Promise<{
 		await sleep(150);
 	}
 
+	for (const page of WIKIPEDIA_LIST_PAGES) {
+		record(await fetchWikipediaListCandidates(page));
+		await sleep(150);
+	}
+
 	record(await fetchTaginfoCandidates('sport'));
-	record(await fetchTaginfoCandidates('leisure'));
 
 	const best = new Map<string, Candidate>();
 	for (const candidate of all) {
@@ -468,7 +545,16 @@ const AGENT_NOUN_SUFFIXES = [
 	'woman',
 	'women',
 	'person',
-	'people'
+	'people',
+	// trades: watchmaker, coppersmith, shipwright, fishmonger -- all reached the live catalogue
+	'smith',
+	'smiths',
+	'maker',
+	'makers',
+	'wright',
+	'wrights',
+	'monger',
+	'mongers'
 ];
 const AGENT_NOUN_WORDS = new Set([
 	'keeper',
@@ -486,8 +572,32 @@ const AGENT_NOUN_WORDS = new Set([
 	'racer',
 	'racers',
 	'gardener',
-	'gardeners'
+	'gardeners',
+	'dealer',
+	'dealers',
+	'guide',
+	'guides',
+	'coach',
+	'coaches',
+	'instructor',
+	'instructors',
+	'trainer',
+	'trainers',
+	'artisan',
+	'artisans',
+	'crafter',
+	'crafters',
+	'builder',
+	'builders',
+	'handler',
+	'handlers',
+	'breeder',
+	'breeders'
 ]);
+
+// a preposition in the middle joins a practice to a place or a qualifier, which is what produces
+// "tennis in bosnia" and "sport in wales" off the category walk
+const MEDIAL_PREPOSITIONS = new Set(['in', 'of', 'at', 'by', 'for', 'on', 'from', 'with']);
 
 function isAgentNoun(word: string): boolean {
 	if (AGENT_NOUN_WORDS.has(word)) return true;
@@ -528,6 +638,8 @@ export function normalizeCandidate(raw: string): { id: string; foldKey: string }
 	const words = text.split(/\s+/).filter(Boolean);
 	if (words.length === 0 || words.length > 3) return null;
 	if (LEADING_ARTICLES.has(words[0])) return null;
+	// "tennis in bosnia", "history of chess" -- a practice bound to a place or a qualifier
+	if (words.slice(1).some((word) => MEDIAL_PREPOSITIONS.has(word))) return null;
 	// reject only when the whole phrase is generic; "board games" and "martial arts" are
 	// real activities even though they contain a stopword
 	if (words.every((word) => STOPWORDS.has(word))) return null;
@@ -647,32 +759,739 @@ const BARE_NOUN_REJECTS = new Set([
 	'television'
 ]);
 
-const SPECIFICITY_SYSTEM = `You classify whether a term names a SPECIFIC activity a person can practice, or a BROAD category/genre.
+// #endregion
 
-SPECIFIC examples: jiujitsu, bouldering, sourdough baking, birdwatching, kitesurfing, calligraphy, gardening
-BROAD examples: card game, role playing game, martial arts, water sports, garden, music, board game, team sport
+// #region Short description gate
+
+/**
+ * What a candidate turned out to name, once its Wikipedia short description was read.
+ *
+ * `unknown` is not a rejection: plenty of real practices have no short description, and those
+ * fall through to the AI gate as before.
+ */
+export type CandidateNature =
+	| 'activity'
+	| 'person'
+	| 'place'
+	| 'organism'
+	| 'substance'
+	| 'object'
+	| 'organization'
+	| 'work'
+	| 'ambiguous'
+	| 'unknown';
+
+export type CandidateEvidence = {
+	foldKey: string;
+	title: string;
+	shortDescription: string | null;
+	nature: CandidateNature;
+};
+
+/** wikipedia caps a titles= batch at 50 for anonymous callers */
+export const SHORTDESC_BATCH = 50;
+
+/**
+ * Turn an activity id back into the Wikipedia title it most likely came from.
+ *
+ * Only the first letter is cased; the API normalizes the rest and follows redirects, so
+ * "milk_glass" resolves to "Milk glass" without a title-case guess per word.
+ */
+export function candidateTitle(id: string): string {
+	const words = id.replace(/_/g, ' ').trim();
+	return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// a short description is a noun phrase, so the HEAD carries the meaning and the rest is
+// modification. matching keywords anywhere in the string reads "Variant of football played on a
+// court" as a PLACE and "Method of cooking food" as a SUBSTANCE, which is how an earlier pass of
+// this gate rejected futsal and baking.
+const NATURE_LEXICON: Array<[CandidateNature, string[]]> = [
+	[
+		'activity',
+		[
+			'sport',
+			'sports',
+			'boardsport',
+			'watersport',
+			'motorsport',
+			'pastime',
+			'hobby',
+			'discipline',
+			'exercise',
+			'workout',
+			'dance',
+			'martial',
+			'gymnastics',
+			'athletics',
+			'race',
+			'racing',
+			'competition',
+			'tournament',
+			'recreation',
+			'activity',
+			'pursuit',
+			'game',
+			'games',
+			'event'
+		]
+	],
+	[
+		'organism',
+		[
+			'genus',
+			'species',
+			'subspecies',
+			'taxon',
+			'breed',
+			'variety',
+			'varieties',
+			'cultivar',
+			'plant',
+			'tree',
+			'flower',
+			'animal',
+			'fish',
+			'bird',
+			'insect',
+			'fungus',
+			'mushroom',
+			'mammal',
+			'reptile',
+			'carp'
+		]
+	],
+	[
+		'person',
+		[
+			'artisan',
+			'craftsman',
+			'craftsperson',
+			'profession',
+			'occupation',
+			'practitioner',
+			'worker',
+			'specialist',
+			'trader',
+			'dealer',
+			'merchant',
+			'labourer',
+			'laborer',
+			'job',
+			'role',
+			'title',
+			'person',
+			'people',
+			'someone',
+			'individual'
+		]
+	],
+	[
+		'place',
+		[
+			'dock',
+			'harbor',
+			'harbour',
+			'marina',
+			'ramp',
+			'building',
+			'structure',
+			'venue',
+			'facility',
+			'museum',
+			'park',
+			'bridge',
+			'arena',
+			'stadium',
+			'rink',
+			'bathhouse',
+			'hall',
+			'clubhouse',
+			'region',
+			'city',
+			'town',
+			'village',
+			'county',
+			'province',
+			'island',
+			'mountain',
+			'river',
+			'lake',
+			'neighborhood',
+			'neighbourhood',
+			'district',
+			'settlement',
+			'establishment',
+			'premises'
+		]
+	],
+	[
+		'substance',
+		[
+			'mixture',
+			'resin',
+			'compound',
+			'chemical',
+			'substance',
+			'alloy',
+			'mineral',
+			'pigment',
+			'dye',
+			'fibre',
+			'fiber',
+			'thread',
+			'yarn',
+			'fabric',
+			'textile',
+			'material',
+			'clay',
+			'wax',
+			'glass',
+			'drug',
+			'beverage',
+			'ingredient'
+		]
+	],
+	[
+		'object',
+		[
+			'tool',
+			'device',
+			'instrument',
+			'machine',
+			'equipment',
+			'implement',
+			'apparatus',
+			'utensil',
+			'brand',
+			'product',
+			'trademark',
+			'manufacturer',
+			'component',
+			'accessory',
+			'garment',
+			'clothing',
+			'furniture',
+			'vehicle',
+			'weapon',
+			'toy'
+		]
+	],
+	[
+		'organization',
+		[
+			'organization',
+			'organisation',
+			'company',
+			'corporation',
+			'association',
+			'society',
+			'institute',
+			'institution',
+			'federation',
+			'foundation',
+			'charity',
+			'nonprofit',
+			'agency',
+			'league',
+			'club',
+			'team'
+		]
+	],
+	[
+		'work',
+		[
+			'film',
+			'movie',
+			'novel',
+			'book',
+			'album',
+			'song',
+			'magazine',
+			'newspaper',
+			'comic',
+			'manga',
+			'anime',
+			'character',
+			'series',
+			'franchise'
+		]
+	]
+];
+
+// a taxonomic head names a bucket, so the complement after "of" carries the real nature:
+// "Form of rock climbing" is an activity, "Type of bathhouse" is a place.
+const TAXONOMIC_HEADS = new Set([
+	'form',
+	'type',
+	'kind',
+	'sort',
+	'variant',
+	'variation',
+	'style',
+	'genre',
+	'category',
+	'class',
+	'group',
+	'branch',
+	'subset',
+	'example',
+	'member',
+	'part',
+	'element',
+	'aspect',
+	'set',
+	'collection'
+]);
+
+// a process head IS the activity, whatever it operates on. "Study of plant life" is a practice
+// even though its complement is an organism, and reading it the other way rejected botany.
+const PROCESS_HEADS = new Set([
+	'act',
+	'action',
+	'art',
+	'craft',
+	'practice',
+	'method',
+	'technique',
+	'process',
+	'skill',
+	'use',
+	'study',
+	'pursuit',
+	'discipline',
+	'training',
+	'performance'
+]);
+
+// where the head phrase stops and modification begins. "and"/"or" are deliberately absent: they
+// join compound modifiers, and breaking on them read "Outdoor team stick and ball game" as an
+// ORGANIZATION off the word "team".
+const HEAD_STOPWORDS = new Set([
+	'of',
+	'in',
+	'on',
+	'at',
+	'for',
+	'with',
+	'from',
+	'by',
+	'to',
+	'that',
+	'which',
+	'who',
+	'whom',
+	'whose',
+	'where',
+	'when',
+	'used',
+	'played',
+	'performed',
+	'made',
+	'produced',
+	'found',
+	'based'
+]);
+
+const ARTICLES = new Set(['a', 'an', 'the']);
+
+// the last two catch pages that are ABOUT a word rather than about a practice, e.g. ebeniste's
+// 'French loan-word meaning "cabinet-maker"'
+const AMBIGUOUS_MARKERS =
+	/\b(topics? referred to|disambiguation|may refer to|index of|commonly refers|name shared by|loan-?word|surname|given name)\b/i;
+
+/** the leading noun phrase, lowercased, with articles removed */
+export function headPhrase(text: string): string[] {
+	const words = text
+		.toLowerCase()
+		.replace(/[^a-z\s-]/g, ' ')
+		.split(/\s+/)
+		.filter(Boolean)
+		.filter((word) => !ARTICLES.has(word));
+
+	const head: string[] = [];
+	for (const word of words) {
+		if (HEAD_STOPWORDS.has(word)) break;
+		head.push(word);
+	}
+
+	// an all-stopword opening (rare) means there is no head to read
+	return head;
+}
+
+/** the phrase after the first "of", which is what a generic head actually refers to */
+function complementPhrase(text: string): string {
+	const match = /\bof\s+(.*)$/i.exec(text);
+	return match ? match[1]! : '';
+}
+
+/**
+ * Match a head phrase against the lexicons, rightmost word first.
+ *
+ * English compounds put the head on the right: "insect mounting tool" is a TOOL, not an insect.
+ * Scanning left to right classified it as an organism.
+ */
+function lexiconMatch(words: string[]): CandidateNature | null {
+	for (let i = words.length - 1; i >= 0; i--) {
+		for (const [nature, terms] of NATURE_LEXICON) {
+			if (terms.includes(words[i]!)) return nature;
+		}
+	}
+	return null;
+}
+
+// -ing words that name a thing rather than a practice; the stem test alone lets these through
+const GERUND_EXCEPTIONS = new Set([
+	// "str"/"spr" are not verb stems, but they clear the length test the same way "box" does
+	'string',
+	'spring',
+	'building',
+	'clothing',
+	'ceiling',
+	'herring',
+	'lightning',
+	'housing',
+	'bedding',
+	'wedding',
+	'sibling',
+	'dumpling',
+	'earring',
+	'awning',
+	'bearing',
+	'casing',
+	'coating',
+	'lining',
+	'tubing',
+	'wiring',
+	'siding',
+	'roofing',
+	'flooring',
+	'opening',
+	'meaning',
+	'feeling',
+	'setting',
+	'morning',
+	'evening'
+]);
+
+/** whether a single word reads as a gerund, i.e. the name of an action */
+function isGerund(word: string | undefined): boolean {
+	if (!word || !word.endsWith('ing') || word.length < 6) return false;
+	if (GERUND_EXCEPTIONS.has(word)) return false;
+
+	// "string" and "spring" leave "str"/"spr", which are not verb stems; "boxing" leaves "box"
+	return word.slice(0, -3).length >= 3;
+}
+
+/**
+ * Whether the head of a phrase is a gerund.
+ *
+ * Reads the RIGHTMOST word, matching where English puts the head: "rock climbing" is climbing,
+ * and "insect mounting tool" is a tool rather than a mounting.
+ */
+function isGerundHead(words: string[]): boolean {
+	return isGerund(words[words.length - 1]);
+}
+
+/**
+ * Classify a candidate from its Wikipedia short description.
+ *
+ * Deterministic on purpose. The AI gate that used to carry this alone is a single 8B call that
+ * fails open, so an outage let every facility, taxon and profession through; a short description
+ * is a human-written one-line definition and answers the question outright.
+ *
+ * Reads the HEAD of the noun phrase, recursing past a generic head ("form of", "type of") into
+ * its complement, because that is where the meaning actually sits.
+ *
+ * @param shortDescription wikipedia's `wikibase-shortdesc` page property
+ */
+export function classifyShortDescription(shortDescription: string | null): CandidateNature {
+	const text = (shortDescription ?? '').trim();
+	if (!text) return 'unknown';
+
+	if (AMBIGUOUS_MARKERS.test(text)) return 'ambiguous';
+
+	const head = headPhrase(text);
+	if (head.length === 0) return 'unknown';
+
+	// a named local institution: "Living agricultural museum in Tucson, Arizona"
+	if (/\bin [A-Z][a-z]+/.test(text) && lexiconMatch(head) === 'place') return 'place';
+
+	if (isGerundHead(head)) return 'activity';
+
+	// "Study of plant life" is a practice, not an organism
+	if (head.some((word) => PROCESS_HEADS.has(word))) return 'activity';
+
+	const isTaxonomic = head.some((word) => TAXONOMIC_HEADS.has(word));
+	if (!isTaxonomic) {
+		const direct = lexiconMatch(head);
+		if (direct) return direct;
+	}
+
+	// "Form of rock climbing" -> read "rock climbing"; one level only, since a second "of" is
+	// almost always a qualifier rather than a new subject
+	const complement = complementPhrase(text);
+	if (complement) {
+		const complementHead = headPhrase(complement);
+		if (isGerundHead(complementHead)) return 'activity';
+		if (complementHead.some((word) => PROCESS_HEADS.has(word))) return 'activity';
+
+		const nested = lexiconMatch(complementHead);
+		if (nested) return nested;
+	}
+
+	return 'unknown';
+}
+
+// a practice-shaped name: "sailing", "soap making", "pigeon keeping", "flower pressing"
+const PRACTICE_ID_TAILS = /(?:athlon|ology)$/;
+
+/**
+ * Whether the candidate's own name already says it is a practice.
+ *
+ * Wikipedia redirects the practice to the object it involves -- "Soap making" lands on "Soap",
+ * "Pressure cooking" on "Pressure cooker", "Yoyoing" on "Yo-yo" -- so the short description ends
+ * up describing a substance or a toy. The candidate's own name is the more reliable witness in
+ * exactly those cases.
+ *
+ * @param id activity id, snake_case
+ */
+export function hasPracticeShapedName(id: string): boolean {
+	const words = id.split('_').filter(Boolean);
+	const head = words[words.length - 1] ?? '';
+
+	return isGerund(head) || (head.length >= 6 && PRACTICE_ID_TAILS.test(head));
+}
+
+/**
+ * Whether the short description describes the thing that was actually asked about.
+ *
+ * A redirect that changes the subject makes the description evidence about something else, so a
+ * rejection drawn from it is not trustworthy. Compared loosely: "Milk glass" -> "Milk glass" is
+ * the same subject, "Luthiery" -> "Luthier" is not.
+ *
+ * @param id activity id that was looked up
+ * @param resolvedTitle title wikipedia actually answered with
+ */
+export function isSameSubject(id: string, resolvedTitle: string): boolean {
+	const fold = (value: string) =>
+		value
+			.toLowerCase()
+			.replace(/[^a-z0-9]/g, '')
+			.replace(/(?:ing|ery|ry|s)$/, '');
+
+	return fold(id) === fold(resolvedTitle);
+}
+
+/**
+ * Classify a candidate using its name and its short description together.
+ *
+ * @param id activity id
+ * @param shortDescription wikipedia short description, if any
+ * @param resolvedTitle title wikipedia resolved the id to
+ */
+export function classifyCandidate(
+	id: string,
+	shortDescription: string | null,
+	resolvedTitle?: string
+): CandidateNature {
+	// the name settles it before the description gets a chance to describe something else
+	if (hasPracticeShapedName(id)) return 'activity';
+
+	const nature = classifyShortDescription(shortDescription);
+
+	// a rejection sourced from a different subject is not evidence about this candidate
+	if (
+		isRejectedNature(nature) &&
+		resolvedTitle !== undefined &&
+		!isSameSubject(id, resolvedTitle)
+	) {
+		return 'unknown';
+	}
+
+	return nature;
+}
+
+/**
+ * Natures that are never worth an AI call or an admin's review time.
+ *
+ * `ambiguous` is deliberately NOT here. It says the TITLE is ambiguous, not that the candidate is
+ * junk: wushu, taiji, sanda, barre, hearts, cross country, dulcimer and aerial acrobatics all
+ * have disambiguation pages and are all real practices. Rejecting on it cost eight good
+ * activities to catch three bad ones, so it is surfaced for review instead.
+ */
+const REJECTED_NATURES = new Set<CandidateNature>([
+	'person',
+	'place',
+	'organism',
+	'substance',
+	'object',
+	'organization',
+	'work'
+]);
+
+export function isRejectedNature(nature: CandidateNature): boolean {
+	return REJECTED_NATURES.has(nature);
+}
+
+/**
+ * Read short descriptions for a batch of candidates.
+ *
+ * One request per 50 candidates, no key, ~250ms. Redirects and capitalization are normalized
+ * server-side, so `milk_glass` finds "Milk glass" without a client-side title-case guess.
+ *
+ * @param ids activity ids to look up
+ */
+export async function fetchShortDescriptions(
+	ids: string[]
+): Promise<Map<string, { title: string; shortDescription: string | null }>> {
+	const out = new Map<string, { title: string; shortDescription: string | null }>();
+	if (ids.length === 0) return out;
+
+	for (let offset = 0; offset < ids.length; offset += SHORTDESC_BATCH) {
+		const batch = ids.slice(offset, offset + SHORTDESC_BATCH);
+		// the api normalizes and redirects, so the response title rarely matches what was sent;
+		// this maps it back
+		const requested = new Map(batch.map((id) => [candidateTitle(id).toLowerCase(), id]));
+
+		const url =
+			`https://en.wikipedia.org/w/api.php?action=query&prop=pageprops` +
+			`&ppprop=wikibase_item%7Cwikibase-shortdesc&redirects=1&format=json&formatversion=2` +
+			`&titles=${encodeURIComponent(batch.map(candidateTitle).join('|'))}`;
+
+		try {
+			const res = await fetch(url, {
+				headers: { 'User-Agent': DISCOVERY_USER_AGENT },
+				signal: AbortSignal.timeout(15_000)
+			});
+			if (!res.ok) continue;
+
+			const body = await res.json<{
+				query?: {
+					pages?: Array<{ title?: string; missing?: boolean; pageprops?: Record<string, string> }>;
+					normalized?: Array<{ from?: string; to?: string }>;
+					redirects?: Array<{ from?: string; to?: string }>;
+				};
+			}>();
+
+			// walk normalization then redirects so a final title resolves back to the id asked for
+			const backlink = new Map<string, string>();
+			for (const [key, id] of requested) backlink.set(key, id);
+			for (const step of [...(body?.query?.normalized ?? []), ...(body?.query?.redirects ?? [])]) {
+				const from = (step.from ?? '').toLowerCase();
+				const to = (step.to ?? '').toLowerCase();
+				const id = backlink.get(from);
+				if (id && to) backlink.set(to, id);
+			}
+
+			for (const page of body?.query?.pages ?? []) {
+				const id = backlink.get((page.title ?? '').toLowerCase());
+				if (!id || page.missing) continue;
+				out.set(id, {
+					title: page.title ?? '',
+					shortDescription: page.pageprops?.['wikibase-shortdesc'] ?? null
+				});
+			}
+		} catch (err) {
+			console.warn('Activity discovery: short description lookup failed', {
+				error: err instanceof Error ? err.message : String(err)
+			});
+		}
+
+		if (offset + SHORTDESC_BATCH < ids.length) await sleep(150);
+	}
+
+	return out;
+}
+
+/**
+ * Screen candidates against their short descriptions.
+ *
+ * Fails OPEN per candidate: anything with no short description keeps going, so a Wikipedia outage
+ * degrades precision back to what it was rather than halting discovery.
+ *
+ * @param candidates candidates to screen
+ */
+export async function screenByShortDescription(candidates: Candidate[]): Promise<{
+	kept: Candidate[];
+	rejected: Array<{ candidate: Candidate; evidence: CandidateEvidence }>;
+	evidence: Map<string, CandidateEvidence>;
+}> {
+	const evidence = new Map<string, CandidateEvidence>();
+	if (candidates.length === 0) return { kept: [], rejected: [], evidence };
+
+	const descriptions = await fetchShortDescriptions(candidates.map((c) => c.id));
+
+	const kept: Candidate[] = [];
+	const rejected: Array<{ candidate: Candidate; evidence: CandidateEvidence }> = [];
+
+	for (const candidate of candidates) {
+		const found = descriptions.get(candidate.id);
+		const nature = classifyCandidate(candidate.id, found?.shortDescription ?? null, found?.title);
+		const entry: CandidateEvidence = {
+			foldKey: candidate.foldKey,
+			title: found?.title ?? candidateTitle(candidate.id),
+			shortDescription: found?.shortDescription ?? null,
+			nature
+		};
+		evidence.set(candidate.foldKey, entry);
+
+		if (isRejectedNature(nature)) rejected.push({ candidate, evidence: entry });
+		else kept.push(candidate);
+	}
+
+	return { kept, rejected, evidence };
+}
+
+// #endregion
+
+// #region Genre rejection (ai)
+
+const SPECIFICITY_SYSTEM = `You decide whether a term names something a person can actually GO AND DO.
 
 Reply with one line per input, in order, formatted exactly as:
-<index>. SPECIFIC
-or
-<index>. BROAD
+<index>. <verdict>
 
+Verdicts:
+ACTIVITY - a specific thing a person practices, plays, makes or does.
+  jiujitsu, bouldering, sourdough baking, birdwatching, kitesurfing, calligraphy, plogging
+BROAD - a category or genre that contains activities but is not one itself.
+  card game, role playing game, martial arts, water sports, team sport, the arts
+THING - an object, material, tool, brand, place, building, organism, person, profession or
+  organisation. It may be USED IN an activity, but it is not an activity.
+  water bottle, milk glass, propolis, marina, slipway, koi, watchmaker, insect pins, fimo
+HYPERLOCAL - tied to one named place, club or event rather than being a practice in its own right.
+  tennis in bosnia, mission garden, artisans asylum
+
+If a term is a thing rather than something you do, answer THING even when it sounds interesting.
 No other text.`;
 
 /**
- * Batch-classify candidates as a concrete practice or a broad genre.
+ * Batch-classify candidates as a practice, a genre, a thing, or a local curiosity.
  *
  * One small-model call for the whole batch. Fails OPEN (keeps everything) so an AI outage
- * degrades variety rather than halting the pipeline.
+ * degrades variety rather than halting the pipeline -- which is safe now only because the
+ * deterministic short-description screen already ran ahead of it.
+ *
+ * @param env worker bindings
+ * @param candidates shortlisted candidates
+ * @param evidence short descriptions, used to ground the model in what the term actually means
  */
 export async function filterSpecificCandidates(
 	env: Bindings,
-	candidates: Candidate[]
+	candidates: Candidate[],
+	evidence?: Map<string, CandidateEvidence>
 ): Promise<{ kept: Candidate[]; rejected: Candidate[] }> {
 	if (candidates.length === 0) return { kept: [], rejected: [] };
 
+	// the short description is a human-written definition; without it the model is guessing at
+	// what a word like "picot" or "marudai" even refers to
 	const listing = candidates
-		.map((candidate, index) => `${index + 1}. ${candidate.id.replace(/_/g, ' ')}`)
+		.map((candidate, index) => {
+			const description = evidence?.get(candidate.foldKey)?.shortDescription;
+			const label = candidate.id.replace(/_/g, ' ');
+			return description ? `${index + 1}. ${label} (${description})` : `${index + 1}. ${label}`;
+		})
 		.join('\n');
 
 	let response: string;
@@ -695,8 +1514,12 @@ export async function filterSpecificCandidates(
 
 	const verdicts = new Map<number, boolean>();
 	for (const line of response.split('\n')) {
-		const match = line.match(/^\s*(\d+)\s*[.):]\s*(SPECIFIC|BROAD)\b/i);
-		if (match) verdicts.set(Number(match[1]), match[2].toUpperCase() === 'SPECIFIC');
+		// SPECIFIC is still accepted so an older reply shape does not read as a rejection
+		const match = line.match(/^\s*(\d+)\s*[.):]\s*(ACTIVITY|SPECIFIC|BROAD|THING|HYPERLOCAL)\b/i);
+		if (match) {
+			const verdict = match[2].toUpperCase();
+			verdicts.set(Number(match[1]), verdict === 'ACTIVITY' || verdict === 'SPECIFIC');
+		}
 	}
 
 	// an unparseable or missing verdict keeps the candidate
@@ -988,7 +1811,19 @@ export async function selectCandidates(
 
 	// only the shortlist reaches the paid gates
 	const shortlist = rotated.slice(0, SPECIFICITY_BATCH);
-	const { kept: specific, rejected: broad } = await filterSpecificCandidates(env, shortlist);
+
+	// deterministic and free, so it runs before anything billed; one request for the batch
+	const {
+		kept: notThings,
+		rejected: thingRejects,
+		evidence
+	} = await screenByShortDescription(shortlist);
+
+	const { kept: specific, rejected: broad } = await filterSpecificCandidates(
+		env,
+		notThings,
+		evidence
+	);
 	const { kept: distinct, rejected: semanticDupes } = await filterSemanticDuplicates(
 		env,
 		specific,
@@ -1001,6 +1836,7 @@ export async function selectCandidates(
 		[
 			...genreRejects.map((candidate) => [candidate, 'rejected_genre'] as const),
 			...lexicalRejects.map((candidate) => [candidate, 'rejected_similar'] as const),
+			...thingRejects.map(({ candidate }) => [candidate, 'rejected_nature'] as const),
 			...broad.map((candidate) => [candidate, 'rejected_genre'] as const),
 			...semanticDupes.map((candidate) => [candidate, 'rejected_similar'] as const)
 		],
@@ -1022,6 +1858,11 @@ export async function selectCandidates(
 			afterPending: notPending.length,
 			afterCatalog: afterCatalogList.length,
 			afterGenre: notGenre.length,
+			afterNature: notThings.length,
+			natureRejects: thingRejects.reduce<Record<string, number>>((counts, { evidence: entry }) => {
+				counts[entry.nature] = (counts[entry.nature] ?? 0) + 1;
+				return counts;
+			}, {}),
 			afterSimilarity: distinct.length,
 			selected: selected.length,
 			staged: 0,
@@ -1307,6 +2148,8 @@ function emptyFunnel(): DiscoveryFunnel {
 		afterPending: 0,
 		afterCatalog: 0,
 		afterGenre: 0,
+		afterNature: 0,
+		natureRejects: {},
 		afterSimilarity: 0,
 		selected: 0,
 		staged: 0,
@@ -1316,6 +2159,94 @@ function emptyFunnel(): DiscoveryFunnel {
 		nextUp: []
 	};
 }
+
+// #region Catalog audit
+
+export type AuditRecommendation = 'delete' | 'review';
+
+export type AuditFinding = {
+	id: string;
+	nature: CandidateNature;
+	title: string;
+	short_description: string | null;
+	recommendation: AuditRecommendation;
+	reason: string;
+};
+
+export type CatalogAudit = {
+	checked: number;
+	counts: Record<string, number>;
+	findings: AuditFinding[];
+	generated_at: string;
+};
+
+const NATURE_REASONS: Record<CandidateNature, string> = {
+	activity: 'reads as a practice',
+	person: 'names a person or profession, not something to do',
+	place: 'names a place or facility, not something to do',
+	organism: 'names a living thing, not something to do',
+	substance: 'names a material or substance, not something to do',
+	object: 'names an object, tool or brand, not something to do',
+	organization: 'names an organisation, not something to do',
+	work: 'names a creative work, not something to do',
+	ambiguous: 'the title is ambiguous; confirm which meaning was intended',
+	unknown: 'no short description available to screen against'
+};
+
+/**
+ * Screen the entire live catalog and report what looks wrong.
+ *
+ * Report-only by design: nothing is deleted, blocklisted or staged. Users already have these
+ * activities on their profiles, so removal is an admin decision rather than a cron's.
+ *
+ * `delete` findings are the ones the short-description screen is confident about; `review`
+ * findings are titles that resolve to a disambiguation page, where the activity is usually real
+ * but the id is ambiguous.
+ *
+ * @param env worker bindings
+ * @param ids optional id list, defaulting to the live catalog
+ */
+export async function auditActivityCatalog(env: Bindings, ids?: string[]): Promise<CatalogAudit> {
+	const catalog = ids ?? (await retrieveActivityIds(env));
+	const descriptions = await fetchShortDescriptions(catalog);
+
+	const counts: Record<string, number> = {};
+	const findings: AuditFinding[] = [];
+
+	for (const id of catalog) {
+		const found = descriptions.get(id);
+		const nature = classifyCandidate(id, found?.shortDescription ?? null, found?.title);
+		counts[nature] = (counts[nature] ?? 0) + 1;
+
+		if (nature !== 'ambiguous' && !isRejectedNature(nature)) continue;
+
+		findings.push({
+			id,
+			nature,
+			title: found?.title ?? candidateTitle(id),
+			short_description: found?.shortDescription ?? null,
+			recommendation: isRejectedNature(nature) ? 'delete' : 'review',
+			reason: NATURE_REASONS[nature]
+		});
+	}
+
+	// the confident rejections first; an admin working top-down should hit the clear cases first
+	findings.sort(
+		(a, b) =>
+			Number(b.recommendation === 'delete') - Number(a.recommendation === 'delete') ||
+			a.nature.localeCompare(b.nature) ||
+			a.id.localeCompare(b.id)
+	);
+
+	return {
+		checked: catalog.length,
+		counts,
+		findings,
+		generated_at: new Date().toISOString()
+	};
+}
+
+// #endregion
 
 /**
  * Blocklist, pending ledger, and cursor, for the admin ledger route.
