@@ -220,6 +220,7 @@ import {
 } from './user/trailmarks';
 import {
 	MAX_STAGED_PER_RUN,
+	auditActivityCatalog,
 	readDiscoveryLedger,
 	removeFromDiscoveryBlocklist,
 	runActivityDiscovery
@@ -696,6 +697,26 @@ app.post('/admin/activities/discover', async (c) => {
 
 app.get('/admin/activities/discover/ledger', async (c) => {
 	return c.json(await readDiscoveryLedger(c.env), 200);
+});
+
+app.post('/admin/activities/audit', async (c) => {
+	let body: { ids?: unknown } = {};
+	try {
+		body = await c.req.json<{ ids?: unknown }>();
+	} catch {
+		// a bare POST audits the whole catalogue
+	}
+
+	const ids = Array.isArray(body.ids)
+		? body.ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+		: undefined;
+
+	try {
+		return c.json(await auditActivityCatalog(c.env, ids), 200);
+	} catch (err) {
+		console.error('Activity catalog audit failed', err);
+		return c.text('Failed to audit the activity catalog', 500);
+	}
 });
 
 app.delete('/admin/activities/discover/ledger', async (c) => {
