@@ -1,7 +1,7 @@
 // boat - ai content generation
 
 import { ACTIVITY_TYPE } from '../util/enums';
-import { searchAll } from './scrape';
+import { searchAllSourced, type SourcedPage } from './scrape';
 
 import {
 	Activity,
@@ -95,6 +95,17 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 				break;
 			} catch (error) {
 				lastError = error instanceof Error ? error : new Error(String(error));
+
+				// an explicit refusal is a verdict about the candidate; retrying it at a higher
+				// temperature is how the model eventually gets talked into describing a water
+				// bottle as an activity
+				if (error instanceof prompts.NotAnActivityError) {
+					console.warn('Activity description refused; candidate is not an activity', {
+						activity
+					});
+					throw new ActivityDataError(error.message, 'invalid_candidate');
+				}
+
 				console.warn(
 					`Activity description attempt ${attempt}/${maxRetries} failed:`,
 					lastError.message
@@ -217,6 +228,43 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 
 // Article Endpoints
 
+/**
+ * How deep into the ranked list to look for a general-audience piece before settling for a
+ * journal abstract.
+ *
+ * The whole registry used to be journal APIs, so every published article read like an abstract.
+ * A magazine piece that ranks 6th is still on-topic and already written as a deep dive, which is
+ * the register these articles are meant to have.
+ */
+export const MAGAZINE_PREFERENCE_WINDOW = 8;
+
+/** how many lenses to hand the writer; see {@link prompts.articleSummaryPrompt} */
+export const MIN_LENSES = 3;
+export const MAX_LENSES = 5;
+
+/**
+ * Pick the candidate lenses for a run.
+ *
+ * Deliberately random and deliberately unrelated to the topic. The point of an article is not a
+ * summary -- it is the surprise of finding that a cancer-imaging paper genuinely owes something
+ * to ART, and saying how. `createArticle` drops the lenses it cannot ground, so a random draw
+ * costs nothing when it does not land.
+ */
+export function pickLenses(): string[] {
+	const count = Math.floor(Math.random() * (MAX_LENSES - MIN_LENSES + 1)) + MIN_LENSES;
+
+	return ACTIVITY_TYPE.filter((t) => t !== 'OTHER')
+		.sort(() => Math.random() - 0.5)
+		.slice(0, count)
+		.map((t) =>
+			t
+				.replace(/_/g, ' ')
+				.toLowerCase()
+				.replace(/\b\w/g, (c: string) => c.toUpperCase())
+				.trim()
+		);
+}
+
 export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], string[]]> {
 	const ai = bindings.AI as Ai;
 
@@ -238,20 +286,10 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 	const topic = prompts.validateArticleTopic(topicRaw?.response || '');
 	console.debug('Generated article topic:', topic);
 
-	const tagCount = Math.floor(Math.random() * 3) + 3; // Randomly select 3 to 5 tags (fixed Math.random calculation)
-	const tags = ACTIVITY_TYPE.filter((t) => t !== 'OTHER')
-		.sort(() => Math.random() - 0.5)
-		.slice(0, tagCount)
-		.map((t) =>
-			t
-				.replace(/_/g, ' ')
-				.toLowerCase()
-				.replace(/\b\w/g, (c: string) => c.toUpperCase())
-				.trim()
-		);
+	const tags = pickLenses();
 
 	// Search for articles on the topic
-	const searchResults = await findArticles(topic, bindings, 2);
+	const searchResults = await findSourcedArticles(topic, bindings, 2);
 	if (!searchResults || searchResults.length === 0) {
 		throw new Error('No articles found for topic: ' + topic);
 	}
@@ -261,16 +299,20 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 	// Filter aggressively first, then chunk by 150 articles for optimal throughput
 	const filteredResults = searchResults
 		.filter(
-			(article) =>
-				(article.abstract && article.abstract.length >= 250) ||
-				(article.content && article.content.length >= 250)
+			({ page }) =>
+				(page.abstract && page.abstract.length >= 250) ||
+				(page.content && page.content.length >= 250)
 		) // must have abstract or content with at least 250 characters
-		.filter((article) => article.title.match(/[^\x00-\x7F]+/gim)?.length || 0 === 0) // title must be only ascii
-		.filter((article) => article.keywords && article.keywords.length > 0); // must have keywords
+		// this used to read `.match(...)?.length || 0 === 0`, which parses as
+		// `length || (0 === 0)` and is therefore true for EVERY title -- the filter never ran,
+		// which is how Russian and Persian journal titles reached the live catalogue
+		.filter(({ page }) => !/[^\x00-\x7F]/.test(page.title));
 
+	// keywords are no longer required: they were a proxy for "has ranker context", but they also
+	// silently excluded every feed item, since only the journal APIs carry keyword metadata
 	const batches = chunkArray(filteredResults, 150);
 
-	const allArticles: { text: string; ocean: OceanArticle }[] = [];
+	const allArticles: { text: string; sourced: SourcedPage }[] = [];
 	const rankQuery = prompts.articleClassificationQuery(topic, tags);
 	const allRanked: { id: number; score: number }[] = [];
 
@@ -278,23 +320,23 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 		const batch = batches[batchIndex];
 		const batchOffset = batchIndex * 150; // Track offset for index mapping
 
-		const contexts = batch.map((article) => ({
+		const contexts = batch.map((sourced) => ({
 			text:
-				(article.title || '') +
+				(sourced.page.title || '') +
 				' by ' +
-				(article.author || 'Unknown') +
+				(sourced.page.author || 'Unknown') +
 				' | Tags: ' +
-				(article.keywords || []).slice(0, 8).join(', ') + // limit keywords to reduce tokens
+				(sourced.page.keywords || []).slice(0, 8).join(', ') + // limit keywords to reduce tokens
 				'\n' +
-				(article.abstract || '').substring(0, 180),
-			ocean: article // store original for later retrieval
+				(sourced.page.abstract || '').substring(0, 180),
+			sourced // store original for later retrieval
 		}));
 		allArticles.push(...contexts);
 
 		// Rank this batch
 		const ranked = await ai.run(rankerModel, {
 			query: rankQuery,
-			contexts: contexts.map((c) => ({ text: c.text })) // remove 'ocean' field for ranking
+			contexts: contexts.map((c) => ({ text: c.text })) // remove 'sourced' field for ranking
 		});
 
 		if (!ranked || !ranked.response) {
@@ -309,23 +351,17 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 		);
 	}
 
-	// select top ranked + bottom ranked for maximum diversity
-	const sortedByScore = allRanked.sort((a, b) => b.score - a.score);
-	const top1 = sortedByScore.slice(0, 1);
-	const bottom1 = sortedByScore.slice(-1);
-	const selectedIndices = [...top1.map((r) => r.id), ...bottom1.map((r) => r.id)];
-	const selectedArticles: OceanArticle[] = [];
-
-	for (const idx of selectedIndices) {
-		if (idx < 0 || idx >= allArticles.length) {
-			throw new Error(`Invalid article index: ${idx} (array length: ${allArticles.length})`);
-		}
-		const article = allArticles[idx].ocean;
-		if (!article) {
-			throw new Error('Article data not found: index ' + idx);
-		}
-		selectedArticles.push(article);
+	const sortedByScore = allRanked
+		.filter((entry) => entry.id >= 0 && entry.id < allArticles.length)
+		.sort((a, b) => b.score - a.score);
+	if (sortedByScore.length === 0) {
+		throw new Error('Ranker returned no usable results for topic: ' + topic);
 	}
+
+	const selectedIndices = selectArticleIndices(sortedByScore, (id) => allArticles[id]!.sourced);
+	const selectedArticles: OceanArticle[] = selectedIndices.map(
+		(id) => allArticles[id]!.sourced.page
+	);
 
 	// Sanitize keywords and clean selected articles
 	for (const article of selectedArticles) {
@@ -352,15 +388,55 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 	return [selectedArticles, tags];
 }
 
+/**
+ * Choose which ranked articles to publish.
+ *
+ * Two rules, in order:
+ *  1. prefer a general-audience piece for the primary slot, if one ranks inside
+ *     {@link MAGAZINE_PREFERENCE_WINDOW};
+ *  2. fill the second slot from a DIFFERENT scraper, so a run cannot publish two pieces from the
+ *     same feed.
+ *
+ * Replaces "top-ranked plus bottom-ranked", which published the single article the reranker had
+ * just judged least related to the topic and called it diversity.
+ *
+ * @param ranked entries sorted by score, best first
+ * @param sourceOf resolves a ranked id back to its source annotation
+ */
+export function selectArticleIndices(
+	ranked: ReadonlyArray<{ id: number; score: number }>,
+	sourceOf: (id: number) => SourcedPage
+): number[] {
+	if (ranked.length === 0) return [];
+
+	const window = ranked.slice(0, MAGAZINE_PREFERENCE_WINDOW);
+	const primary = window.find((entry) => sourceOf(entry.id).kind === 'magazine') ?? ranked[0]!;
+
+	const primaryScraper = sourceOf(primary.id).scraper;
+	const secondary = ranked.find(
+		(entry) => entry.id !== primary.id && sourceOf(entry.id).scraper !== primaryScraper
+	);
+
+	return secondary ? [primary.id, secondary.id] : [primary.id];
+}
+
+export async function findSourcedArticles(
+	query: string,
+	bindings: Bindings,
+	pageLimit: number = 1
+): Promise<SourcedPage[]> {
+	const query0 = query.replace(/\+/g, ' ').replace(/[^a-zA-Z0-9\s]/g, '');
+
+	// keys are passed per-call now; ocean held them in a module-level mutable map
+	return await searchAllSourced(query0, pageLimit, { PubMed: bindings.NCBI_API_KEY ?? '' });
+}
+
 export async function findArticles(
 	query: string,
 	bindings: Bindings,
 	pageLimit: number = 1
 ): Promise<OceanArticle[]> {
-	const query0 = query.replace(/\+/g, ' ').replace(/[^a-zA-Z0-9\s]/g, '');
-
-	// keys are passed per-call now; ocean held them in a module-level mutable map
-	return await searchAll(query0, pageLimit, { PubMed: bindings.NCBI_API_KEY ?? '' });
+	return (await findSourcedArticles(query, bindings, pageLimit)).map((entry) => entry.page);
 }
 
 export async function createArticle(
@@ -381,7 +457,7 @@ export async function createArticle(
 		try {
 			titleResult = await ai.run(articleModel, {
 				messages: [
-					{ role: 'system', content: prompts.articleTitlePrompt(ocean, tags).trim() },
+					{ role: 'system', content: prompts.articleTitlePrompt(ocean).trim() },
 					{ role: 'user', content: ocean.title.trim() }
 				],
 				// 48 tokens can truncate a 10-word title once leading whitespace/quotes are accounted for.
@@ -420,9 +496,19 @@ export async function createArticle(
 		const summary = prompts.validateArticleSummary(summaryResult?.response || '', ocean.title);
 		const formattedSummary = splitContent(summary).join('\n\n');
 
+		// the lenses were a random draw; these are the ones the finished piece actually earned
+		const groundedTags = await groundArticleLenses(summary, tags, ai);
+		if (groundedTags.length < tags.length) {
+			console.debug('Dropped ungrounded article lenses', {
+				title: ocean.title,
+				offered: tags,
+				kept: groundedTags
+			});
+		}
+
 		return {
 			ocean,
-			tags,
+			tags: groundedTags,
 			title: title,
 			description: summary.substring(0, 256) + '...',
 			color: ocean.theme_color || '#ffffff',
@@ -433,6 +519,42 @@ export async function createArticle(
 		throw new Error(
 			`Article creation failed: ${error instanceof Error ? error.message : 'Unknown error'}`
 		);
+	}
+}
+
+/**
+ * Which of the offered lenses the finished article genuinely engages with.
+ *
+ * Runs on the small tags model; a failure keeps the first lens rather than all of them, so an AI
+ * outage cannot quietly restore the padded tag set this whole path exists to remove.
+ *
+ * @param content the generated article body
+ * @param tags the lenses offered to the writer
+ * @param ai workers ai binding
+ */
+export async function groundArticleLenses(
+	content: string,
+	tags: string[],
+	ai: Ai
+): Promise<string[]> {
+	if (tags.length === 0) return [];
+
+	try {
+		const result = await ai.run(tagsModel, {
+			messages: [
+				{ role: 'system', content: prompts.articleLensSystemMessage.trim() },
+				{ role: 'user', content: prompts.articleLensPrompt(content, tags) }
+			],
+			max_tokens: 16 * tags.length + 32,
+			temperature: 0
+		});
+
+		return prompts.validateArticleLenses(String(result?.response ?? ''), tags);
+	} catch (aiError) {
+		console.warn('Article lens grounding unavailable; keeping the primary lens only', {
+			error: aiError instanceof Error ? aiError.message : String(aiError)
+		});
+		return tags.slice(0, 1);
 	}
 }
 

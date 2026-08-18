@@ -1422,6 +1422,19 @@ export function validateActivityDescription(
 			throw new Error(`Failed to generate valid description for activity: ${activityName}`);
 		}
 
+		// the model was given an explicit way to refuse; a refusal is a verdict about the
+		// candidate, not a generation failure, so it must not be retried at a higher temperature
+		// until the model gives up and confabulates
+		if (description.trim().toUpperCase().startsWith(NOT_AN_ACTIVITY)) {
+			logAIFailure(
+				'ActivityDescription',
+				activityName,
+				description,
+				'Model reports the term is not an activity'
+			);
+			throw new NotAnActivityError(activityName);
+		}
+
 		// Sanitize the description first
 		const sanitized = sanitizeForContentType(description, 'description');
 
@@ -1472,6 +1485,12 @@ export function validateActivityDescription(
 
 		return cleaned;
 	} catch (error) {
+		// a refusal is a verdict about the candidate, not a generation failure; the generic
+		// fallback would assert that a water bottle "is an engaging activity"
+		if (error instanceof NotAnActivityError) {
+			throw error;
+		}
+
 		// If throwOnFailure is true, re-throw the error for retry logic
 		if (throwOnFailure) {
 			throw error;
@@ -2049,10 +2068,42 @@ export function validateEventDescription(
 
 // Activity Prompts
 
+/** the refusal token the description model emits for a term that is not an activity */
+export const NOT_AN_ACTIVITY = 'NOT_AN_ACTIVITY';
+
+/**
+ * The model was asked to describe something that is not an activity, and said so.
+ *
+ * Distinct from a validation failure because it is a verdict about the CANDIDATE. Retrying it at a
+ * higher temperature is exactly how "a pencil can be used in an activity like..." gets written:
+ * the model refuses, the retry loop pushes it, and eventually it complies.
+ */
+export class NotAnActivityError extends Error {
+	constructor(activityName: string) {
+		super(`"${activityName}" is not an activity`);
+		this.name = 'NotAnActivityError';
+	}
+}
+
 export const activityDescriptionSystemMessage = `
 You are an expert in describing activities to a general audience.
 
 TASK: Generate a single paragraph description of the given activity.
+
+BEFORE YOU WRITE, CHECK THAT THE TERM IS AN ACTIVITY.
+An activity is something a person can go and DO: a sport, a hobby, a craft, a practice, a game, a
+discipline. It is NOT an activity if the term names:
+- an object, material, tool or brand (water bottle, milk glass, propolis, polymer clay)
+- a place or building (marina, slipway, sauna, a named garden or museum)
+- a living thing (koi, a genus of fish, a plant)
+- a person or profession (watchmaker, coppersmith, art dealer)
+- an organisation, club or society
+- a thing tied to one named town, club or event rather than a practice anyone can take up
+
+If the term is any of those, reply with exactly ${NOT_AN_ACTIVITY} and nothing else. Do NOT write a
+description that works around it, and never describe how the thing could be USED in some other
+activity. A wrong refusal costs nothing; a description of a water bottle as an activity is worse
+than no description at all.
 
 REQUIREMENTS:
 - Length: 150-250 words, approximately 1-2 minutes read
@@ -2288,7 +2339,59 @@ const topicExamples = [
 	'child psychology',
 	'adolescent development',
 	'adult learning',
-	'science communication'
+	'science communication',
+	// practice and craft; the registry can now answer these, and they are what the app is about.
+	// without them every topic was a research field, so every article read like a lab report.
+	'foraging',
+	'fermentation',
+	'beekeeping',
+	'birdsong',
+	'gardening',
+	'traditional crafts',
+	'weaving',
+	'pottery',
+	'woodworking',
+	'natural dyes',
+	'bread making',
+	'seed saving',
+	'urban wildlife',
+	'night sky',
+	'tide pools',
+	'mushroom hunting',
+	'trail building',
+	'wayfinding',
+	'cartography',
+	'stargazing',
+	'rock climbing',
+	'open water swimming',
+	'long distance walking',
+	'cycling culture',
+	'folk music',
+	'dance history',
+	'board games',
+	'puzzle design',
+	'bookbinding',
+	'letterpress',
+	'photography history',
+	'field recording',
+	'amateur astronomy',
+	'citizen science',
+	'community gardens',
+	'repair culture',
+	'knot tying',
+	'sailing',
+	'canoeing',
+	'winter ecology',
+	'desert survival',
+	'cave exploration',
+	'coastal erosion',
+	'urban trees',
+	'pollinators',
+	'soil life',
+	'rewilding',
+	'dark skies',
+	'animal migration',
+	'plant medicine'
 ];
 
 export const articleTopicPrompt = (): string => {
@@ -2303,48 +2406,59 @@ export const articleClassificationQuery = (topic: string, tags: string[]): strin
 };
 
 export const articleSystemMessage = `
-You are an expert science writer specializing in accessible article summaries.
+You are a writer for a general-audience curiosity publication. Your work reads the way a good
+encyclopedia article reads when someone follows a link and then loses an hour: concrete, specific,
+and continuously revealing.
 
-TASK: Write an engaging summary of the provided scientific article.
+TASK: Turn the provided source article into a short deep dive.
+
+HOW A DEEP DIVE READS:
+- Open on something concrete: a specific finding, object, place, person, number, or moment. Never
+  open with throat-clearing like "In recent years, researchers have increasingly..."
+- Put the genuinely surprising thing early, then explain WHY it is true. Mechanism over result.
+- Use the real specifics from the source: names, places, dates, quantities, species, methods.
+- Follow one or two threads outward - what this connects to, what it changed, what came before it.
+  That outward step is what makes a reader want the next article.
+- Land on something that stays with the reader. Not a summary of the summary.
 
 REQUIREMENTS:
-- Language: ALWAYS write the summary in English, even when the source article is in another language. Translate the ideas faithfully into clear English; never emit non-English text.
-- Incorporate the provided tags naturally into the summary
+- Language: ALWAYS write in English, even when the source article is in another language.
+  Translate the ideas faithfully into clear English; never emit non-English text.
 - Length: 250-600 words, ensure cohesive flow and minimum is met
-- Tone: Informative yet accessible to general audiences
-- Format: Well-structured paragraphs, no special formatting
-- Focus: Key findings, implications, and relevance
+- Tone: curious and plain-spoken. Explain jargon the first time it appears.
+- Format: well-structured paragraphs, no headings, lists, or special formatting
+- Never invent findings, numbers, names, or implications that are not in the source.
 
-OUTPUT FORMAT: Return only the summary text, no introduction or metadata.
+OUTPUT FORMAT: Return only the article text, no introduction, title, or metadata.
 `;
 
-export const articleTitlePrompt = (article: OceanArticle, tags: string[]): string => {
+// the lenses are deliberately absent: titling for a random tag is what produced headlines like
+// "Peas for the North: Cultivating Resilience" on a field-pea breeding trial
+export const articleTitlePrompt = (article: OceanArticle): string => {
 	return `Generate an engaging title for this article:
 
 Original Title: "${article.title}"
 Author: ${article.author}
 Source: ${article.source}
 
-Related Tags: ${tags.join(', ')}
-
 REQUIREMENTS:
 - ALWAYS write the title in English, regardless of the source article's language
 - Maximum 10 words
-- Engaging and accessible tone
-- Reflect the article's content and the provided tags
+- Name the specific thing the article is about; a reader should know what they are getting
+- Prefer the concrete noun over the abstract one, and the surprising detail over the field name
 - No quotes or special formatting
 - No explanations or additional text other than the title
 - No alternative titles, only a singular title
-- MUST be unique and creative - avoid generic titles
 - MUST be a complete, grammatically correct phrase
+- MUST NOT be clickbait: no "you won't believe", no questions the article does not answer, no
+  colon-subtitle padding that says nothing
 - Transform the original title significantly to create something fresh and distinctive
-- Use specific, vivid language that captures the essence of the research
 
 OUTPUT: Title only, no explanations.`;
 };
 
 export const articleSummaryPrompt = (article: OceanArticle, tags: string[]): string => {
-	return `Summarize this article incorporating these tags: ${tags.join(', ')}
+	return `Write a deep dive based on this source article.
 
 Article Information:
 - Title: "${article.title}"
@@ -2356,23 +2470,87 @@ Article Information:
 Abstract:
 ${article.abstract}
 
+LENSES: ${tags.join(', ')}
+
+These lenses are assigned at random. They are NOT a description of the article and they are NOT a
+checklist. For each one, ask honestly: does this source actually touch that lens? Often one or two
+will, in a way a reader would never have expected - a materials paper that turns out to rest on a
+craft technique, an epidemiology study that hinges on how a community socialises. That unexpected
+connection is the most valuable thing you can find, so look for it properly.
+
+RULES FOR THE LENSES:
+- Use a lens ONLY where the source genuinely supports it, and show the reader the actual connection.
+- SILENTLY DROP every lens the source does not support. Do not mention it, do not gesture at it, do
+  not stretch to make it fit. Dropping four of five lenses is a correct outcome.
+- Never write a sentence whose only purpose is to name a lens. If removing the lens would not
+  change the sentence's meaning, the connection is not real and the sentence must go.
+- Never claim the article "is about" a lens. Show what the source says and let the connection stand
+  on its own.
+
 INSTRUCTIONS:
-- ALWAYS write the summary in English, regardless of the source article's language
-- Write an engaging summary that incorporates the provided tags
-- Focus on key findings and their significance
-- Make it accessible to a general audience
-- Consider the publication date for relevance context
+- ALWAYS write in English, regardless of the source article's language
 - Length: 250-600 words, ensure cohesive flow and minimum is met
-- Tone: Informative yet approachable
-- When including the tags, integrate them naturally into the text in a way that makes sense contextually
-- No quotes, bullet points, special formatting, or additional text
-- CRITICAL: Write complete, coherent sentences with proper grammar and punctuation
-- CRITICAL: End with a proper concluding sentence - do NOT leave the summary incomplete or cut off mid-sentence
-- Ensure every paragraph flows naturally and the entire summary reads as a polished, finished piece
-- Vary your writing style and vocabulary to create unique summaries that avoid repetitive patterns
-- Each summary should have its own distinct voice and structure
+- No quotes, bullet points, headings, special formatting, or additional text
+- CRITICAL: write complete, coherent sentences with proper grammar and punctuation
+- CRITICAL: end with a proper concluding sentence - do NOT leave the piece cut off mid-sentence
+- Vary your structure and vocabulary between pieces; each should have its own voice
 `;
 };
+
+export const articleLensSystemMessage = `
+You check which of a set of themes a piece of writing ACTUALLY engages with.
+
+A theme counts ONLY if the text makes a substantive, specific connection to it - a concrete detail,
+mechanism, or consequence a reader could point at. A theme does NOT count when the text merely
+mentions the word, lists it, or asserts a connection without showing one.
+
+Reply with ONLY the themes that count, exactly as they were spelled in the input, separated by
+commas. If none count, reply with the single word NONE. No other text, no explanations.
+`;
+
+export const articleLensPrompt = (content: string, tags: string[]): string => {
+	return `THEMES: ${tags.join(', ')}
+
+TEXT:
+${content.slice(0, 4000)}
+
+Which themes does this text actually engage with?`;
+};
+
+/**
+ * Keep only the lenses the finished article genuinely engages with.
+ *
+ * The writer is asked to drop lenses it cannot ground, but a writer grading its own work is not
+ * evidence. This measures the text that actually exists, so the stored tags describe the article
+ * rather than the random draw that seeded it.
+ *
+ * Fails CLOSED to the first candidate rather than to the full set: an unparseable reply must not
+ * restore the tags the article was supposed to have earned.
+ *
+ * @param response raw model reply
+ * @param candidates the lenses that were offered to the writer
+ */
+export function validateArticleLenses(response: string, candidates: string[]): string[] {
+	const fallback = candidates.slice(0, 1);
+	if (candidates.length === 0) return [];
+	if (!response || typeof response !== 'string') return fallback;
+
+	const sanitized = sanitizeForContentType(response, 'tags').trim();
+	if (/^none\b/i.test(sanitized)) return fallback;
+
+	const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '');
+	const byNormalized = new Map(candidates.map((tag) => [normalize(tag), tag]));
+
+	const kept: string[] = [];
+	for (const part of sanitized.split(',')) {
+		const match = byNormalized.get(normalize(part));
+		if (match && !kept.includes(match)) kept.push(match);
+	}
+
+	// mantle2 requires at least one tag, and an empty set would also lose the article's only
+	// categorical handle in recommendation
+	return kept.length > 0 ? kept : fallback;
+}
 
 export const articleRecommendationQuery = (activities: string[]): string => {
 	return `Recommend articles related to these activities: ${activities
