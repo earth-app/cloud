@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	activityDescriptionPrompt,
 	activityDescriptionSystemMessage,
+	NOT_AN_ACTIVITY,
+	NotAnActivityError,
 	articleClassificationQuery,
 	articleCriteria,
 	articleRecommendationQuery,
@@ -31,6 +33,7 @@ import {
 	inferActivityTags,
 	selectActivityIcon,
 	validateActivityTags,
+	validateArticleLenses,
 	validateArticleSummary,
 	validateArticleTitle,
 	validateArticleTopic,
@@ -348,7 +351,20 @@ describe('articleTitlePrompt', () => {
 			date: '2026-01-01',
 			links: {}
 		};
-		expect(articleTitlePrompt(article, ['SCIENCE'])).toContain('Original');
+		expect(articleTitlePrompt(article)).toContain('Original');
+	});
+
+	it('keeps the random lenses out of the title prompt', () => {
+		const article = {
+			title: 'Original',
+			author: 'Author',
+			source: 'Source',
+			url: 'https://example.com/article',
+			keywords: [],
+			date: '2026-01-01',
+			links: {}
+		};
+		expect(articleTitlePrompt(article)).not.toContain('LENSES');
 	});
 });
 
@@ -565,5 +581,82 @@ describe('generateProfilePhoto', () => {
 		);
 
 		expect(Array.from(image)).toEqual([1, 2, 3, 4]);
+	});
+});
+
+describe('validateArticleLenses', () => {
+	const offered = ['Art', 'Nature', 'Finance'];
+
+	it('keeps the confirmed lenses in the input spelling', () => {
+		expect(validateArticleLenses('art, NATURE', offered)).toEqual(['Art', 'Nature']);
+	});
+
+	it('ignores anything that was not offered', () => {
+		expect(validateArticleLenses('Art, Sport', offered)).toEqual(['Art']);
+	});
+
+	it('folds duplicates', () => {
+		expect(validateArticleLenses('Art, Art, art', offered)).toEqual(['Art']);
+	});
+
+	// fails CLOSED: a broken reply must not restore the full random draw
+	it('falls back to the first lens on NONE, junk, or an empty reply', () => {
+		expect(validateArticleLenses('NONE', offered)).toEqual(['Art']);
+		expect(validateArticleLenses('!!!', offered)).toEqual(['Art']);
+		expect(validateArticleLenses('', offered)).toEqual(['Art']);
+	});
+
+	it('returns nothing when nothing was offered', () => {
+		expect(validateArticleLenses('Art', [])).toEqual([]);
+	});
+});
+
+describe('articleSummaryPrompt lens instructions', () => {
+	const article = {
+		title: 'T',
+		author: 'A',
+		source: 'S',
+		url: 'https://example.com/a',
+		abstract: 'Abstract',
+		keywords: ['k'],
+		date: '2026-01-01',
+		links: {}
+	};
+
+	// the exact failure this replaced: "incorporate the tags naturally into the text" made the
+	// model assert a connection whether or not one existed
+	it('tells the model to drop lenses it cannot ground', () => {
+		const prompt = articleSummaryPrompt(article, ['Art']);
+		expect(prompt).toContain('SILENTLY DROP');
+		expect(prompt).not.toContain('integrate them naturally');
+	});
+
+	it('states that the lenses are random and not a description of the article', () => {
+		expect(articleSummaryPrompt(article, ['Art'])).toContain('assigned at random');
+	});
+});
+
+describe('activity description refusal', () => {
+	it('offers the model an explicit way to refuse', () => {
+		expect(activityDescriptionSystemMessage).toContain(NOT_AN_ACTIVITY);
+		expect(activityDescriptionSystemMessage).toContain('water bottle');
+	});
+
+	// the refusal is a verdict about the candidate, not a generation failure
+	it('throws NotAnActivityError rather than falling back to a description', () => {
+		expect(() => validateActivityDescription(NOT_AN_ACTIVITY, 'water bottle', true)).toThrow(
+			NotAnActivityError
+		);
+	});
+
+	it('refuses even when throwOnFailure is off, instead of returning the generic fallback', () => {
+		expect(() => validateActivityDescription(`${NOT_AN_ACTIVITY}\n`, 'marina', false)).toThrow(
+			NotAnActivityError
+		);
+	});
+
+	it('does not fire on a description that merely mentions the phrase mid-text', () => {
+		const description = `${'word '.repeat(60)}it is not an activity for everyone, though many enjoy it regularly and find it rewarding over time.`;
+		expect(() => validateActivityDescription(description, 'bouldering', true)).not.toThrow();
 	});
 });

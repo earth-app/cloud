@@ -8,7 +8,12 @@ import {
 	createPrompt,
 	findArticle,
 	findArticles,
+	groundArticleLenses,
+	MAX_LENSES,
+	MIN_LENSES,
+	pickLenses,
 	postEvent,
+	selectArticleIndices,
 	rankActivitiesForEvent,
 	rankerModel,
 	recommendArticles,
@@ -1665,5 +1670,128 @@ describe('postEvent', () => {
 
 		expect(data.id).toBe('45');
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('selectArticleIndices', () => {
+	const sourced = (kind: 'journal' | 'magazine', scraper: string) =>
+		({ kind, scraper, page: {} }) as never;
+
+	it('prefers a magazine inside the preference window over a higher-ranked journal', () => {
+		const ranked = [
+			{ id: 0, score: 0.9 },
+			{ id: 1, score: 0.8 },
+			{ id: 2, score: 0.7 }
+		];
+		const map: Record<number, ReturnType<typeof sourced>> = {
+			0: sourced('journal', 'PubMed'),
+			1: sourced('magazine', 'Nautilus'),
+			2: sourced('journal', 'PLOS')
+		};
+
+		expect(selectArticleIndices(ranked, (id) => map[id]!)[0]).toBe(1);
+	});
+
+	it('falls back to the top-ranked entry when no magazine is in the window', () => {
+		const ranked = Array.from({ length: 12 }, (_, i) => ({ id: i, score: 1 - i / 20 }));
+		const map = (id: number) =>
+			sourced(id === 11 ? 'magazine' : 'journal', id === 11 ? 'Aeon' : `J${id}`);
+
+		// the only magazine sits past MAGAZINE_PREFERENCE_WINDOW, so the best overall wins
+		expect(selectArticleIndices(ranked, map)[0]).toBe(0);
+	});
+
+	it('fills the second slot from a different scraper', () => {
+		const ranked = [
+			{ id: 0, score: 0.9 },
+			{ id: 1, score: 0.85 },
+			{ id: 2, score: 0.5 }
+		];
+		const map: Record<number, ReturnType<typeof sourced>> = {
+			0: sourced('magazine', 'Nautilus'),
+			1: sourced('magazine', 'Nautilus'),
+			2: sourced('journal', 'PLOS')
+		};
+
+		// id 1 outranks id 2 but shares a scraper with the primary
+		expect(selectArticleIndices(ranked, (id) => map[id]!)).toEqual([0, 2]);
+	});
+
+	it('returns a single article when every candidate shares one scraper', () => {
+		const ranked = [
+			{ id: 0, score: 0.9 },
+			{ id: 1, score: 0.8 }
+		];
+		const map = () => sourced('magazine', 'Nautilus');
+
+		expect(selectArticleIndices(ranked, map)).toEqual([0]);
+	});
+
+	// the behaviour this replaced: publishing the reranker's least-related result as "diversity"
+	it('never selects the lowest-ranked entry just for variety', () => {
+		const ranked = [
+			{ id: 0, score: 0.9 },
+			{ id: 1, score: 0.8 },
+			{ id: 2, score: 0.01 }
+		];
+		const map: Record<number, ReturnType<typeof sourced>> = {
+			0: sourced('journal', 'PubMed'),
+			1: sourced('journal', 'PLOS'),
+			2: sourced('journal', 'DOAJ')
+		};
+
+		expect(selectArticleIndices(ranked, (id) => map[id]!)).toEqual([0, 1]);
+	});
+
+	it('returns nothing for an empty ranking', () => {
+		expect(selectArticleIndices([], () => sourced('journal', 'x'))).toEqual([]);
+	});
+});
+
+describe('pickLenses', () => {
+	it('draws between MIN_LENSES and MAX_LENSES distinct lenses', () => {
+		for (let i = 0; i < 40; i++) {
+			const lenses = pickLenses();
+			expect(lenses.length).toBeGreaterThanOrEqual(MIN_LENSES);
+			expect(lenses.length).toBeLessThanOrEqual(MAX_LENSES);
+			expect(new Set(lenses).size).toBe(lenses.length);
+		}
+	});
+
+	it('never offers OTHER as a lens', () => {
+		for (let i = 0; i < 40; i++) {
+			expect(pickLenses()).not.toContain('Other');
+		}
+	});
+
+	it('title-cases the enum values', () => {
+		expect(pickLenses().every((lens) => /^[A-Z]/.test(lens))).toBe(true);
+	});
+});
+
+describe('groundArticleLenses', () => {
+	it('keeps only the lenses the model confirms', async () => {
+		const ai = { run: vi.fn().mockResolvedValue({ response: 'Art, Nature' }) } as unknown as Ai;
+		expect(await groundArticleLenses('body', ['Art', 'Nature', 'Finance'], ai)).toEqual([
+			'Art',
+			'Nature'
+		]);
+	});
+
+	it('falls back to the primary lens when the model returns NONE', async () => {
+		const ai = { run: vi.fn().mockResolvedValue({ response: 'NONE' }) } as unknown as Ai;
+		expect(await groundArticleLenses('body', ['Art', 'Nature'], ai)).toEqual(['Art']);
+	});
+
+	// an outage must not restore the padded tag set this path exists to remove
+	it('falls back to the primary lens when the model throws', async () => {
+		const ai = { run: vi.fn().mockRejectedValue(new Error('down')) } as unknown as Ai;
+		expect(await groundArticleLenses('body', ['Art', 'Nature', 'Sport'], ai)).toEqual(['Art']);
+	});
+
+	it('does not call the model when there are no lenses', async () => {
+		const run = vi.fn();
+		expect(await groundArticleLenses('body', [], { run } as unknown as Ai)).toEqual([]);
+		expect(run).not.toHaveBeenCalled();
 	});
 });
