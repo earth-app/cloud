@@ -17,9 +17,19 @@ const NO_CONTENT = 'No content available.';
 
 export type Page = OceanArticle;
 
+/**
+ * What kind of publication a source is.
+ *
+ * `journal` is a peer-reviewed abstract; `magazine` is general-audience writing that already
+ * reads like a deep dive. Selection weights the two differently, so the distinction has to
+ * survive to the ranker rather than being flattened into `tags`.
+ */
+export type SourceKind = 'journal' | 'magazine';
+
 export type Scraper = {
 	name: string;
 	baseUrl: string;
+	kind: SourceKind;
 	tags: string[];
 	search(query: string, pageLimit: number, keys: ApiKeys): Promise<Page[]>;
 };
@@ -294,6 +304,51 @@ function xmlTag(xml: string, tag: string): string | undefined {
 	);
 }
 
+/** every `<tag>` body in a chunk of xml, plus atom's `term` attribute form */
+function xmlTagAll(xml: string, tag: string): string[] {
+	const out: string[] = [];
+
+	for (const match of xml.matchAll(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`, 'gi'))) {
+		const value = match[1]!
+			.replace(/^<!\[CDATA\[/, '')
+			.replace(/\]\]>$/, '')
+			.trim();
+		if (value) out.push(value);
+	}
+
+	// atom writes <category term="Foo"/> with no body
+	for (const match of xml.matchAll(new RegExp(`<${tag}[^>]*\\bterm=["']([^"']+)["']`, 'gi'))) {
+		const value = match[1]!.trim();
+		if (value) out.push(value);
+	}
+
+	return out;
+}
+
+/**
+ * Feed categories, folded into the keyword shape the article ranker expects.
+ *
+ * Not cosmetic: `findArticle` drops any page with no keywords, so before this existed every RSS
+ * source in the registry was unreachable and only the journal APIs could ever publish.
+ */
+export function feedKeywords(entry: string): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+
+	for (const raw of [...xmlTagAll(entry, 'category'), ...xmlTagAll(entry, 'dc:subject')]) {
+		for (const part of stripHtml(raw).split(/,|;|\/|\|/)) {
+			const value = part.trim();
+			const key = value.toLowerCase();
+			if (!value || value.length > 35 || seen.has(key)) continue;
+			seen.add(key);
+			out.push(value);
+			if (out.length >= 25) return out;
+		}
+	}
+
+	return out;
+}
+
 /**
  * Parse an RSS 2.0 or Atom feed.
  *
@@ -342,40 +397,67 @@ export function parseFeed(xml: string, feedUrl: string): Page[] {
 				abstract: stripHtml(summary) || NO_ABSTRACT,
 				content: stripHtml(body) || NO_CONTENT,
 				theme_color: '#ffffff',
-				keywords: []
+				keywords: feedKeywords(entry)
 			} satisfies Page
 		];
 	});
 }
 
+/** per-feed cap, so twenty magazine feeds cannot drown the journal results in the pool */
+export const RSS_PAGE_CAP = 25;
+
 /**
- * Build an RSS-backed scraper. Matches ocean's behaviour: every whitespace-separated term must
- * appear in the title, abstract or content.
+ * How many of the query's terms a page mentions anywhere.
+ *
+ * @param page candidate page
+ * @param terms lowercase query terms
+ */
+export function termHits(page: Page, terms: string[]): number {
+	if (terms.length === 0) return 0;
+
+	const haystack = [page.title, page.abstract ?? '', page.content ?? '', page.keywords.join(' ')]
+		.join(' ')
+		.toLowerCase();
+
+	return terms.filter((term) => haystack.includes(term)).length;
+}
+
+/**
+ * Build an RSS-backed scraper.
+ *
+ * ocean required EVERY query term to appear, which for a random topic like "volcanology" matched
+ * nothing in a twenty-item feed; combined with the missing keywords that made the whole RSS half
+ * of the registry dead weight. Feeds carry whatever they published this week, so this ranks by
+ * term overlap and lets the reranker downstream make the real call.
  *
  * @param label human name of the feed
  * @param url feed url
+ * @param kind publication kind, used to weight selection later
  */
-export function rssScraper(label: string, url: string): Scraper {
+export function rssScraper(label: string, url: string, kind: SourceKind = 'magazine'): Scraper {
 	return {
 		name: `RSS Feed [${label}]`,
 		baseUrl: url,
+		kind,
 		tags: [],
 		async search(query, pageLimit) {
-			const terms = query.split(' ').filter((t) => t.trim().length > 0);
+			const terms = query
+				.split(' ')
+				.map((term) => term.trim().toLowerCase())
+				.filter(Boolean);
 			const pages = parseFeed(await fetchText(url), url);
+			const cap = Math.min(Math.max(pageLimit, 1) * 10, RSS_PAGE_CAP);
 
-			return pages
-				.filter((page) =>
-					terms.every((term) => {
-						const needle = term.toLowerCase();
-						return (
-							page.title.toLowerCase().includes(needle) ||
-							(page.abstract ?? '').toLowerCase().includes(needle) ||
-							(page.content ?? '').toLowerCase().includes(needle)
-						);
-					})
-				)
-				.slice(0, Math.max(pageLimit, 0) || pages.length);
+			if (terms.length === 0) return pages.slice(0, cap);
+
+			return (
+				pages
+					.map((page, index) => ({ page, hits: termHits(page, terms), index }))
+					// index breaks ties so feed order (newest first) survives a stable-sort difference
+					.sort((a, b) => b.hits - a.hits || a.index - b.index)
+					.slice(0, cap)
+					.map((entry) => entry.page)
+			);
 		}
 	};
 }
@@ -416,6 +498,7 @@ const MONTHS: Record<string, string> = {
 export const doajScraper: Scraper = {
 	name: 'DOAJ',
 	baseUrl: 'https://doaj.org/api/v4',
+	kind: 'journal',
 	tags: ['open-access', 'academic', 'research', 'journals', 'articles'],
 	async search(query, pageLimit) {
 		const out: Page[] = [];
@@ -484,6 +567,7 @@ function parseDoajArticle(article: DoajArticle): Page | null {
 export const pubmedScraper: Scraper = {
 	name: 'PubMed',
 	baseUrl: 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils',
+	kind: 'journal',
 	tags: ['medicine', 'biology', 'health', 'research'],
 	async search(query, pageLimit, keys) {
 		const key = keys['PubMed'] ? `&api_key=${keys['PubMed']}` : '';
@@ -526,6 +610,271 @@ export const pubmedScraper: Scraper = {
 
 // #endregion
 
+// #region europe pmc
+
+type EuropePmcResult = {
+	id?: string;
+	doi?: string;
+	pmid?: string;
+	title?: string;
+	authorString?: string;
+	abstractText?: string;
+	pubYear?: string;
+	journalInfo?: { journal?: { title?: string }; volume?: string; issue?: string };
+	keywordList?: { keyword?: string[] };
+	fullTextUrlList?: { fullTextUrl?: Array<{ url?: string; availability?: string }> };
+};
+
+/**
+ * Europe PMC; PubMed's catalogue plus preprints, agricultural and patent literature.
+ *
+ * `resultType=core` returns the abstract inline, so unlike the PubMed scraper this costs ONE
+ * request instead of one per hit. PubMed is kept because its ranking differs, but this is the
+ * cheaper of the two by an order of magnitude.
+ */
+export const europePmcScraper: Scraper = {
+	name: 'Europe PMC',
+	baseUrl: 'https://www.ebi.ac.uk/europepmc/webservices/rest',
+	kind: 'journal',
+	tags: ['medicine', 'biology', 'health', 'agriculture', 'research'],
+	async search(query, pageLimit) {
+		const pageSize = Math.min(Math.max(pageLimit, 1) * 25, PER_PAGE);
+		const url =
+			`https://www.ebi.ac.uk/europepmc/webservices/rest/search` +
+			`?query=${encodeURIComponent(query)}&format=json&resultType=core&pageSize=${pageSize}`;
+
+		try {
+			const body = JSON.parse(await fetchText(url)) as {
+				resultList?: { result?: EuropePmcResult[] };
+			};
+
+			return (body.resultList?.result ?? [])
+				.map(parseEuropePmcResult)
+				.filter((page): page is Page => page !== null);
+		} catch {
+			return [];
+		}
+	}
+};
+
+function parseEuropePmcResult(result: EuropePmcResult): Page | null {
+	// highlighted matches come back as markup inside the title
+	const title = stripHtml(result.title ?? '').replace(/\.$/, '');
+	const abstract = stripHtml(result.abstractText ?? '');
+	if (!title || abstract.length < MIN_CONTENT_SIZE) return null;
+
+	const free = result.fullTextUrlList?.fullTextUrl?.find((entry) => entry.availability === 'Free');
+	const url =
+		free?.url ??
+		(result.doi
+			? `https://doi.org/${result.doi}`
+			: result.pmid
+				? `https://pubmed.ncbi.nlm.nih.gov/${result.pmid}/`
+				: result.id
+					? `https://europepmc.org/article/PPR/${result.id}`
+					: null);
+	if (!url) return null;
+
+	const journal = result.journalInfo?.journal?.title;
+	const source =
+		[
+			result.journalInfo?.volume ? `Vol. ${result.journalInfo.volume}` : null,
+			result.journalInfo?.issue ? `Issue ${result.journalInfo.issue}` : null,
+			journal
+		]
+			.filter(Boolean)
+			.join(', ') || 'Europe PMC';
+
+	const links: Record<string, string> = { 'Europe PMC': url };
+	if (result.doi) links.DOI = `https://doi.org/${result.doi}`;
+
+	return {
+		url,
+		title,
+		// authorString is a citation list already, so it is split back apart to re-format it
+		author: formatAuthors((result.authorString ?? '').replace(/\.$/, '').split(/,\s*/)),
+		source,
+		date: result.pubYear ?? 'Unknown Date',
+		links,
+		favicon: 'https://europepmc.org/favicon.ico',
+		abstract,
+		content: abstract,
+		theme_color: '#ffffff',
+		keywords: (result.keywordList?.keyword ?? []).map((k) => k.trim()).filter(Boolean)
+	};
+}
+
+// #endregion
+
+// #region plos
+
+type PlosDoc = {
+	id?: string;
+	title_display?: string;
+	abstract?: string[];
+	author_display?: string[];
+	publication_date?: string;
+	journal?: string;
+	subject?: string[];
+};
+
+/**
+ * PLOS; open-access, always English, and abstracts come back whole.
+ */
+export const plosScraper: Scraper = {
+	name: 'PLOS',
+	baseUrl: 'https://api.plos.org',
+	kind: 'journal',
+	tags: ['open-access', 'biology', 'medicine', 'research'],
+	async search(query, pageLimit) {
+		const rows = Math.min(Math.max(pageLimit, 1) * 25, PER_PAGE);
+		const fields = 'id,title_display,abstract,author_display,publication_date,journal,subject';
+		const url =
+			`https://api.plos.org/search?q=${encodeURIComponent(query)}` +
+			`&fl=${fields}&rows=${rows}&wt=json&fq=doc_type:full`;
+
+		try {
+			const body = JSON.parse(await fetchText(url)) as { response?: { docs?: PlosDoc[] } };
+
+			return (body.response?.docs ?? [])
+				.map(parsePlosDoc)
+				.filter((page): page is Page => page !== null);
+		} catch {
+			return [];
+		}
+	}
+};
+
+function parsePlosDoc(doc: PlosDoc): Page | null {
+	const title = stripHtml(doc.title_display ?? '');
+	const abstract = stripHtml((doc.abstract ?? []).join(' '));
+	if (!title || !doc.id || abstract.length < MIN_CONTENT_SIZE) return null;
+
+	// subjects are taxonomy paths; the leaf is the useful term
+	const keywords: string[] = [];
+	for (const path of doc.subject ?? []) {
+		const leaf = path.split('/').filter(Boolean).pop()?.trim();
+		if (leaf && leaf.length < 35 && !keywords.includes(leaf)) keywords.push(leaf);
+		if (keywords.length >= 25) break;
+	}
+
+	return {
+		url: `https://journals.plos.org/plosone/article?id=${doc.id}`,
+		title,
+		author: formatAuthors(doc.author_display ?? []),
+		source: doc.journal ?? 'PLOS',
+		date: (doc.publication_date ?? '').split('T')[0] || 'Unknown Date',
+		links: { DOI: `https://doi.org/${doc.id}` },
+		favicon: 'https://journals.plos.org/favicon.ico',
+		abstract,
+		content: abstract,
+		theme_color: '#ffffff',
+		keywords
+	};
+}
+
+// #endregion
+
+// #region openalex
+
+type OpenAlexWork = {
+	id?: string;
+	doi?: string;
+	title?: string;
+	publication_date?: string;
+	abstract_inverted_index?: Record<string, number[]>;
+	authorships?: Array<{ author?: { display_name?: string } }>;
+	primary_location?: { source?: { display_name?: string }; landing_page_url?: string };
+	keywords?: Array<{ display_name?: string }>;
+};
+
+/**
+ * Rebuild plain text from OpenAlex's inverted index.
+ *
+ * The index is `{ word: [positions] }`; the abstract is those words placed back at their
+ * positions. Exported because it is pure and worth pinning.
+ */
+export function inflateInvertedAbstract(index: Record<string, number[]> | undefined): string {
+	if (!index) return '';
+
+	const words: string[] = [];
+	for (const [word, positions] of Object.entries(index)) {
+		for (const position of positions) {
+			if (Number.isInteger(position) && position >= 0) words[position] = word;
+		}
+	}
+
+	return words.filter((word) => word !== undefined).join(' ');
+}
+
+/**
+ * OpenAlex; the widest catalogue available without a key, and the only one that reaches the
+ * humanities and arts rather than stopping at the sciences.
+ *
+ * `language:en` is filtered server-side. DOAJ has no such filter, which is why the live catalogue
+ * carries Russian, Persian and Ukrainian journal abstracts.
+ */
+export const openAlexScraper: Scraper = {
+	name: 'OpenAlex',
+	baseUrl: 'https://api.openalex.org',
+	kind: 'journal',
+	tags: ['academic', 'research', 'humanities', 'arts', 'social-science'],
+	async search(query, pageLimit) {
+		const perPage = Math.min(Math.max(pageLimit, 1) * 25, PER_PAGE);
+		const select =
+			'id,doi,title,publication_date,authorships,primary_location,abstract_inverted_index,keywords';
+		const url =
+			`https://api.openalex.org/works?search=${encodeURIComponent(query)}` +
+			`&per-page=${perPage}&select=${select}` +
+			`&filter=language:en,has_abstract:true,type:article` +
+			`&mailto=support@earth-app.com`;
+
+		try {
+			const body = JSON.parse(await fetchText(url)) as { results?: OpenAlexWork[] };
+
+			return (body.results ?? [])
+				.map(parseOpenAlexWork)
+				.filter((page): page is Page => page !== null);
+		} catch {
+			return [];
+		}
+	}
+};
+
+function parseOpenAlexWork(work: OpenAlexWork): Page | null {
+	const title = stripHtml(work.title ?? '');
+	const abstract = stripHtml(inflateInvertedAbstract(work.abstract_inverted_index));
+	if (!title || abstract.length < MIN_CONTENT_SIZE) return null;
+
+	const url = work.doi ?? work.primary_location?.landing_page_url ?? work.id;
+	if (!url) return null;
+
+	const links: Record<string, string> = {};
+	if (work.doi) links.DOI = work.doi;
+	if (work.id) links.OpenAlex = work.id;
+
+	return {
+		url,
+		title,
+		author: formatAuthors(
+			(work.authorships ?? []).map((entry) => entry.author?.display_name ?? '')
+		),
+		source: work.primary_location?.source?.display_name ?? 'OpenAlex',
+		date: work.publication_date ?? 'Unknown Date',
+		links,
+		favicon: 'https://openalex.org/favicon.ico',
+		abstract,
+		content: abstract,
+		theme_color: '#ffffff',
+		keywords: (work.keywords ?? [])
+			.map((entry) => entry.display_name?.trim() ?? '')
+			.filter(Boolean)
+			.slice(0, 25)
+	};
+}
+
+// #endregion
+
 // #region html journals
 
 /**
@@ -549,6 +898,7 @@ function htmlJournalScraper(
 	return {
 		name,
 		baseUrl,
+		kind: 'journal',
 		tags: ['academic', 'research', 'journals'],
 		async search(query, pageLimit) {
 			let listing: PageMetadata;
@@ -609,38 +959,88 @@ export const imejScraper = htmlJournalScraper(
 
 // #region registry
 
-/** the same sources, in the same order, that ocean registered */
+/**
+ * Every source queried for an article run.
+ *
+ * Additions are held to two rules: no API key, and no anti-scraping friction. REI's Co-op Journal
+ * and the National Geographic feed were both dropped for failing the second (403 and 404).
+ * New Scientist was dropped for 301-ing to a page with no feed.
+ */
 export const REGISTERED_SCRAPERS: readonly Scraper[] = [
+	// journals
 	pubmedScraper,
+	europePmcScraper,
+	plosScraper,
+	openAlexScraper,
 	imejScraper,
 	springerOpenScraper,
 	doajScraper,
-	// science
-	rssScraper(
-		'New Scientist Magazine',
-		'https://www.newscientist.com/feed/home/?cmpid=RSS%7CNSNS-Home'
-	),
+	// general-audience science; academics writing for readers rather than reviewers
+	rssScraper('The Conversation', 'https://theconversation.com/us/articles.atom'),
+	rssScraper('Knowable Magazine', 'https://knowablemagazine.org/rss'),
+	rssScraper('Nautilus', 'https://nautil.us/feed/'),
+	rssScraper('ScienceDaily', 'https://www.sciencedaily.com/rss/all.xml'),
+	rssScraper('Phys.org', 'https://phys.org/rss-feed/'),
 	rssScraper('Space.com', 'https://www.space.com/feeds.xml'),
+	rssScraper('MIT News', 'https://news.mit.edu/rss/topic/artificial-intelligence2'),
+	// curiosity and history; the closest thing in the registry to a wikipedia rabbit hole
+	rssScraper('Atlas Obscura', 'https://www.atlasobscura.com/feeds/latest'),
+	rssScraper('The Public Domain Review', 'https://publicdomainreview.org/rss.xml'),
+	rssScraper('Aeon', 'https://aeon.co/feed.rss'),
 	// psychology
 	rssScraper('School of Psychology', 'https://blogs.sussex.ac.uk/psychology/feed/'),
-	// tech
-	rssScraper('MIT News', 'https://news.mit.edu/rss/topic/artificial-intelligence2'),
 	// art
 	rssScraper('Art News', 'https://www.artnews.com/feed/'),
 	rssScraper('This is Colossal', 'https://www.thisiscolossal.com/feed/'),
 	rssScraper('Canvas', 'https://canvas.saatchiart.com/feed'),
-	// environment
+	// outdoors and environment
+	rssScraper('Outside', 'https://www.outsideonline.com/feed/'),
+	rssScraper('Yale Environment 360', 'https://e360.yale.edu/feed.xml'),
 	rssScraper('Grist', 'https://grist.org/feed/'),
 	rssScraper('Earth 991', 'https://earth911.com/feed/'),
 	rssScraper('Earth University @ Columbia', 'https://news.climate.columbia.edu/feed/'),
 	rssScraper('EcoWatch', 'https://www.ecowatch.com/energy-news/feed')
 ];
 
+/** a page plus the kind of source it came from, which `Page` itself has no room for */
+export type SourcedPage = { page: Page; kind: SourceKind; scraper: string };
+
 /**
- * Query every registered source and return distinct pages.
+ * Query every registered source and return distinct pages, tagged with their source kind.
  *
  * A source that throws is skipped, exactly as ocean's `searchAll` swallowed IOException -- one dead
  * feed must not fail the whole run.
+ *
+ * @param query search terms
+ * @param pageLimit pages to take from each source
+ * @param keys api keys by scraper name
+ */
+export async function searchAllSourced(
+	query: string,
+	pageLimit: number = 5,
+	keys: ApiKeys = {}
+): Promise<SourcedPage[]> {
+	const results = await Promise.allSettled(
+		REGISTERED_SCRAPERS.map((s) => s.search(query, pageLimit, keys))
+	);
+
+	const seen = new Set<string>();
+	const out: SourcedPage[] = [];
+	results.forEach((result, index) => {
+		if (result.status !== 'fulfilled') return;
+		const scraper = REGISTERED_SCRAPERS[index]!;
+		for (const page of result.value) {
+			if (!page.url || seen.has(page.url)) continue;
+			seen.add(page.url);
+			out.push({ page, kind: scraper.kind, scraper: scraper.name });
+		}
+	});
+
+	return out;
+}
+
+/**
+ * {@link searchAllSourced} without the source annotation.
  *
  * @param query search terms
  * @param pageLimit pages to take from each source
@@ -651,22 +1051,7 @@ export async function searchAll(
 	pageLimit: number = 5,
 	keys: ApiKeys = {}
 ): Promise<Page[]> {
-	const results = await Promise.allSettled(
-		REGISTERED_SCRAPERS.map((s) => s.search(query, pageLimit, keys))
-	);
-
-	const seen = new Set<string>();
-	const out: Page[] = [];
-	for (const result of results) {
-		if (result.status !== 'fulfilled') continue;
-		for (const page of result.value) {
-			if (!page.url || seen.has(page.url)) continue;
-			seen.add(page.url);
-			out.push(page);
-		}
-	}
-
-	return out;
+	return (await searchAllSourced(query, pageLimit, keys)).map((entry) => entry.page);
 }
 
 // #endregion
