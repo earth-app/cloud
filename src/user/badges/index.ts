@@ -1,7 +1,6 @@
 import { normalizeId, isLegacyPaddedId, migrateLegacyKey } from '../../util/util';
 import { sendUserNotification } from '../notifications';
 import { Bindings, ExecutionCtxLike, Rarity } from '../../util/types';
-import { addImpactPoints } from '../points';
 
 export type BadgeTracker =
 	| 'activities_added' // handled over mantle2
@@ -1293,37 +1292,6 @@ export async function grantBadge(userId: string, badgeId: string, kv: KVNamespac
 	};
 
 	await kv.put(metadataKey, JSON.stringify(metadata));
-
-	// add impact points for granting this badge
-	// wrap in try/catch to prevent any issues with impact points from blocking badge grants
-	try {
-		if (badge.tracker_id === 'impact_points_earned') {
-			// if this badge is directly related to impact points, don't add points to prevent loops
-			return;
-		}
-
-		// add impact points based on badge rarity
-		let pointsToAdd = 0;
-		switch (badge.rarity) {
-			case 'normal':
-				pointsToAdd = 10;
-				break;
-			case 'rare':
-				pointsToAdd = 25;
-				break;
-			case 'amazing':
-				pointsToAdd = 60;
-				break;
-			case 'green':
-				pointsToAdd = 150;
-				break;
-		}
-
-		await addImpactPoints(normalizedUserId, pointsToAdd, `Badge Unlocked: ${badge.name}`, kv);
-		await addBadgeProgress(normalizedUserId, 'impact_points_earned', pointsToAdd, kv);
-	} catch (error) {
-		console.error('Error adding impact points for badge grant:', error);
-	}
 }
 
 export async function isBadgeGranted(

@@ -224,20 +224,23 @@ describe('grantBadge and isBadgeGranted', () => {
 		expect(granted).toContain('getting_started');
 	});
 
-	it('does not throw when impact point award side effects fail', async () => {
+	/*
+	 * A badge unlock used to pay 10/25/60/150 points by rarity. That is engagement-contingent
+	 * tangible reward, the worst contingency in Deci 1999 (d=-0.40): a badge is supposed to say
+	 * what you can now do, not what you just earned. Points now come only from the underlying
+	 * actions, and the badge is the recognition on top.
+	 */
+	it('grants a badge without paying any impact points', async () => {
 		const kv = new MockKVNamespace();
-		const addPoints = vi
-			.spyOn(points, 'addImpactPoints')
-			.mockRejectedValueOnce(new Error('points subsystem unavailable'));
-		const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+		const addPoints = vi.spyOn(points, 'addImpactPoints');
 
-		await expect(grantBadge('12', 'getting_started', kv as any)).resolves.toBeUndefined();
-		expect(addPoints).toHaveBeenCalled();
-		expect(error).toHaveBeenCalled();
+		await grantBadge('12', 'getting_started', kv as any);
+
+		expect(addPoints).not.toHaveBeenCalled();
 		expect(await isBadgeGranted('12', 'getting_started', kv as any)).toBe(true);
 	});
 
-	it('returns early for impact-points-based badges without recursive point grants', async () => {
+	it('pays nothing for a points-tracking badge either', async () => {
 		const kv = new MockKVNamespace();
 		const addPoints = vi.spyOn(points, 'addImpactPoints');
 
@@ -506,10 +509,11 @@ describe('v0.6.0 outdoor badges', () => {
 		expect(await getBadgeProgress('4', 'garden_grove', kv as any)).toBe(1);
 	});
 
-	it('awards green-tier impact points when a garden badge is granted', async () => {
+	// the green tier was the largest award and so the clearest case of the badge itself paying out
+	it('pays nothing for a green-tier garden badge', async () => {
 		const kv = new MockKVNamespace();
 		await grantBadge('5', 'garden_grove', kv as any);
 		const [pts] = await points.getImpactPoints('5', kv as any);
-		expect(pts).toBe(150);
+		expect(pts).toBe(0);
 	});
 });
