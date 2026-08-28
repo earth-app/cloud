@@ -91,7 +91,7 @@ export class MockKVNamespace {
 	async put(
 		key: string,
 		value: string | ArrayBuffer | ArrayBufferView | ReadableStream,
-		options?: { expirationTtl?: number; metadata?: unknown }
+		options?: { expirationTtl?: number; expiration?: number; metadata?: unknown }
 	): Promise<void> {
 		let text = '';
 		if (value instanceof ReadableStream) {
@@ -117,7 +117,10 @@ export class MockKVNamespace {
 		this.store.set(key, {
 			value: text,
 			metadata: options?.metadata,
-			expiration: options?.expirationTtl ? Date.now() + options.expirationTtl * 1000 : undefined
+			// absolute unix SECONDS, matching what real kv list() reports
+			expiration:
+				options?.expiration ??
+				(options?.expirationTtl ? Math.floor(Date.now() / 1000) + options.expirationTtl : undefined)
 		});
 	}
 
@@ -130,7 +133,7 @@ export class MockKVNamespace {
 		limit?: number;
 		cursor?: string;
 	}): Promise<{
-		keys: Array<{ name: string; metadata?: TMetadata }>;
+		keys: Array<{ name: string; metadata?: TMetadata; expiration?: number }>;
 		list_complete: boolean;
 		cursor?: string;
 	}> {
@@ -149,7 +152,8 @@ export class MockKVNamespace {
 		return {
 			keys: page.map(([name, value]) => ({
 				name,
-				metadata: value.metadata as TMetadata
+				metadata: value.metadata as TMetadata,
+				expiration: value.expiration
 			})),
 			list_complete: listComplete,
 			cursor: listComplete ? undefined : String(nextIndex)

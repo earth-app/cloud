@@ -100,6 +100,59 @@ describe('migrateLegacyKey', () => {
 		expect(migrated).toBe(false);
 		expect(await env.KV.get(newKey)).toBeNull();
 	});
+
+	// a migrated journey key used to lose its 48h window and the streak became permanent
+	it('carries the expiration across, so a migrated key still lapses', async () => {
+		const oldKey = key('ttl-old');
+		const newKey = key('ttl-new');
+		const ttl = 60 * 60 * 24 * 2;
+		await env.KV.put(oldKey, '7', { expirationTtl: ttl, metadata: { streak: 7 } });
+
+		const before = await env.KV.list({ prefix: oldKey });
+		const sourceExpiry = before.keys.find((k) => k.name === oldKey)?.expiration;
+		expect(sourceExpiry).toBeGreaterThan(0);
+
+		expect(await migrateLegacyKey(oldKey, newKey, env.KV)).toBe(true);
+
+		const after = await env.KV.list({ prefix: newKey });
+		const migratedExpiry = after.keys.find((k) => k.name === newKey)?.expiration;
+		expect(migratedExpiry).toBe(sourceExpiry);
+		await env.KV.delete(newKey);
+	});
+
+	it('leaves a key inside the 60s window instead of resurrecting it as permanent', async () => {
+		const oldKey = key('ttl-edge-old');
+		const newKey = key('ttl-edge-new');
+		// 60s is kv's floor, so this expiry is always inside the guard window
+		await env.KV.put(oldKey, '1', { expirationTtl: 60 });
+
+		expect(await migrateLegacyKey(oldKey, newKey, env.KV)).toBe(false);
+		expect(await env.KV.get(newKey)).toBeNull();
+		await env.KV.delete(oldKey);
+	});
+
+	it('keeps a key with no expiration permanent', async () => {
+		const oldKey = key('nottl-old');
+		const newKey = key('nottl-new');
+		await env.KV.put(oldKey, 'forever');
+
+		expect(await migrateLegacyKey(oldKey, newKey, env.KV)).toBe(true);
+		const listed = await env.KV.list({ prefix: newKey });
+		expect(listed.keys.find((k) => k.name === newKey)?.expiration).toBeUndefined();
+		await env.KV.delete(newKey);
+	});
+
+	it('trusts a caller-supplied expiration instead of listing again', async () => {
+		const oldKey = key('given-old');
+		const newKey = key('given-new');
+		await env.KV.put(oldKey, '3');
+		const expiry = Math.floor(Date.now() / 1000) + 3600;
+
+		expect(await migrateLegacyKey(oldKey, newKey, env.KV, expiry)).toBe(true);
+		const listed = await env.KV.list({ prefix: newKey });
+		expect(listed.keys.find((k) => k.name === newKey)?.expiration).toBe(expiry);
+		await env.KV.delete(newKey);
+	});
 });
 
 describe('migrateAllLegacyKeys', () => {

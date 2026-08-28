@@ -58,16 +58,33 @@ export function isLegacyPaddedId(id: string): boolean {
 	return /^0{5,}\d+$/.test(id);
 }
 
+// `expiration` (absolute unix seconds) is only supplied by callers that already listed the key
 export async function migrateLegacyKey(
 	oldKey: string,
 	newKey: string,
-	kv: KVNamespace
+	kv: KVNamespace,
+	expiration?: number
 ): Promise<boolean> {
 	const result = await kv.getWithMetadata(oldKey);
 	if (!result.value) return false;
 
+	// getWithMetadata cannot see the ttl, so it has to come from list(). without it a migrated
+	// legacy journey key lost its 48h window and the streak became permanent
+	let expiresAt = expiration;
+	if (expiresAt === undefined) {
+		const listed = await kv.list({ prefix: oldKey, limit: 1 });
+		expiresAt = listed.keys.find((key) => key.name === oldKey)?.expiration;
+	}
+
+	// kv rejects an expiration inside the next 60s, and such a key is about to vanish anyway;
+	// leaving it beats resurrecting it as a permanent one
+	if (expiresAt !== undefined && expiresAt <= Math.floor(Date.now() / 1000) + 60) return false;
+
 	const metadata = result.metadata || undefined;
-	await kv.put(newKey, result.value, { metadata });
+	await kv.put(newKey, result.value, {
+		metadata,
+		...(expiresAt !== undefined ? { expiration: expiresAt } : {})
+	});
 
 	await kv.delete(oldKey);
 	return true;
@@ -95,7 +112,7 @@ export async function migrateAllLegacyKeys(kv: KVNamespace): Promise<number> {
 
 			if (needsMigration) {
 				const newKey = newParts.join(':');
-				const migrated = await migrateLegacyKey(keyName, newKey, kv);
+				const migrated = await migrateLegacyKey(keyName, newKey, kv, key.expiration);
 				if (migrated) {
 					migratedCount++;
 					console.log(`Migrated: ${keyName} -> ${newKey}`);
@@ -121,7 +138,7 @@ export async function migrateAllLegacyKeys(kv: KVNamespace): Promise<number> {
 
 				if (needsMigration) {
 					const newKey = newParts.join(':');
-					const migrated = await migrateLegacyKey(keyName, newKey, kv);
+					const migrated = await migrateLegacyKey(keyName, newKey, kv, key.expiration);
 					if (migrated) {
 						migratedCount++;
 						console.log(`Migrated: ${keyName} -> ${newKey}`);
