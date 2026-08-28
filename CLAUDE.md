@@ -12,6 +12,9 @@ The Cloud service is the Earth App's Cloudflare Workers backend. It is built wit
 - `src/user/quests/validation.ts` - quest response validation, device metadata checks, and anti-spoofing logic.
 - `src/util/ai.ts` - prompt/output sanitization, schema validation helpers, and text normalization used by AI flows.
 - `src/util/types.ts` - shared bindings, runtime types, and core domain types used across the worker.
+- `src/util/ids.ts` - resolves either id shape (numeric or 32-hex public) to the numeric id KV is keyed on.
+- `src/content/discovery.ts` - activity discovery: sources, the meaning-level gates, and the catalog audit.
+- `src/content/analytics.ts` - content analytics store; writers live in `timer.ts`, the quest engine, and mantle2.
 - `tests/` - Vitest coverage mirrored to `src/`; prefer focused tests close to the touched behavior.
 
 ## External Integration
@@ -39,6 +42,9 @@ The Cloud service is the Earth App's Cloudflare Workers backend. It is built wit
 - `bunx wrangler deploy --minify` - deploy the worker.
 
 ## Notes
+
+- User and content ids arrive in two shapes. `resolveEntityId` in `src/util/ids.ts` turns either into
+  the numeric id KV is keyed on; use it before building a KV key from a client-supplied id.
 
 - `/v1/*` routes are admin-authenticated with `ADMIN_API_KEY`.
 - WebSocket ticket issuance and consumption use Durable Objects and one-time semantics.

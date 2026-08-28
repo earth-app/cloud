@@ -261,9 +261,14 @@ size variants (`32`, `128`, original) with Images binding + R2 persistence.
 
 ## API Reference
 
+The tables below cover the main surface. `src/app.ts` is the source of truth for the full route
+list.
+
 ### Auth Model
 
 - All `/v1/*` endpoints require `Authorization: Bearer {ADMIN_API_KEY}`.
+- User and content ids accept either shape: the legacy numeric id, or the 32-hex public id mantle2
+  now issues. Cloud resolves a public id to the numeric one its KV is keyed on and caches the pair.
 - `/ws/notify` also requires admin bearer auth.
 - WebSocket user channels use session-validated one-time tickets (not admin keys).
 
@@ -376,6 +381,35 @@ size variants (`32`, `128`, original) with Images binding + R2 persistence.
 | POST   | `/v1/events/submit_image`                             | Submit event image                                 |
 | GET    | `/v1/events/retrieve_image?...`                       | Retrieve image submission(s) with optional filters |
 | DELETE | `/v1/events/delete_image?...`                         | Delete one or many image submissions               |
+
+### Behaviour Support
+
+| Method | Endpoint                      | Description                                   |
+| ------ | ----------------------------- | --------------------------------------------- |
+| GET    | `/v1/users/:id/outdoor_nudge` | Whether to nudge this user outside right now  |
+| GET    | `/v1/users/:id/memories`      | Quests and trails from this day in past years |
+| GET    | `/v1/users/:id/plan/status`   | Whether an if-then plan is live               |
+| GET    | `/v1/users/:id/plan/outcome`  | Minutes outside since the plan was formed     |
+| POST   | `/v1/users/:id/plan/menu`     | Build the cue/response menu for a plan        |
+| POST   | `/v1/users/:id/plan/form`     | Link one cue to one response, returned once   |
+| POST   | `/v1/users/:id/plan/rehearse` | Mark the single rehearsal                     |
+| POST   | `/v1/users/alias`             | Record a public-id to numeric-id pair         |
+| POST   | `/v1/users/:id/activities`    | Apply the consequences of an activity change  |
+
+### Content Analytics
+
+Written by cloud's read timer and quest engine, and by mantle2 after a response. Read by the admin
+panels in crust and sky.
+
+| Method | Endpoint                               | Description                         |
+| ------ | -------------------------------------- | ----------------------------------- |
+| GET    | `/v1/content_analytics/individual/:id` | Every category for one content id   |
+| GET    | `/v1/content_analytics/user/:id`       | Aggregate across an owner's content |
+| POST   | `/v1/content_analytics/log_event`      | Record a single event               |
+| POST   | `/v1/content_analytics/log_time`       | Record a timed event                |
+| DELETE | `/v1/content_analytics/delete`         | Purge by content id or owner        |
+| GET    | `/v1/admin/analytics`                  | Cloudflare traffic + signup funnel  |
+| POST   | `/v1/admin/funnel/:field`              | Increment a signup funnel counter   |
 
 ### WebSocket Routes
 
