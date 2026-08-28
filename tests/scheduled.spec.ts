@@ -22,6 +22,8 @@ function createMocks() {
 		findArticle: vi.fn(),
 		createArticle: vi.fn(),
 		createArticleQuiz: vi.fn(),
+		wasArticlePublished: vi.fn(async () => false),
+		rememberPublishedArticle: vi.fn(async () => undefined),
 		postArticle: vi.fn(),
 		retrieveEvents: vi.fn(),
 		createEvent: vi.fn(),
@@ -40,6 +42,8 @@ vi.mock('../src/content/boat', () => ({
 	findArticle: (mocks ??= createMocks()).findArticle,
 	createArticle: (mocks ??= createMocks()).createArticle,
 	createArticleQuiz: (mocks ??= createMocks()).createArticleQuiz,
+	wasArticlePublished: (mocks ??= createMocks()).wasArticlePublished,
+	rememberPublishedArticle: (mocks ??= createMocks()).rememberPublishedArticle,
 	retrieveEvents: (mocks ??= createMocks()).retrieveEvents,
 	createEvent: (mocks ??= createMocks()).createEvent,
 	postEvent: (mocks ??= createMocks()).postEvent
@@ -153,6 +157,21 @@ describe('scheduled', () => {
 		expect(mocks.createArticle).toHaveBeenCalledTimes(2);
 		expect(mocks.createArticleQuiz).toHaveBeenCalledTimes(2);
 		expect(mocks.postArticle).toHaveBeenCalledTimes(2);
+		expect(mocks.rememberPublishedArticle).toHaveBeenCalledTimes(2);
+	});
+
+	// two different sources rewritten into one headline is what put "Glaciers will vanish by 2050"
+	// in the live catalogue twice
+	it('does not post an article whose generated title was already published', async () => {
+		mocks.wasArticlePublished.mockResolvedValue(true);
+
+		await scheduled({ cron: '0 */4 * * *' } as ScheduledController, createMockBindings(), {
+			waitUntil: () => {}
+		} as any);
+
+		expect(mocks.createArticle).toHaveBeenCalledTimes(2);
+		expect(mocks.postArticle).not.toHaveBeenCalled();
+		expect(mocks.rememberPublishedArticle).not.toHaveBeenCalled();
 	});
 
 	it('revokes badges invalidated by duplicate tracker cleanup on article cron', async () => {

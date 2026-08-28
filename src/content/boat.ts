@@ -308,9 +308,12 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 		// which is how Russian and Persian journal titles reached the live catalogue
 		.filter(({ page }) => !/[^\x00-\x7F]/.test(page.title));
 
+	// before the reranker, so a repeat costs no AI call
+	const unpublished = await dropAlreadyPublished(filteredResults, bindings.KV);
+
 	// keywords are no longer required: they were a proxy for "has ranker context", but they also
 	// silently excluded every feed item, since only the journal APIs carry keyword metadata
-	const batches = chunkArray(filteredResults, 150);
+	const batches = chunkArray(unpublished, 150);
 
 	const allArticles: { text: string; sourced: SourcedPage }[] = [];
 	const rankQuery = prompts.articleClassificationQuery(topic, tags);
@@ -388,24 +391,107 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 	return [selectedArticles, tags];
 }
 
+// #region Publication memory
+
+/**
+ * How long a published source and title stay remembered.
+ *
+ * Articles are deleted after two weeks, so this outlives their whole visible life: republishing
+ * one the day after it expired still reads as a repeat.
+ */
+export const ARTICLE_MEMORY_TTL = 30 * 24 * 60 * 60;
+
+/** case, punctuation and spacing all vary between two runs over the same source */
+export function articleMemoryKey(value: string): string {
+	return `article:published:${value.toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+}
+
+/**
+ * Drop sources this pipeline already published.
+ *
+ * Nothing used to dedup at all, which is how `Glaciers will vanish by 2050` reached the live
+ * catalogue twice with different lens tags: the topic generator picked the same topic, the search
+ * returned the same paper, and the only thing that differed was the random lens draw. Running
+ * before the reranker means a repeat costs no AI call either.
+ *
+ * @param sourced ranked candidates
+ * @param kv worker kv
+ */
+export async function dropAlreadyPublished(
+	sourced: SourcedPage[],
+	kv: KVNamespace
+): Promise<SourcedPage[]> {
+	const seen = await Promise.all(
+		sourced.map(async (entry) => Boolean(await kv.get(articleMemoryKey(entry.page.title ?? ''))))
+	);
+
+	const kept = sourced.filter((_, index) => !seen[index]);
+
+	// never starve the run: if every candidate is a repeat, the topic is exhausted and publishing
+	// a repeat beats publishing nothing
+	return kept.length > 0 ? kept : sourced;
+}
+
+/**
+ * Remember a published article by its source title and its generated one.
+ *
+ * Both, because two different sources can be rewritten into the same headline, and one source can
+ * be rewritten into two different ones.
+ *
+ * @param sourceTitle the ocean article's own title
+ * @param generatedTitle the title this pipeline wrote
+ * @param kv worker kv
+ */
+export async function rememberPublishedArticle(
+	sourceTitle: string,
+	generatedTitle: string,
+	kv: KVNamespace
+): Promise<void> {
+	const now = String(Date.now());
+	await Promise.all(
+		[sourceTitle, generatedTitle]
+			.filter((title) => title.trim().length > 0)
+			.map((title) => kv.put(articleMemoryKey(title), now, { expirationTtl: ARTICLE_MEMORY_TTL }))
+	);
+}
+
+/** whether this pipeline already published something under that title */
+export async function wasArticlePublished(title: string, kv: KVNamespace): Promise<boolean> {
+	if (!title.trim()) return false;
+	return Boolean(await kv.get(articleMemoryKey(title)));
+}
+
+// #endregion
+
+/** the second slot samples from the least-related half of the eligible candidates */
+export const ARTICLE_DIVERSITY_TAIL_FRACTION = 0.5;
+
+/** below this the tail is too small for "distant" to mean anything, so take the best candidate */
+export const ARTICLE_DIVERSITY_MIN_TAIL = 3;
+
 /**
  * Choose which ranked articles to publish.
  *
- * Two rules, in order:
+ * Three rules, in order:
  *  1. prefer a general-audience piece for the primary slot, if one ranks inside
  *     {@link MAGAZINE_PREFERENCE_WINDOW};
- *  2. fill the second slot from a DIFFERENT scraper, so a run cannot publish two pieces from the
- *     same feed.
+ *  2. the second slot must come from a DIFFERENT scraper, so a run cannot publish two pieces from
+ *     the same feed;
+ *  3. draw that second slot by sampling the low-relevance tail of what is left, the same shape
+ *     `recommendActivity` uses for its `different` slot.
  *
- * Replaces "top-ranked plus bottom-ranked", which published the single article the reranker had
- * just judged least related to the topic and called it diversity.
+ * Rule 3 is the anti-echo-chamber part: taking the best remaining piece publishes two articles the
+ * ranker already agreed about. Sampling is what keeps it from degenerating into the old behaviour of
+ * publishing the reranker's single least-related result and calling that diversity.
  *
  * @param ranked entries sorted by score, best first
  * @param sourceOf resolves a ranked id back to its source annotation
+ * @param random override the sampler; defaults to `Math.random`
  */
 export function selectArticleIndices(
 	ranked: ReadonlyArray<{ id: number; score: number }>,
-	sourceOf: (id: number) => SourcedPage
+	sourceOf: (id: number) => SourcedPage,
+	random: () => number = Math.random
 ): number[] {
 	if (ranked.length === 0) return [];
 
@@ -413,11 +499,20 @@ export function selectArticleIndices(
 	const primary = window.find((entry) => sourceOf(entry.id).kind === 'magazine') ?? ranked[0]!;
 
 	const primaryScraper = sourceOf(primary.id).scraper;
-	const secondary = ranked.find(
+	const candidates = ranked.filter(
 		(entry) => entry.id !== primary.id && sourceOf(entry.id).scraper !== primaryScraper
 	);
+	if (candidates.length === 0) return [primary.id];
 
-	return secondary ? [primary.id, secondary.id] : [primary.id];
+	const tail = candidates.slice(
+		Math.floor(candidates.length * (1 - ARTICLE_DIVERSITY_TAIL_FRACTION))
+	);
+	const secondary =
+		tail.length >= ARTICLE_DIVERSITY_MIN_TAIL
+			? (tail[Math.floor(random() * tail.length)] ?? tail[tail.length - 1]!)
+			: candidates[0]!;
+
+	return [primary.id, secondary.id];
 }
 
 export async function findSourcedArticles(
@@ -927,13 +1022,15 @@ export async function recommendSimilarArticles(
 
 // Prompt Endpoints
 
-export async function createPrompt(ai: Ai) {
+export async function createPrompt(ai: Ai, variant?: prompts.PromptVariant) {
 	// each attempt draws a fresh random prefix/topic and re-validates, so a single refusal or
 	// off-spec generation doesn't fail the (hourly) cron run
 	const maxRetries = 3;
 	let lastError: Error | null = null;
 
 	for (let attempt = 1; attempt <= maxRetries; attempt++) {
+		// an unpinned caller re-draws per attempt, so the mix stays even and a refusal retries differently
+		const attemptVariant = variant ?? prompts.randomPromptVariant();
 		let gen: {
 			output: {
 				id: string;
@@ -947,8 +1044,8 @@ export async function createPrompt(ai: Ai) {
 
 		try {
 			gen = await ai.run(promptModel as any, {
-				instructions: prompts.promptsSystemMessage.trim(),
-				input: prompts.promptsQuestionPrompt().trim(),
+				instructions: prompts.promptsSystemMessage(attemptVariant).trim(),
+				input: prompts.promptsQuestionPrompt(attemptVariant).trim(),
 				reasoning: {
 					effort: 'medium',
 					summary: 'concise'
@@ -978,7 +1075,7 @@ export async function createPrompt(ai: Ai) {
 				?.text?.trim()
 				?.replace(/\n/g, ' ');
 
-			return prompts.validatePromptQuestion(rawPromptText || '');
+			return prompts.validatePromptQuestion(rawPromptText || '', attemptVariant);
 		} catch (validationError) {
 			lastError =
 				validationError instanceof Error ? validationError : new Error(String(validationError));

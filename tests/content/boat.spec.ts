@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+	articleMemoryKey,
+	ARTICLE_MEMORY_TTL,
 	articleTopicModel,
 	createActivityData,
+	dropAlreadyPublished,
+	rememberPublishedArticle,
+	wasArticlePublished,
 	createArticle,
 	createArticleQuiz,
 	createEvent,
@@ -28,7 +33,6 @@ import { postPrompt } from '../../src/util/mantle2';
 import { postActivity } from '../../src/util/mantle2';
 import { retrieveActivities } from '../../src/util/mantle2';
 import { ExactDateWithYearEntry } from '@earth-app/moho';
-import { com } from '@earth-app/ocean';
 import { env } from 'cloudflare:workers';
 import { MockKVNamespace } from '../helpers/mock-kv';
 import {
@@ -39,8 +43,16 @@ import {
 	type OceanArticle
 } from '../../src/util/types';
 
+const { searchAllSourced } = vi.hoisted(() => ({ searchAllSourced: vi.fn() }));
+
+vi.mock('../../src/content/scrape', async (importOriginal) => ({
+	...(await importOriginal<typeof import('../../src/content/scrape')>()),
+	searchAllSourced
+}));
+
 afterEach(() => {
 	vi.restoreAllMocks();
+	searchAllSourced.mockReset();
 });
 
 function createBindings(overrides: Partial<Bindings> = {}): Bindings {
@@ -269,13 +281,9 @@ describe('findArticle', () => {
 				)
 		};
 
-		vi.spyOn(com.earthapp.ocean.boat, 'searchAllAsPromise').mockResolvedValue({
-			asJsReadonlyArrayView: () => [
-				{
-					toJson: () => JSON.stringify(fakeOceanArticle)
-				}
-			]
-		} as any);
+		searchAllSourced.mockResolvedValue([
+			{ page: fakeOceanArticle, kind: 'journal', scraper: 'Source' }
+		]);
 
 		const bindings = createBindings({
 			AI: {
@@ -745,14 +753,16 @@ describe('recommendSimilarArticles', () => {
 describe('createPrompt', () => {
 	it('throws when ai output is empty', async () => {
 		const ai = { run: vi.fn(async () => ({ output: [] })) } as any;
-		await expect(createPrompt(ai)).rejects.toThrow('Failed to generate prompt');
+		await expect(createPrompt(ai, 'curiosity')).rejects.toThrow('Failed to generate prompt');
 	});
 
 	it('throws when output has no message entry', async () => {
 		const ai = {
 			run: vi.fn(async () => ({ output: [{ id: 'reason', type: 'reasoning', content: [] }] }))
 		} as any;
-		await expect(createPrompt(ai)).rejects.toThrow('No valid prompt message found in response');
+		await expect(createPrompt(ai, 'curiosity')).rejects.toThrow(
+			'No valid prompt message found in response'
+		);
 	});
 
 	it('retries when the model first returns a refusal and recovers on a later attempt', async () => {
@@ -777,9 +787,45 @@ describe('createPrompt', () => {
 			})
 		} as any;
 
-		const result = await createPrompt(ai);
+		const result = await createPrompt(ai, 'curiosity');
 		expect(result).toBe('How does curiosity shape the way people learn?');
 		expect(calls).toBeGreaterThanOrEqual(2);
+	});
+
+	it('generates a second-person question for the reflection variant', async () => {
+		const ai = {
+			run: vi.fn(async () => ({
+				output: [
+					{
+						id: 'msg',
+						type: 'message',
+						content: [
+							{ type: 'output_text', text: 'What do you notice on the walk you take most?' }
+						]
+					}
+				]
+			}))
+		} as any;
+
+		const result = await createPrompt(ai, 'reflection');
+		expect(result).toBe('What do you notice on the walk you take most?');
+		expect(ai.run.mock.calls[0][1].instructions).toContain('Address the reader directly');
+	});
+
+	it('rejects a third-person answer when the reflection variant was requested', async () => {
+		const ai = {
+			run: vi.fn(async () => ({
+				output: [
+					{
+						id: 'msg',
+						type: 'message',
+						content: [{ type: 'output_text', text: 'How does curiosity shape learning?' }]
+					}
+				]
+			}))
+		} as any;
+
+		await expect(createPrompt(ai, 'reflection')).rejects.toThrow('not second-person');
 	});
 });
 
@@ -1279,7 +1325,7 @@ describe('createPrompt', () => {
 			}))
 		} as any;
 
-		const result = await createPrompt(ai);
+		const result = await createPrompt(ai, 'curiosity');
 		expect(result).toBe('How can coastal cities reduce flood risk while restoring habitats?');
 	});
 });
@@ -1746,6 +1792,55 @@ describe('selectArticleIndices', () => {
 	it('returns nothing for an empty ranking', () => {
 		expect(selectArticleIndices([], () => sourced('journal', 'x'))).toEqual([]);
 	});
+
+	it('samples the second slot from the least-related half of the candidates', () => {
+		// primary is id 0; the other seven are all eligible, so the tail is ids 4..7
+		const ranked = Array.from({ length: 8 }, (_, i) => ({ id: i, score: 1 - i / 10 }));
+		const map = (id: number) => sourced('journal', `J${id}`);
+
+		const drawn = new Set<number>();
+		for (const draw of [0, 0.26, 0.51, 0.76, 0.999]) {
+			const [primary, secondary] = selectArticleIndices(ranked, map, () => draw);
+			expect(primary).toBe(0);
+			drawn.add(secondary!);
+		}
+
+		// every pick is inside the tail, and the whole tail is reachable
+		expect([...drawn].sort((a, b) => a - b)).toEqual([4, 5, 6, 7]);
+	});
+
+	it('never lands outside the tail however the sampler behaves', () => {
+		const ranked = Array.from({ length: 21 }, (_, i) => ({ id: i, score: 1 - i / 40 }));
+		const map = (id: number) => sourced('journal', `J${id}`);
+
+		for (const draw of [0, 0.5, 0.9999999, 1]) {
+			const [, secondary] = selectArticleIndices(ranked, map, () => draw);
+			expect(secondary).toBeGreaterThanOrEqual(11);
+			expect(secondary).toBeLessThanOrEqual(20);
+		}
+	});
+
+	it('keeps the tail sample inside the different-scraper set', () => {
+		const ranked = Array.from({ length: 10 }, (_, i) => ({ id: i, score: 1 - i / 20 }));
+		// ids 1, 3, 5, 7, 9 share the primary's scraper and must never be selected
+		const map = (id: number) => sourced('journal', id % 2 === 1 ? 'PubMed' : `J${id}`);
+		const primaryMap = (id: number) => (id === 0 ? sourced('journal', 'PubMed') : map(id));
+
+		for (const draw of [0, 0.34, 0.67, 0.99]) {
+			const [primary, secondary] = selectArticleIndices(ranked, primaryMap, () => draw);
+			expect(primary).toBe(0);
+			expect(secondary! % 2).toBe(0);
+		}
+	});
+
+	it('takes the best candidate when the tail is too small to be meaningful', () => {
+		// four eligible candidates means a two-entry tail, below ARTICLE_DIVERSITY_MIN_TAIL
+		const ranked = Array.from({ length: 5 }, (_, i) => ({ id: i, score: 1 - i / 10 }));
+		const map = (id: number) => sourced('journal', `J${id}`);
+
+		// a sampler that would otherwise reach for the very last entry
+		expect(selectArticleIndices(ranked, map, () => 0.999)).toEqual([0, 1]);
+	});
 });
 
 describe('pickLenses', () => {
@@ -1793,5 +1888,64 @@ describe('groundArticleLenses', () => {
 		const run = vi.fn();
 		expect(await groundArticleLenses('body', [], { run } as unknown as Ai)).toEqual([]);
 		expect(run).not.toHaveBeenCalled();
+	});
+});
+
+// nothing deduped generated articles at all, which is how `Glaciers will vanish by 2050` reached
+// the live catalogue twice with different lens tags
+describe('publication memory', () => {
+	const sourced = (title: string) => ({ page: { title } }) as any;
+
+	it('folds case, punctuation and spacing into one key', () => {
+		expect(articleMemoryKey('Glaciers will vanish by 2050')).toBe(
+			articleMemoryKey('GLACIERS WILL VANISH BY 2050!')
+		);
+		expect(articleMemoryKey("Education's Gender Gap")).toBe(
+			articleMemoryKey('Educations  Gender   Gap')
+		);
+		expect(articleMemoryKey('A')).not.toBe(articleMemoryKey('B'));
+	});
+
+	it('drops a source that was already published', async () => {
+		const kv = new MockKVNamespace();
+		await rememberPublishedArticle('Glaciers will vanish by 2050', 'Ice on Borrowed Time', kv);
+
+		const kept = await dropAlreadyPublished(
+			[sourced('Glaciers will vanish by 2050'), sourced('Coral reefs adapt to heat')],
+			kv as any
+		);
+
+		expect(kept.map((entry) => entry.page.title)).toEqual(['Coral reefs adapt to heat']);
+	});
+
+	it('remembers the generated title as well as the source', async () => {
+		const kv = new MockKVNamespace();
+		await rememberPublishedArticle('Glaciers will vanish by 2050', 'Ice on Borrowed Time', kv);
+
+		expect(await wasArticlePublished('Ice on Borrowed Time', kv as any)).toBe(true);
+		expect(await wasArticlePublished('ice on borrowed time', kv as any)).toBe(true);
+		expect(await wasArticlePublished('Something Else', kv as any)).toBe(false);
+		expect(await wasArticlePublished('   ', kv as any)).toBe(false);
+	});
+
+	it('expires the memory past the article lifetime rather than never', async () => {
+		const kv = new MockKVNamespace();
+		const put = vi.spyOn(kv, 'put');
+
+		await rememberPublishedArticle('Source', 'Generated', kv);
+
+		expect(ARTICLE_MEMORY_TTL).toBeGreaterThan(14 * 24 * 60 * 60);
+		expect(put).toHaveBeenCalledWith(expect.any(String), expect.any(String), {
+			expirationTtl: ARTICLE_MEMORY_TTL
+		});
+	});
+
+	// a topic whose every candidate was published still has to publish something
+	it('keeps every candidate rather than starving the run', async () => {
+		const kv = new MockKVNamespace();
+		await rememberPublishedArticle('Only Option', 'Only Option', kv);
+
+		const kept = await dropAlreadyPublished([sourced('Only Option')], kv as any);
+		expect(kept).toHaveLength(1);
 	});
 });

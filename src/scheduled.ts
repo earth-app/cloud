@@ -5,7 +5,9 @@ import {
 	createPrompt,
 	findArticle,
 	postEvent,
-	retrieveEvents
+	rememberPublishedArticle,
+	retrieveEvents,
+	wasArticlePublished
 } from './content/boat';
 import { postArticle, postPrompt } from './util/mantle2';
 import { runActivityDiscovery } from './content/discovery';
@@ -81,6 +83,13 @@ export default async function scheduled(
 				const article = await createArticle(ocean, env.AI, tags);
 				console.log('Created article content:', article.content?.slice(0, 100) + '...');
 
+				// two different sources can be rewritten into the same headline, which the
+				// source-level check before the reranker cannot see
+				if (await wasArticlePublished(article.title, env.KV)) {
+					console.warn(`Skipping ${rankLabel} article: "${article.title}" was already published`);
+					continue;
+				}
+
 				// quiz is best-effort — createArticleQuiz returns [] on failure, and the article
 				// is still posted (without a quiz) rather than dropped.
 				const quiz = await createArticleQuiz(article, env.AI);
@@ -89,6 +98,7 @@ export default async function scheduled(
 				}
 
 				await postArticle(article, quiz.length > 0 ? quiz : null, env);
+				await rememberPublishedArticle(ocean.title, article.title, env.KV);
 
 				console.log(
 					`Created new ${rankLabel} article and quiz: "${article.title}" | `,
