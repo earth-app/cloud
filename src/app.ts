@@ -1,5 +1,5 @@
-import { parseActivities, recommendActivity } from './content/recommend';
-import { Hono } from 'hono';
+import { parseActivities, recommendActivity, surpriseActivity } from './content/recommend';
+import { Hono, type Context } from 'hono';
 
 import {
 	ArticleQuizQuestion,
@@ -37,6 +37,14 @@ import {
 	batchProcess
 } from './util/util';
 import {
+	isUserIdShape,
+	rememberUserAlias,
+	resolveEntityId,
+	resolveUserId,
+	USER_ID_SHAPE_MESSAGE
+} from './util/ids';
+import { markOutdoorNudged, shouldNudgeOutdoors } from './user/outdoor';
+import {
 	getEventImageSubmissionsWithData,
 	getEventImage,
 	deleteEventImageSubmissions,
@@ -44,17 +52,29 @@ import {
 	submitEventImage
 } from './user/submissions';
 import { ImageSizes, getProfileVariation, newProfilePhoto } from './user/profile';
+import { activityFingerprint, applyActivityChange, getActivitySnapshot } from './user/activities';
+import {
+	buildPlanMenu,
+	formPlan,
+	getPlanOutcome,
+	getPlanStatus,
+	markPlanRehearsed,
+	savePlanMenu
+} from './user/plans';
+import { getMemories } from './user/memories';
 import { clearCachePrefix, tryCache } from './util/cache';
 import {
 	addActivityToJourney,
 	getActivityJourney,
 	getJourney,
+	getJourneyBest,
 	incrementJourney,
 	JOURNEY_TYPES,
 	resetJourney,
 	retrieveLeaderboard,
 	retrieveLeaderboardRank,
-	TOP_LEADERBOARD_COUNT
+	TOP_LEADERBOARD_COUNT,
+	touchJourney
 } from './user/journies';
 import {
 	BadgeTracker,
@@ -134,7 +154,8 @@ import {
 	getContentAnalytics,
 	getContentAnalyticsByOwner,
 	logEvent,
-	logTime
+	logTime,
+	tryLogEvent
 } from './content/analytics';
 import {
 	CustomQuestCreateInput,
@@ -209,7 +230,9 @@ import {
 	getExpeditionByOwner,
 	creditContribution,
 	computeGarden,
-	isExpeditionGoal
+	isExpeditionGoal,
+	getExpeditionsForActivity,
+	MAX_ACTIVITY_EXPEDITIONS
 } from './user/expeditions';
 import {
 	createTrailmark,
@@ -839,7 +862,7 @@ app.post('/articles/grade', async (c) => {
 });
 
 app.get('/articles/quiz', async (c) => {
-	const articleId = normalizeId(c.req.query('articleId') || '');
+	const articleId = await resolveEntityId(c.env, 'article', c.req.query('articleId') || '');
 	if (!articleId) {
 		return c.text('Article ID is required', 400);
 	}
@@ -905,8 +928,8 @@ app.get('/articles/quiz', async (c) => {
 });
 
 app.get('/articles/quiz/score', async (c) => {
-	const userId = normalizeId(c.req.query('userId') || '');
-	const articleId = normalizeId(c.req.query('articleId') || '');
+	const userId = await resolveUserId(c.env, c.req.query('userId') || '');
+	const articleId = await resolveEntityId(c.env, 'article', c.req.query('articleId') || '');
 	if (!userId || !articleId) {
 		return c.text('User ID and Article ID are required', 400);
 	}
@@ -956,14 +979,18 @@ app.post('/articles/quiz/submit', async (c) => {
 	}
 
 	const userId = normalizeId(body.userId);
-	const id = normalizeId(body.articleId);
+	const id = await resolveEntityId(c.env, 'article', body.articleId);
+	if (!id) {
+		return c.text('Article not found', 404);
+	}
+
 	const scoreKey = `article:quiz_score:${userId}:${id}`;
 	const existingScore = await c.env.KV.get(scoreKey);
 	if (existingScore) {
 		return c.text('Quiz has already been submitted for this article by the user', 409);
 	}
 
-	const key = `article:quiz:${normalizeId(body.articleId)}`;
+	const key = `article:quiz:${id}`;
 	const quizData = await c.env.KV.get<ArticleQuizQuestion[]>(key, 'json');
 	if (!quizData) {
 		return c.text('Quiz not found for the specified article', 404);
@@ -1066,6 +1093,14 @@ app.post('/articles/quiz/submit', async (c) => {
 			// increment badge progress
 			addBadgeProgress(userId, 'article_quizzes_completed', id, c.env.KV),
 
+			tryLogEvent(
+				'article_quiz_completed',
+				id,
+				userId,
+				{ score: String(score), total: String(quizData.length) },
+				c.env
+			),
+
 			// handle article_quiz quest steps (rank gates delay reduction/bypass for the auto-advance)
 			handleQuizQuestStep(
 				userId,
@@ -1110,7 +1145,12 @@ app.post('/articles/quiz/create', async (c) => {
 		);
 	}
 
-	const key = `article:quiz:${normalizeId(body.article.id)}`;
+	const articleKey = await resolveEntityId(c.env, 'article', String(body.article.id ?? ''));
+	if (!articleKey) {
+		return c.text('Article not found', 404);
+	}
+
+	const key = `article:quiz:${articleKey}`;
 	await c.env.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 24 * 14 }); // cache for 14 days
 
 	// Convert correct_answer_index for true/false questions with -1 index
@@ -1222,7 +1262,12 @@ app.post('/articles/quiz/create_manual', async (c) => {
 		}
 	}
 
-	const key = `article:quiz:${normalizeId(body.articleId)}`;
+	const quizArticleId = await resolveEntityId(c.env, 'article', body.articleId);
+	if (!quizArticleId) {
+		return c.text('Article not found', 404);
+	}
+
+	const key = `article:quiz:${quizArticleId}`;
 	await c.env.KV.put(key, JSON.stringify(body.quiz)); // no expiration, quiz is persistent
 
 	return c.json({ message: 'Quiz created or updated successfully' }, 201);
@@ -1234,7 +1279,12 @@ app.delete('/articles/quiz/delete', async (c) => {
 		return c.text('Article ID is required', 400);
 	}
 
-	const key = `article:quiz:${normalizeId(articleId)}`;
+	const resolved = await resolveEntityId(c.env, 'article', articleId);
+	if (!resolved) {
+		return c.text('Article not found', 404);
+	}
+
+	const key = `article:quiz:${resolved}`;
 	await c.env.KV.delete(key);
 
 	return c.json({ message: 'Quiz deleted successfully' }, 200);
@@ -1243,13 +1293,19 @@ app.delete('/articles/quiz/delete', async (c) => {
 // Users
 
 app.delete('/users/:id', async (c) => {
-	const id = c.req.param('id')?.trim();
+	let id = c.req.param('id')?.trim();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
+	}
+
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const id0 = normalizeId(id);
@@ -1312,6 +1368,35 @@ app.post('/users/recommend_activities', async (c) => {
 	});
 
 	return c.json(recommended, 200);
+});
+
+// the 470-item catalog reads as a searchable list; this is the "show me something I would never
+// have picked" draw, sampled from the distant tail so a re-roll stays surprising
+app.post('/users/surprise_activity', async (c) => {
+	let body: { all?: unknown; user?: unknown };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Invalid request body format', 400);
+	}
+
+	if (!Array.isArray(body?.all)) {
+		return c.text('Invalid request body format', 400);
+	}
+
+	const all = parseActivities(body.all);
+	const user = parseActivities(body.user);
+
+	if (all.length === 0) {
+		return c.text('No activities provided', 400);
+	}
+
+	const surprise = surpriseActivity(all, user);
+	if (!surprise) {
+		return c.text('No unexpected activity available', 404);
+	}
+
+	return c.json(surprise, 200);
 });
 
 app.get('/users/profile_photo/:id', async (c) => {
@@ -1385,6 +1470,155 @@ app.put('/users/profile_photo/:id', async (c) => {
 	return c.json({ data: toDataURL(photo) });
 });
 
+// mantle2 calls this after any activity mutation; the slow work runs on the execution context so
+// the caller's PATCH is not held open for an image generation
+app.post('/users/:id/activities/changed', async (c) => {
+	const idParam = c.req.param('id');
+	if (!idParam || !/^\d+$/.test(idParam)) {
+		return c.text('User ID is required', 400);
+	}
+
+	if (BigInt(idParam) <= 0n) {
+		return c.text('Invalid User ID', 400);
+	}
+
+	let body: prompts.UserProfilePromptData & { activity_ids?: unknown };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Request body must be valid JSON matching UserProfilePromptData', 400);
+	}
+
+	if (!body || typeof body !== 'object' || !Array.isArray(body.activities)) {
+		return c.text('Request body must include an activities array', 400);
+	}
+
+	const activityIds = Array.isArray(body.activity_ids)
+		? body.activity_ids.filter((id): id is string => typeof id === 'string')
+		: undefined;
+
+	try {
+		const result = await applyActivityChange(idParam, body, c.env, c.executionCtx, activityIds);
+		return c.json(result, 200);
+	} catch (err) {
+		console.error(`Error applying activity change for user '${idParam}':`, err);
+		return c.json({ message: 'Failed to apply activity change' }, 500);
+	}
+});
+
+// resolves either id shape onto the numeric one kv is keyed on; null means "no such user"
+async function pathUserId(c: Context): Promise<string | null> {
+	const idParam = c.req.param('id')?.toLowerCase();
+	if (!isUserIdShape(idParam)) return null;
+
+	const resolved = await resolveUserId(c.env, idParam);
+	if (!resolved) return null;
+	if (BigInt(resolved) <= 0n) return null;
+
+	return resolved;
+}
+
+app.post('/users/:id/plan/menu', async (c) => {
+	const id = await pathUserId(c);
+	if (!id) return c.text('User ID is required', 400);
+
+	let body: { places?: unknown; activities?: unknown };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Request body must be valid JSON', 400);
+	}
+
+	// the gate is an expressed intention: planning only pays off when the goal is already wanted
+	// (d=.79 for motivated participants), and the user's activities are the app's record of that
+	if (!Array.isArray(body?.activities) || body.activities.length === 0) {
+		return c.json({ message: 'Set your activities before making a plan' }, 409);
+	}
+
+	const menu = buildPlanMenu({ places: body.places, activities: body.activities });
+	if (!menu.cues.length || !menu.responses.length) {
+		return c.json({ message: 'Not enough context to build a plan menu' }, 409);
+	}
+
+	await savePlanMenu(c.env, id, menu);
+	return c.json(menu, 200);
+});
+
+app.post('/users/:id/plan', async (c) => {
+	const id = await pathUserId(c);
+	if (!id) return c.text('User ID is required', 400);
+
+	let body: { cue_id?: unknown; response_id?: unknown };
+	try {
+		body = await c.req.json();
+	} catch {
+		return c.text('Request body must be valid JSON', 400);
+	}
+
+	try {
+		const result = await formPlan(c.env, id, body?.cue_id, body?.response_id);
+		return c.json(result, 201);
+	} catch (err) {
+		const message = err instanceof Error ? err.message : 'Failed to form plan';
+		const conflict = message === 'A plan is already active';
+		return c.json({ message }, conflict ? 409 : 400);
+	}
+});
+
+app.post('/users/:id/plan/rehearsed', async (c) => {
+	const id = await pathUserId(c);
+	if (!id) return c.text('User ID is required', 400);
+
+	const marked = await markPlanRehearsed(c.env, id);
+	if (!marked) return c.json({ message: 'No active plan' }, 404);
+	return c.json({ rehearsed: true }, 200);
+});
+
+// deliberately never returns the plan text: a re-readable plan is the weaker condition
+// (d=.31 vs .44), so the record holds ids only and there is nothing to hand back
+app.get('/users/:id/plan/status', async (c) => {
+	const id = await pathUserId(c);
+	if (!id) return c.text('User ID is required', 400);
+
+	return c.json(await getPlanStatus(c.env, id), 200);
+});
+
+app.get('/users/:id/plan/outcome', async (c) => {
+	const id = await pathUserId(c);
+	if (!id) return c.text('User ID is required', 400);
+
+	return c.json(await getPlanOutcome(c.env, id), 200);
+});
+
+// what the user did on this month/day in an earlier year; quest history and the trail journal are
+// the only rows that outlive a year, and neither is written to here
+app.get('/users/:id/memories', async (c) => {
+	const id = await pathUserId(c);
+	if (!id) return c.text('User ID is required', 400);
+
+	const rank = normalizeQuestRank(c.req.query('rank'));
+	const memories = await getMemories(c.env, id, new Date(), journalCap(rank));
+	return c.json({ memories }, 200);
+});
+
+// mantle2's cron asks this per account at a sensible local hour; it knows the timezone, this knows
+// the state. `mark=1` stamps the send so the once-a-day gate holds.
+app.get('/users/:id/outdoor_nudge', async (c) => {
+	const id = await pathUserId(c);
+	if (!id) return c.text('User ID is required', 400);
+
+	const lat = Number(c.req.query('lat'));
+	const lon = Number(c.req.query('lon'));
+	const coords = Number.isFinite(lat) && Number.isFinite(lon) ? { lat, lon } : undefined;
+
+	const decision = await shouldNudgeOutdoors(c.env, id, coords);
+	if (decision.send && c.req.query('mark') === '1') {
+		await markOutdoorNudged(c.env, id);
+	}
+
+	return c.json(decision, 200);
+});
+
 app.post('/users/recommend_articles', async (c) => {
 	const body = await c.req.json<{
 		pool: Article[];
@@ -1442,17 +1676,19 @@ app.post('/users/recommend_articles', async (c) => {
 /// User Journeys
 
 app.get('/users/journey/activity/:id/count', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('Journey ID is required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('Journey ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`Journey ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -1495,19 +1731,39 @@ app.get('/users/journey/:type/leaderboard', async (c) => {
 	}
 });
 
+// mantle2 primes this when it creates a user, so the account's first request resolves from kv
+// instead of paying for a lookup back to mantle2
+app.post('/users/alias', async (c) => {
+	const body = await c.req.json<{ uuid?: string; id?: string | number }>().catch(() => null);
+	const uuid = body?.uuid?.toLowerCase();
+	const id = body?.id === undefined ? '' : String(body.id);
+	if (!uuid || !id) {
+		return c.text('uuid and id are required', 400);
+	}
+
+	const stored = await rememberUserAlias(c.env, uuid, id);
+	if (!stored) {
+		return c.text('uuid must be 32 hex characters and id must be numeric', 400);
+	}
+
+	return c.json({ uuid, id: normalizeId(id) }, 200);
+});
+
 app.get('/users/journey/:type/:id/rank', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
 		return c.text('Journey ID and type are required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('Journey ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`Journey ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	if (type.length < 3 || type.length > 50) {
@@ -1528,18 +1784,20 @@ app.get('/users/journey/:type/:id/rank', async (c) => {
 });
 
 app.get('/users/journey/:type/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
 		return c.text('Journey ID and type are required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('Journey ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`Journey ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	if (type.length < 3 || type.length > 50) {
@@ -1552,8 +1810,11 @@ app.get('/users/journey/:type/:id', async (c) => {
 
 	try {
 		const [count, lastWrite] = await getJourney(id, type, c.env.KV);
-		const rank = await retrieveLeaderboardRank(id, type, c.env.KV, c.env.CACHE);
-		return c.json({ count, lastWrite, rank }, 200);
+		const [rank, best] = await Promise.all([
+			retrieveLeaderboardRank(id, type, c.env.KV, c.env.CACHE),
+			getJourneyBest(id, type, c.env.KV)
+		]);
+		return c.json({ count, lastWrite, rank, best }, 200);
 	} catch (err) {
 		console.error(`Error getting journey '${type}' for ID '${id}':`, err);
 		return c.text('Failed to get journey', 500);
@@ -1561,18 +1822,20 @@ app.get('/users/journey/:type/:id', async (c) => {
 });
 
 app.post('/users/journey/activity/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const activity = c.req.query('activity')?.toLowerCase();
 	if (!id || !activity) {
 		return c.text('Journey ID and activity are required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('Journey ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`Journey ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -1593,18 +1856,20 @@ app.post('/users/journey/activity/:id', async (c) => {
 });
 
 app.post('/users/journey/:type/:id/increment', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
 		return c.text('Journey ID and type are required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('Journey ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`Journey ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	if (type.length < 3 || type.length > 50) {
@@ -1617,15 +1882,8 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 
 	const [value, lastWrite] = await getJourney(id, type, c.env.KV);
 	if (Date.now() - lastWrite < 60 * 60 * 24 * 1000) {
-		// Bump expirationTtl
-		const normalizedId = normalizeId(id);
-		const key = `journey:${type}:${normalizedId}`;
-		c.executionCtx.waitUntil(
-			c.env.KV.put(key, value.toString(), {
-				expirationTtl: 60 * 60 * 24 * 2,
-				metadata: { lastWrite: Date.now() }
-			})
-		);
+		// already acted today; keep the window open without losing the streak
+		c.executionCtx.waitUntil(touchJourney(id, type, value, c.env.KV));
 
 		return c.json({ count: value }, 200);
 	}
@@ -1640,18 +1898,20 @@ app.post('/users/journey/:type/:id/increment', async (c) => {
 });
 
 app.delete('/users/journey/:type/:id/delete', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const type = c.req.param('type')?.toLowerCase();
 	if (!id || !type) {
 		return c.text('Journey ID and type are required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('Journey ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`Journey ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('Journey ID must be between 3 and 50 characters', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	if (type.length < 3 || type.length > 50) {
@@ -1684,17 +1944,19 @@ app.get('/users/badges', async (c) => {
 });
 
 app.get('/users/badges/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -1737,18 +1999,20 @@ app.get('/users/badges/:id', async (c) => {
 });
 
 app.get('/users/badges/:id/:badge_id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
 	if (!id || !badgeId) {
 		return c.text('User ID and Badge ID are required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const badgeData = badges.find((b) => b.id === badgeId);
@@ -1790,18 +2054,20 @@ app.get('/users/badges/:id/:badge_id', async (c) => {
 });
 
 app.post('/users/badges/:id/:badge_id/grant', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
 	if (!id || !badgeId) {
 		return c.text('User ID and Badge ID are required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -1840,17 +2106,19 @@ app.post('/users/badges/:id/:badge_id/grant', async (c) => {
 });
 
 app.post('/users/badges/:id/track', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const body = await c.req.json<{ tracker_id: string; value: string | string[] | number }>();
@@ -1905,18 +2173,20 @@ app.post('/users/badges/:id/track', async (c) => {
 });
 
 app.post('/users/badges/:id/:badge_id/progress', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
 	if (!id || !badgeId) {
 		return c.text('User ID and Badge ID are required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -1977,18 +2247,20 @@ app.post('/users/badges/:id/:badge_id/progress', async (c) => {
 });
 
 app.delete('/users/badges/:id/:badge_id/revoke', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
 	if (!id || !badgeId) {
 		return c.text('User ID and Badge ID are required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -2006,18 +2278,20 @@ app.delete('/users/badges/:id/:badge_id/revoke', async (c) => {
 });
 
 app.delete('/users/badges/:id/:badge_id/reset', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
 	if (!id || !badgeId) {
 		return c.text('User ID and Badge ID are required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -2037,18 +2311,20 @@ app.delete('/users/badges/:id/:badge_id/reset', async (c) => {
 /// Badge Mastery
 
 app.get('/users/badges/:id/:badge_id/mastery', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
 	if (!id || !badgeId) {
 		return c.text('User ID and Badge ID are required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -2099,18 +2375,20 @@ app.get('/users/badges/:id/:badge_id/mastery', async (c) => {
 });
 
 app.post('/users/badges/:id/:badge_id/mastery/generate', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	const badgeId = c.req.param('badge_id')?.toLowerCase();
 	if (!id || !badgeId) {
 		return c.text('User ID and Badge ID are required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const badge = badges.find((b) => b.id === badgeId);
@@ -2175,11 +2453,17 @@ app.post('/users/badges/:id/:badge_id/mastery/generate', async (c) => {
 });
 
 app.get('/users/:id/badges/masteries', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) return c.text('User ID is required', 400);
-	if (id.length < 3 || id.length > 50)
-		return c.text('User ID must be between 3 and 50 characters', 400);
-	if (!/^\d+$/.test(id)) return c.text('User ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
+	}
+
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
+	}
 
 	try {
 		const items = await listMasteryQuests(id, c.env.KV);
@@ -2202,9 +2486,15 @@ app.get('/users/:id/badges/masteries', async (c) => {
 /// User Referrals
 
 app.get('/users/referral/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
-	if (!id || !/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	let id = c.req.param('id')?.toLowerCase();
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
+	}
+
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -2217,9 +2507,15 @@ app.get('/users/referral/:id', async (c) => {
 });
 
 app.get('/users/referral/:id/stats', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
-	if (!id || !/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	let id = c.req.param('id')?.toLowerCase();
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
+	}
+
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -2360,17 +2656,19 @@ app.get('/users/impact_points/leaderboard', async (c) => {
 });
 
 app.get('/users/impact_points/:id/rank', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -2383,13 +2681,19 @@ app.get('/users/impact_points/:id/rank', async (c) => {
 });
 
 app.get('/users/impact_points/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
+	}
+
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -2402,17 +2706,19 @@ app.get('/users/impact_points/:id', async (c) => {
 });
 
 app.post('/users/impact_points/:id/add', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const body = await c.req.json<{ points: number; reason?: string }>();
@@ -2455,17 +2761,19 @@ app.post('/users/impact_points/:id/add', async (c) => {
 });
 
 app.post('/users/impact_points/:id/remove', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const body = await c.req.json<{ points: number; reason?: string }>();
@@ -2492,17 +2800,19 @@ app.post('/users/impact_points/:id/remove', async (c) => {
 });
 
 app.put('/users/impact_points/:id/set', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (id.length < 3 || id.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(id)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(id)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	id = (await resolveUserId(c.env, id)) ?? '';
+	if (!id) {
+		return c.text('User not found', 404);
 	}
 
 	const body = await c.req.json<{ points: number; reason?: string }>();
@@ -2537,7 +2847,7 @@ app.get('/users/quests', async (c) => {
 });
 
 app.get('/users/quests/:id', async (c) => {
-	const id = c.req.param('id')?.toLowerCase();
+	let id = c.req.param('id')?.toLowerCase();
 	if (!id) {
 		return c.text('Quest ID is required', 400);
 	}
@@ -2552,13 +2862,16 @@ app.get('/users/quests/:id', async (c) => {
 
 	// per-user quests (mastery, activity) need the requester id to resolve; optional for
 	// catalog/custom quests which are user-agnostic
-	const userId = c.req.query('user_id')?.toLowerCase();
+	let userId = c.req.query('user_id')?.toLowerCase();
 	if (userId !== undefined) {
-		if (userId.length < 3 || userId.length > 50) {
-			return c.text('User ID must be between 3 and 50 characters', 400);
+		if (!isUserIdShape(userId)) {
+			return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 		}
-		if (!/^\d+$/.test(userId)) {
-			return c.text('User ID must be numeric', 400);
+
+		// a uuid from the api resolves to the numeric id every kv key here is written under
+		userId = (await resolveUserId(c.env, userId)) ?? '';
+		if (!userId) {
+			return c.text('User not found', 404);
 		}
 	}
 
@@ -2586,17 +2899,19 @@ function normalizeQuestRank(rank?: string): string | null {
 
 // start new quest (will override existing progress)
 app.post('/users/quests/progress/:user_id/start', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	let body: { quest_id: string; rank?: string };
@@ -2680,20 +2995,22 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 		c.header('Server-Timing', entries.join(', '));
 	};
 
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		writeServerTiming();
 		return c.json({ message: 'User ID is required', code: 400 }, 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
+	if (!isUserIdShape(userId)) {
 		writeServerTiming();
-		return c.json({ message: 'User ID must be between 3 and 50 characters', code: 400 }, 400);
+		return c.json({ message: `User ${USER_ID_SHAPE_MESSAGE}`, code: 400 }, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
 		writeServerTiming();
-		return c.json({ message: 'User ID must be numeric', code: 400 }, 400);
+		return c.json({ message: 'User not found', code: 404 }, 404);
 	}
 
 	let body: {
@@ -2937,17 +3254,19 @@ app.patch('/users/quests/progress/:user_id/update', async (c) => {
 });
 
 app.delete('/users/quests/progress/:user_id/reset', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	const stepParam = c.req.query('step');
@@ -3018,17 +3337,19 @@ app.delete('/users/quests/progress/:user_id/reset', async (c) => {
 });
 
 app.get('/users/quests/progress/:user_id', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -3052,18 +3373,20 @@ app.get('/users/quests/progress/:user_id', async (c) => {
 
 // get progress for a specific step index
 app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	const stepIndexParam = c.req.param('step_index');
 	if (!userId || !stepIndexParam) {
 		return c.text('User ID and step index are required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	const stepIndex = parseInt(stepIndexParam, 10);
@@ -3118,17 +3441,19 @@ app.get('/users/quests/progress/:user_id/step/:step_index', async (c) => {
 
 // get list of completed quests for a user
 app.get('/users/quests/history/:user_id', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	const page = Math.max(1, parseInt(c.req.query('page') ?? '1', 10) || 1);
@@ -3193,18 +3518,20 @@ app.get('/users/quests/history/:user_id', async (c) => {
 
 // get completed progress for a specific quest
 app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	const questId = c.req.param('quest_id')?.toLowerCase();
 	if (!userId || !questId) {
 		return c.text('User ID and Quest ID are required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	if (questId.length < 3 || questId.length > 80) {
@@ -3226,7 +3553,10 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 		if (!result) {
 			return c.text('Completed quest not found', 404);
 		}
-		const enrichedProgress = await enrichProgressEntries(result.progress, c.env);
+		// `?image=first` serves one thumbnail instead of a base64 copy of every image in the quest
+		const enrichedProgress = await enrichProgressEntries(result.progress, c.env, {
+			firstImageOnly: c.req.query('image') === 'first'
+		});
 		return c.json({ ...result, quest: result.quest ?? quest, progress: enrichedProgress }, 200);
 	} catch (err) {
 		console.error(`Error getting completed quest '${questId}' for user '${userId}':`, err);
@@ -3236,17 +3566,19 @@ app.get('/users/quests/history/:user_id/:quest_id', async (c) => {
 
 // delete every completed quest from a user's history (admin moderation)
 app.delete('/users/quests/history/:user_id', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	try {
@@ -3271,18 +3603,20 @@ app.delete('/users/quests/history/:user_id', async (c) => {
 
 // delete a single completed quest from a user's history (admin moderation)
 app.delete('/users/quests/history/:user_id/:quest_id', async (c) => {
-	const userId = c.req.param('user_id')?.toLowerCase();
+	let userId = c.req.param('user_id')?.toLowerCase();
 	const questId = c.req.param('quest_id')?.toLowerCase();
 	if (!userId || !questId) {
 		return c.text('User ID and Quest ID are required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	if (questId.length < 3 || questId.length > 80) {
@@ -3319,17 +3653,19 @@ app.delete('/users/quests/history/:user_id/:quest_id', async (c) => {
 /// Custom Quests
 
 app.post('/users/quests/custom', async (c) => {
-	const userId = c.req.query('user_id')?.toLowerCase();
+	let userId = c.req.query('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	const { title, description, icon, steps, permissions, reward } =
@@ -3373,17 +3709,19 @@ app.post('/users/quests/custom', async (c) => {
 });
 
 app.patch('/users/quests/custom/:quest_id', async (c) => {
-	const userId = c.req.query('user_id')?.toLowerCase();
+	let userId = c.req.query('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	const questId = c.req.param('quest_id')?.toLowerCase();
@@ -3440,17 +3778,19 @@ app.patch('/users/quests/custom/:quest_id', async (c) => {
 });
 
 app.delete('/users/quests/custom/:quest_id', async (c) => {
-	const userId = c.req.query('user_id')?.toLowerCase();
+	let userId = c.req.query('user_id')?.toLowerCase();
 	if (!userId) {
 		return c.text('User ID is required', 400);
 	}
 
-	if (userId.length < 3 || userId.length > 50) {
-		return c.text('User ID must be between 3 and 50 characters', 400);
+	if (!isUserIdShape(userId)) {
+		return c.text(`User ${USER_ID_SHAPE_MESSAGE}`, 400);
 	}
 
-	if (!/^\d+$/.test(userId)) {
-		return c.text('User ID must be numeric', 400);
+	// a uuid from the api resolves to the numeric id every kv key here is written under
+	userId = (await resolveUserId(c.env, userId)) ?? '';
+	if (!userId) {
+		return c.text('User not found', 404);
 	}
 
 	const questId = c.req.param('quest_id')?.toLowerCase();
@@ -3482,13 +3822,18 @@ app.delete('/users/quests/custom/:quest_id', async (c) => {
 
 // Events
 
-function parsePositiveEventId(idParam: string | undefined): bigint | null {
-	if (!idParam || !/^\d+$/.test(idParam)) {
+// takes either id shape; r2 keys the thumbnail on the numeric one
+async function parsePositiveEventId(
+	env: Bindings,
+	idParam: string | undefined
+): Promise<bigint | null> {
+	const resolved = await resolveEntityId(env, 'event', idParam ?? '');
+	if (!resolved) {
 		return null;
 	}
 
 	try {
-		const id = BigInt(idParam);
+		const id = BigInt(resolved);
 		return id > 0n ? id : null;
 	} catch {
 		return null;
@@ -3525,7 +3870,7 @@ function buildEventThumbnailHeaders(
 }
 
 app.get('/events/thumbnail/:id', async (c) => {
-	const id = parsePositiveEventId(c.req.param('id'));
+	const id = await parsePositiveEventId(c.env, c.req.param('id'));
 	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
@@ -3544,7 +3889,7 @@ app.get('/events/thumbnail/:id', async (c) => {
 });
 
 app.get('/events/thumbnail/:id/metadata', async (c) => {
-	const id = parsePositiveEventId(c.req.param('id'));
+	const id = await parsePositiveEventId(c.env, c.req.param('id'));
 	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
@@ -3572,7 +3917,7 @@ app.get('/events/thumbnail/:id/metadata', async (c) => {
 });
 
 app.post('/events/thumbnail/:id', async (c) => {
-	const id = parsePositiveEventId(c.req.param('id'));
+	const id = await parsePositiveEventId(c.env, c.req.param('id'));
 	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
@@ -3613,7 +3958,7 @@ app.post('/events/thumbnail/:id', async (c) => {
 });
 
 app.post('/events/thumbnail/:id/generate', async (c) => {
-	const id = parsePositiveEventId(c.req.param('id'));
+	const id = await parsePositiveEventId(c.env, c.req.param('id'));
 	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
@@ -3655,7 +4000,7 @@ app.post('/events/thumbnail/:id/generate', async (c) => {
 });
 
 app.delete('/events/thumbnail/:id', async (c) => {
-	const id = parsePositiveEventId(c.req.param('id'));
+	const id = await parsePositiveEventId(c.env, c.req.param('id'));
 	if (id === null) {
 		return c.text('Invalid Event ID', 400);
 	}
@@ -3769,8 +4114,8 @@ app.post('/events/submit_image', async (c) => {
 		return c.text('Invalid request body', 400);
 	}
 
-	const idParam = body.event.id;
-	if (!idParam || !/^\d+$/.test(idParam)) {
+	const idParam = await resolveEntityId(c.env, 'event', String(body.event.id ?? ''));
+	if (!idParam) {
 		return c.text('Event ID is required', 400);
 	}
 	const id = BigInt(idParam);
@@ -4456,6 +4801,7 @@ app.post('/circles/:owner/expedition', async (c) => {
 		target?: number;
 		ends_at?: string;
 		members?: { uid: string; username: string }[];
+		activity_id?: string;
 	};
 	try {
 		body = await c.req.json();
@@ -4477,10 +4823,25 @@ app.post('/circles/:owner/expedition', async (c) => {
 		goal: body.goal,
 		target: typeof body.target === 'number' ? body.target : 120,
 		ends_at: body.ends_at,
-		members: Array.isArray(body.members) ? body.members : []
+		members: Array.isArray(body.members) ? body.members : [],
+		...(typeof body.activity_id === 'string' ? { activity_id: body.activity_id } : {})
 	});
 
 	return c.json(exp, 201);
+});
+
+// open expeditions gathered around one activity; the join surface for a shared interest
+app.get('/activities/:id/expeditions', async (c) => {
+	const activityId = c.req.param('id');
+	if (!activityId || activityId.length > 64) {
+		return c.text('Valid activity id is required', 400);
+	}
+
+	const limitRaw = parseInt(c.req.query('limit') || '', 10);
+	const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? limitRaw : MAX_ACTIVITY_EXPEDITIONS;
+
+	const expeditions = await getExpeditionsForActivity(c.env, activityId, limit);
+	return c.json({ total: expeditions.length, expeditions }, 200);
 });
 
 app.get('/circles/:owner/expedition', async (c) => {
@@ -4549,7 +4910,12 @@ app.get('/circles/:owner/garden', async (c) => {
 	const extraMinutes = Number.isFinite(minutesRaw) && minutesRaw > 0 ? minutesRaw : 0;
 
 	const exp = await getExpeditionByOwner(c.env, owner);
-	const garden = computeGarden(owner, exp, { animated, extraMinutes });
+	const activities = await getActivitySnapshot(owner, c.env.KV);
+	const garden = computeGarden(owner, exp, {
+		animated,
+		extraMinutes,
+		activityFingerprint: activityFingerprint(activities)
+	});
 	return c.json(garden, 200);
 });
 
@@ -4595,7 +4961,11 @@ app.get('/trailmarks', async (c) => {
 		Number.isFinite(radiusRaw) && radiusRaw > 0 ? radiusRaw : TRAILMARK_LIMITS.DEFAULT_RADIUS;
 
 	const viewer = c.req.query('viewer') || c.req.query('user_id') || undefined;
-	const marks = await getNearbyTrailmarks(c.env, lat, lng, radius, viewer);
+	// activity scoping: `activity` narrows to one activity, `shared=true` to the viewer's own set
+	const marks = await getNearbyTrailmarks(c.env, lat, lng, radius, viewer, {
+		activityId: c.req.query('activity') || undefined,
+		sharedOnly: c.req.query('shared') === 'true'
+	});
 	return c.json(marks, 200);
 });
 
@@ -4606,6 +4976,7 @@ app.post('/trailmarks', async (c) => {
 		geo?: { lat?: number; lng?: number; place_label?: string };
 		note?: string;
 		prompt_id?: string;
+		activity_id?: string;
 	};
 	try {
 		body = await c.req.json();
@@ -4629,7 +5000,8 @@ app.post('/trailmarks', async (c) => {
 			author_username: body.author_username,
 			geo: { lat: body.geo.lat, lng: body.geo.lng, place_label: body.geo.place_label },
 			note: body.note || '',
-			...(typeof body.prompt_id === 'string' ? { prompt_id: body.prompt_id } : {})
+			...(typeof body.prompt_id === 'string' ? { prompt_id: body.prompt_id } : {}),
+			...(typeof body.activity_id === 'string' ? { activity_id: body.activity_id } : {})
 		},
 		c.executionCtx
 	);

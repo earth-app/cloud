@@ -7,6 +7,7 @@ import { createMockAiRun } from './helpers/mock-ai';
 import { Quest } from '../src/user/quests';
 import { CustomQuest } from '../src/user/quests/custom';
 import { API_DEVICE_METADATA } from '../src/user/quests/validation';
+import type { Bindings } from '../src/util/types';
 
 function appRequest(path: string, init: RequestInit = {}, authenticated: boolean = true) {
 	const headers = new Headers(init.headers);
@@ -138,6 +139,7 @@ describe('app route registration', () => {
 				'POST /users/timer',
 				'GET /users/journey/activity/:id/count',
 				'GET /users/journey/:type/leaderboard',
+				'POST /users/alias',
 				'GET /users/journey/:type/:id/rank',
 				'GET /users/journey/:type/:id',
 				'POST /users/journey/activity/:id',
@@ -901,6 +903,375 @@ describe('GET /users/profile_photo/:id', () => {
 	});
 });
 
+// sdxl output under MIN_PROFILE_BYTES (1024) is treated as corrupt, so the stream must clear it
+function imageAi() {
+	return {
+		run: vi.fn(
+			async () =>
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						controller.enqueue(new Uint8Array(2048).fill(7));
+						controller.close();
+					}
+				})
+		)
+	} as never;
+}
+
+describe('if-then plan routes', () => {
+	const body = (value: unknown) => ({ method: 'POST', body: JSON.stringify(value) });
+	const PLAN_BODY = { places: ['Sycamore Park'], activities: [{ id: 'hiking', name: 'Hiking' }] };
+
+	it('rejects a malformed user id', async () => {
+		const bad = await callApp('/users/abc/plan/menu', body(PLAN_BODY));
+		expect(bad.status).toBe(400);
+
+		const zero = await callApp('/users/0/plan/menu', body(PLAN_BODY));
+		expect(zero.status).toBe(400);
+	});
+
+	it('rejects a non-JSON body', async () => {
+		const response = await callApp('/users/1/plan/menu', {
+			method: 'POST',
+			body: 'not json',
+			headers: { 'Content-Type': 'application/json' }
+		});
+		expect(response.status).toBe(400);
+	});
+
+	// planning only pays off when the goal is already wanted, so the route refuses to build a menu
+	// for a user who has declared no interests
+	it('refuses a menu until the user has activities', async () => {
+		const response = await callApp('/users/1/plan/menu', body({ places: ['Sycamore Park'] }));
+		expect(response.status).toBe(409);
+
+		const empty = await callApp('/users/1/plan/menu', body({ activities: [] }));
+		expect(empty.status).toBe(409);
+	});
+
+	it('builds a menu, forms one plan, and refuses a second', async () => {
+		const bindings = createMockBindings();
+
+		const menuResponse = await callApp('/users/1/plan/menu', body(PLAN_BODY), true, bindings);
+		expect(menuResponse.status).toBe(200);
+		const menu = (await menuResponse.json()) as {
+			cues: { id: string; text: string }[];
+			responses: { id: string; text: string }[];
+		};
+		expect(menu.cues.length).toBeGreaterThan(0);
+		expect(menu.responses.length).toBeGreaterThan(0);
+
+		const selection = { cue_id: menu.cues[0]!.id, response_id: menu.responses[0]!.id };
+		const formed = await callApp('/users/1/plan', body(selection), true, bindings);
+		expect(formed.status).toBe(201);
+		const plan = (await formed.json()) as { sentence: string; expires_at: number };
+		expect(plan.sentence.startsWith('If ')).toBe(true);
+		expect(plan.sentence).toContain(', then I will ');
+
+		// the menu is consumed, so a repeat selection has nothing to link against
+		const repeat = await callApp('/users/1/plan', body(selection), true, bindings);
+		expect(repeat.status).toBe(409);
+	});
+
+	it('rejects a forged selection', async () => {
+		const bindings = createMockBindings();
+		await callApp('/users/1/plan/menu', body(PLAN_BODY), true, bindings);
+
+		const response = await callApp(
+			'/users/1/plan',
+			body({ cue_id: 'forged', response_id: 'forged' }),
+			true,
+			bindings
+		);
+		expect(response.status).toBe(400);
+	});
+
+	it('never returns the plan text back to the client', async () => {
+		const bindings = createMockBindings();
+		const menuResponse = await callApp('/users/1/plan/menu', body(PLAN_BODY), true, bindings);
+		const menu = (await menuResponse.json()) as {
+			cues: { id: string; text: string }[];
+			responses: { id: string; text: string }[];
+		};
+		await callApp(
+			'/users/1/plan',
+			body({ cue_id: menu.cues[0]!.id, response_id: menu.responses[0]!.id }),
+			true,
+			bindings
+		);
+
+		const status = await callApp('/users/1/plan/status', {}, true, bindings);
+		expect(status.status).toBe(200);
+		const text = await status.text();
+		expect(text).toContain('"active":true');
+		expect(text).not.toContain(menu.cues[0]!.text);
+		expect(text).not.toContain(menu.responses[0]!.text);
+	});
+
+	it('marks a rehearsal once and 404s without an active plan', async () => {
+		const bindings = createMockBindings();
+		const missing = await callApp('/users/1/plan/rehearsed', { method: 'POST' }, true, bindings);
+		expect(missing.status).toBe(404);
+
+		const menuResponse = await callApp('/users/1/plan/menu', body(PLAN_BODY), true, bindings);
+		const menu = (await menuResponse.json()) as {
+			cues: { id: string }[];
+			responses: { id: string }[];
+		};
+		await callApp(
+			'/users/1/plan',
+			body({ cue_id: menu.cues[0]!.id, response_id: menu.responses[0]!.id }),
+			true,
+			bindings
+		);
+
+		const marked = await callApp('/users/1/plan/rehearsed', { method: 'POST' }, true, bindings);
+		expect(marked.status).toBe(200);
+	});
+
+	it('traces the outcome against minutes outside', async () => {
+		const bindings = createMockBindings();
+		const none = await callApp('/users/1/plan/outcome', {}, true, bindings);
+		expect(await none.json()).toEqual({ formed: false });
+
+		const menuResponse = await callApp('/users/1/plan/menu', body(PLAN_BODY), true, bindings);
+		const menu = (await menuResponse.json()) as {
+			cues: { id: string }[];
+			responses: { id: string }[];
+		};
+		await callApp(
+			'/users/1/plan',
+			body({ cue_id: menu.cues[0]!.id, response_id: menu.responses[0]!.id }),
+			true,
+			bindings
+		);
+
+		const outcome = await callApp('/users/1/plan/outcome', {}, true, bindings);
+		const traced = (await outcome.json()) as { formed: boolean; minutes_since_formation: number };
+		expect(traced.formed).toBe(true);
+		expect(traced.minutes_since_formation).toBe(0);
+	});
+
+	it('requires admin auth', async () => {
+		const response = await callApp('/users/1/plan/status', {}, false);
+		expect(response.status).toBe(401);
+	});
+});
+
+describe('GET /users/:id/memories', () => {
+	// the surface is "this day, an earlier year", so the fixtures are pinned to today's month/day
+	function sameDayYearsAgo(years: number, hour = 9): number {
+		const now = new Date();
+		return Date.UTC(now.getUTCFullYear() - years, now.getUTCMonth(), now.getUTCDate(), hour);
+	}
+
+	async function seedHistory(bindings: Bindings, questId: string, completedAt: number) {
+		await bindings.KV.put(`user:quest_history_index:1`, JSON.stringify([questId]));
+		await bindings.KV.put(
+			`user:quest_history:1:${questId}`,
+			JSON.stringify({ r2Key: `users/1/quests/${questId}/history.bin`, completedAt })
+		);
+	}
+
+	it('rejects a malformed user id', async () => {
+		const bad = await callApp('/users/abc/memories');
+		expect(bad.status).toBe(400);
+
+		const zero = await callApp('/users/0/memories');
+		expect(zero.status).toBe(400);
+	});
+
+	it('requires admin auth', async () => {
+		const response = await callApp('/users/1/memories', {}, false);
+		expect(response.status).toBe(401);
+	});
+
+	it('hands back an empty list when the user has no history on this day', async () => {
+		const bindings = createMockBindings();
+		await seedHistory(bindings, 'first_light_walk', Date.now());
+
+		const response = await callApp('/users/1/memories', {}, true, bindings);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ memories: [] });
+	});
+
+	it('returns a quest completed on this day in an earlier year', async () => {
+		const bindings = createMockBindings();
+		await seedHistory(bindings, 'first_light_walk', sameDayYearsAgo(1));
+
+		const response = await callApp('/users/1/memories', {}, true, bindings);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { memories: { id: string; photo?: boolean }[] };
+		expect(body.memories).toHaveLength(1);
+		expect(body.memories[0]).toMatchObject({
+			kind: 'quest',
+			id: 'first_light_walk',
+			yearsAgo: 1,
+			photo: true
+		});
+	});
+
+	// rank only widens the journal cap; it must never be required to see a memory
+	it('reads the trail journal, and a free rank still gets one', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put(
+			'trail_journal:1',
+			JSON.stringify([
+				{
+					trailId: 'sit_spot_dawn',
+					title: 'Dawn Sit Spot',
+					practice: 'sit_spot',
+					presenceMinutes: 20,
+					reflection: { note: 'still cold out', mood: 'calm', at: 'x' },
+					completedAt: new Date(sameDayYearsAgo(2)).toISOString()
+				}
+			])
+		);
+
+		const response = await callApp('/users/1/memories?rank=free', {}, true, bindings);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { memories: { kind: string; note?: string }[] };
+		expect(body.memories).toHaveLength(1);
+		expect(body.memories[0]).toMatchObject({ kind: 'trail', note: 'still cold out', yearsAgo: 2 });
+	});
+});
+
+describe('POST /users/surprise_activity', () => {
+	const pool = [
+		{ id: 'chess', name: 'Chess', description: 'A strategy board game', activity_types: ['GAME'] },
+		{ id: 'pottery', name: 'Pottery', description: 'Shaping clay by hand', activity_types: ['ART'] }
+	];
+
+	it('rejects a malformed body', async () => {
+		const notJson = await callApp('/users/surprise_activity', {
+			method: 'POST',
+			body: 'nope',
+			headers: { 'Content-Type': 'application/json' }
+		});
+		expect(notJson.status).toBe(400);
+
+		const noAll = await callApp('/users/surprise_activity', {
+			method: 'POST',
+			body: JSON.stringify({ user: [] })
+		});
+		expect(noAll.status).toBe(400);
+
+		const emptyAll = await callApp('/users/surprise_activity', {
+			method: 'POST',
+			body: JSON.stringify({ all: [] })
+		});
+		expect(emptyAll.status).toBe(400);
+	});
+
+	it('returns one distant activity with its pool size', async () => {
+		const response = await callApp('/users/surprise_activity', {
+			method: 'POST',
+			body: JSON.stringify({
+				all: pool,
+				user: [
+					{
+						id: 'run',
+						name: 'Running',
+						description: 'Going for a run outdoors',
+						activity_types: ['SPORT']
+					}
+				]
+			})
+		});
+
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { activity: { id: string }; pool: number };
+		expect(['chess', 'pottery']).toContain(body.activity.id);
+		expect(body.pool).toBe(2);
+	});
+
+	it('works for a user with no activities yet', async () => {
+		const response = await callApp('/users/surprise_activity', {
+			method: 'POST',
+			body: JSON.stringify({ all: pool })
+		});
+
+		expect(response.status).toBe(200);
+		expect((await response.json()) as { unrelated: boolean }).toMatchObject({ unrelated: true });
+	});
+});
+
+describe('POST /users/:id/activities/changed', () => {
+	it('rejects a non-numeric id and a body without activities', async () => {
+		const badId = await callApp('/users/abc/activities/changed', {
+			method: 'POST',
+			body: JSON.stringify({ activities: [] })
+		});
+		expect(badId.status).toBe(400);
+
+		const zeroId = await callApp('/users/0/activities/changed', {
+			method: 'POST',
+			body: JSON.stringify({ activities: [] })
+		});
+		expect(zeroId.status).toBe(400);
+
+		const noBody = await callApp('/users/42/activities/changed', {
+			method: 'POST',
+			body: 'not json',
+			headers: { 'Content-Type': 'application/json' }
+		});
+		expect(noBody.status).toBe(400);
+
+		const noActivities = await callApp('/users/42/activities/changed', {
+			method: 'POST',
+			body: JSON.stringify({ username: 'earthy' })
+		});
+		expect(noActivities.status).toBe(400);
+	});
+
+	it('reports the diff and stores the snapshot the garden reads', async () => {
+		const bindings = createMockBindings({ AI: imageAi() });
+
+		const response = await callApp(
+			'/users/42/activities/changed',
+			{
+				method: 'POST',
+				body: JSON.stringify({
+					username: 'earthy',
+					bio: '',
+					created_at: '2026-01-01',
+					visibility: 'PUBLIC',
+					country: 'US',
+					full_name: 'Earth User',
+					activities: [{ id: 'karting', name: 'Karting', types: ['SPORT'], aliases: [] }]
+				})
+			},
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			changed: true,
+			added: ['karting'],
+			quests_surfaced: ['activity_quest_karting']
+		});
+		expect(await bindings.KV.get('user:activities:42')).toBe('["karting"]');
+	});
+
+	it('accepts an explicit activity_ids list', async () => {
+		const bindings = createMockBindings({ AI: imageAi() });
+
+		const response = await callApp(
+			'/users/42/activities/changed',
+			{
+				method: 'POST',
+				body: JSON.stringify({ activities: [], activity_ids: ['debate'] })
+			},
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ changed: true, added: ['debate'] });
+	});
+});
+
 describe('POST /users/recommend_articles', () => {
 	it('returns recommendations for valid pool/activity payloads', async () => {
 		const response = await callApp('/users/recommend_articles', {
@@ -1206,8 +1577,11 @@ describe('POST /users/journey/:type/:id/increment', () => {
 		});
 		expect(longType.status).toBe(400);
 
-		const shortId = await callApp('/users/journey/article/1/increment', { method: 'POST' });
-		expect(shortId.status).toBe(400);
+		// a short numeric id is valid now: it is the canonical form of a padded id
+		const overlongId = await callApp(`/users/journey/article/${'9'.repeat(51)}/increment`, {
+			method: 'POST'
+		});
+		expect(overlongId.status).toBe(400);
 
 		const nonNumericId = await callApp('/users/journey/article/abc/increment', { method: 'POST' });
 		expect(nonNumericId.status).toBe(400);
@@ -1216,6 +1590,30 @@ describe('POST /users/journey/:type/:id/increment', () => {
 	it('increments journey counters for valid requests', async () => {
 		const response = await callApp('/users/journey/article/123/increment', { method: 'POST' });
 		expect([200, 201]).toContain(response.status);
+	});
+
+	it('preserves the streak when the same-day guard only bumps the TTL', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put('journey:article:123', '2', {
+			metadata: { streak: 2, lastWrite: Date.now() }
+		});
+
+		const response = await callApp(
+			'/users/journey/article/123/increment',
+			{ method: 'POST' },
+			true,
+			bindings
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ count: 2 });
+
+		const stored = await bindings.KV.getWithMetadata<{ streak: number; lastWrite: number }>(
+			'journey:article:123'
+		);
+		expect(stored.metadata?.streak).toBe(2);
+
+		const follow = await callApp('/users/journey/article/123', {}, true, bindings);
+		expect(await follow.json()).toMatchObject({ count: 2 });
 	});
 });
 
@@ -1232,8 +1630,9 @@ describe('GET /users/journey/:type/:id', () => {
 		});
 		expect(longType.status).toBe(400);
 
-		const shortId = await callApp('/users/journey/article/1', { method: 'GET' });
-		expect(shortId.status).toBe(400);
+		// a short numeric id is valid now: it is the canonical form of a padded id
+		const overlongId = await callApp(`/users/journey/article/${'9'.repeat(51)}`, { method: 'GET' });
+		expect(overlongId.status).toBe(400);
 
 		const nonNumericId = await callApp('/users/journey/article/abc', { method: 'GET' });
 		expect(nonNumericId.status).toBe(400);
@@ -1244,6 +1643,136 @@ describe('GET /users/journey/:type/:id', () => {
 		await callApp('/users/journey/article/123/increment', { method: 'POST' }, true, bindings);
 		const response = await callApp('/users/journey/article/123', {}, true, bindings);
 		expect(response.status).toBe(200);
+	});
+
+	it('reports the personal best so a client does not have to keep its own', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put('journey:best:article:123', '9');
+
+		const response = await callApp('/users/journey/article/123', {}, true, bindings);
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { count: number; rank: number; best: number };
+		expect(body.best).toBe(9);
+	});
+
+	it('reports a zero best with nothing on record', async () => {
+		const bindings = createMockBindings();
+		const response = await callApp('/users/journey/article/123', {}, true, bindings);
+		const body = (await response.json()) as { best: number };
+		expect(body.best).toBe(0);
+	});
+});
+
+describe('uuid ids resolve to the same data as numeric ids', () => {
+	const HEX = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('primes an alias so the account never pays for a lookup', async () => {
+		const bindings = createMockBindings();
+		const response = await callApp(
+			'/users/alias',
+			{ method: 'POST', body: JSON.stringify({ uuid: HEX, id: '000000000000000000000042' }) },
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+		expect(await response.json()).toEqual({ uuid: HEX, id: '42' });
+		expect(await bindings.KV.get(`user:alias:${HEX}`)).toBe('42');
+	});
+
+	it('rejects a malformed pair', async () => {
+		const bad = await callApp('/users/alias', {
+			method: 'POST',
+			body: JSON.stringify({ uuid: 'nope', id: '42' })
+		});
+		expect(bad.status).toBe(400);
+
+		const missing = await callApp('/users/alias', { method: 'POST', body: '{}' });
+		expect(missing.status).toBe(400);
+	});
+
+	// the contract Gregory set: retrieving by either id returns the same object
+	it('returns the same journey for the uuid and for the numeric id', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put(`user:alias:${HEX}`, '42');
+		await bindings.KV.put('journey:article:42', '6', {
+			metadata: { streak: 6, lastWrite: 1 }
+		});
+		await bindings.KV.put('journey:best:article:42', '11');
+
+		// the padded form is what mantle2 issued before the uuid switch, and it still resolves
+		const viaNumeric = await callApp(
+			'/users/journey/article/000000000000000000000042',
+			{},
+			true,
+			bindings
+		);
+		const viaUuid = await callApp(`/users/journey/article/${HEX}`, {}, true, bindings);
+
+		expect(viaNumeric.status).toBe(200);
+		expect(viaUuid.status).toBe(200);
+		expect(await viaUuid.json()).toEqual(await viaNumeric.json());
+	});
+
+	it('writes through the uuid to the same key the numeric id reads', async () => {
+		const bindings = createMockBindings();
+		await bindings.KV.put(`user:alias:${HEX}`, '42');
+
+		const incremented = await callApp(
+			`/users/journey/article/${HEX}/increment`,
+			{ method: 'POST' },
+			true,
+			bindings
+		);
+		expect(incremented.status).toBe(201);
+
+		const read = await callApp(
+			'/users/journey/article/000000000000000000000042',
+			{},
+			true,
+			bindings
+		);
+		expect(((await read.json()) as { count: number }).count).toBe(1);
+	});
+
+	it('resolves an unknown uuid through mantle2 once, then from kv', async () => {
+		const bindings = createMockBindings();
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ id: '42' })
+		} as unknown as Response);
+
+		await callApp(`/users/journey/article/${HEX}`, {}, true, bindings);
+		await callApp(`/users/journey/article/${HEX}`, {}, true, bindings);
+
+		const lookups = fetchSpy.mock.calls.filter(([url]) => String(url).includes('/internal_id'));
+		expect(lookups).toHaveLength(1);
+		expect(await bindings.KV.get(`user:alias:${HEX}`)).toBe('42');
+	});
+
+	it('404s a uuid nothing can resolve rather than keying kv on it', async () => {
+		const bindings = createMockBindings();
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: false,
+			status: 404,
+			json: async () => ({})
+		} as unknown as Response);
+		vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+		const response = await callApp(`/users/journey/article/${HEX}`, {}, true, bindings);
+		expect(response.status).toBe(404);
+		expect(await bindings.KV.get(`journey:article:${HEX}`)).toBeNull();
+	});
+
+	it('still rejects a shape that is neither', async () => {
+		const dashed = await callApp('/users/journey/article/a1b2c3d4-e5f6-0718-293a-4b5c6d7e8f90');
+		expect(dashed.status).toBe(400);
+		expect(await dashed.text()).toContain('uuid');
 	});
 });
 
@@ -1260,8 +1789,11 @@ describe('GET /users/journey/:type/:id/rank', () => {
 		});
 		expect(longType.status).toBe(400);
 
-		const shortId = await callApp('/users/journey/article/1/rank', { method: 'GET' });
-		expect(shortId.status).toBe(400);
+		// a short numeric id is valid now: it is the canonical form of a padded id
+		const overlongId = await callApp(`/users/journey/article/${'9'.repeat(51)}/rank`, {
+			method: 'GET'
+		});
+		expect(overlongId.status).toBe(400);
 
 		const nonNumericId = await callApp('/users/journey/article/abc/rank', { method: 'GET' });
 		expect(nonNumericId.status).toBe(400);
@@ -1294,8 +1826,12 @@ describe('GET /users/journey/activity/:id/count', () => {
 		const nonNumeric = await callApp('/users/journey/activity/abc/count', { method: 'GET' });
 		expect(nonNumeric.status).toBe(400);
 
-		const shortId = await callApp('/users/journey/activity/1/count', { method: 'GET' });
-		expect(shortId.status).toBe(400);
+		// a short numeric id is valid now: it is the canonical form of a padded id
+		const dashedUuid = await callApp(
+			'/users/journey/activity/a1b2c3d4-e5f6-0718-293a-4b5c6d7e8f90/count',
+			{ method: 'GET' }
+		);
+		expect(dashedUuid.status).toBe(400);
 
 		const longId = await callApp('/users/journey/activity/' + 'a'.repeat(51) + '/count', {
 			method: 'GET'
@@ -1329,8 +1865,11 @@ describe('DELETE /users/journey/:type/:id/delete', () => {
 		});
 		expect(longType.status).toBe(400);
 
-		const shortId = await callApp('/users/journey/article/1/delete', { method: 'DELETE' });
-		expect(shortId.status).toBe(400);
+		// a short numeric id is valid now: it is the canonical form of a padded id
+		const overlongId = await callApp(`/users/journey/article/${'9'.repeat(51)}/delete`, {
+			method: 'DELETE'
+		});
+		expect(overlongId.status).toBe(400);
 
 		const nonNumericId = await callApp('/users/journey/article/abc/delete', { method: 'DELETE' });
 		expect(nonNumericId.status).toBe(400);
@@ -1888,8 +2427,11 @@ describe('PUT /users/impact_points/:id/set', () => {
 });
 
 describe('GET /users/impact_points/:id', () => {
-	it('returns 400 when id length is out of bounds', async () => {
-		const response = await callApp('/users/impact_points/12', { method: 'GET' });
+	it('returns 400 for an id that is neither numeric nor a uuid', async () => {
+		// '12' is a valid canonical id now; a dashed uuid never is
+		const response = await callApp('/users/impact_points/a1b2c3d4-e5f6-0718-293a-4b5c6d7e8f90', {
+			method: 'GET'
+		});
 		expect(response.status).toBe(400);
 	});
 
@@ -3058,6 +3600,32 @@ describe('content reports + strikes routes', () => {
 			expect(response.status).toBe(200);
 			const json = (await response.json()) as { count: number };
 			expect(json.count).toBe(0);
+		});
+	});
+
+	// the id flip means a client holds the 32-hex event id, and r2 keys the thumbnail on the
+	// numeric one; these routes used to reject the hex shape outright with a 400
+	describe('event thumbnail routes accept either id shape', () => {
+		const HEX = 'b1c2d3e4f506172839a4b5c6d7e8f901';
+
+		it('resolves a public event id rather than rejecting it', async () => {
+			const bindings = createMockBindings();
+			await bindings.KV.put(`event:alias:${HEX}`, '44');
+
+			const response = await callApp(`/events/thumbnail/${HEX}`, {}, true, bindings);
+
+			// 404 means it resolved and found no thumbnail; 400 would mean it refused the shape
+			expect(response.status).toBe(404);
+		});
+
+		it('still rejects a shape that is neither', async () => {
+			const response = await callApp('/events/thumbnail/not-an-id');
+			expect(response.status).toBe(400);
+		});
+
+		it('accepts the numeric id with no lookup', async () => {
+			const response = await callApp('/events/thumbnail/44');
+			expect(response.status).toBe(404);
 		});
 	});
 });
