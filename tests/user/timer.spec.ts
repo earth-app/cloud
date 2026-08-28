@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { UserTimer, getReadTime } from '../../src/user/timer';
+import { getContentAnalytics } from '../../src/content/analytics';
 import { createMockBindings } from '../helpers/mock-bindings';
 import { MockKVNamespace } from '../helpers/mock-kv';
 import { quests } from '../../src/user/quests';
@@ -160,6 +161,106 @@ describe('UserTimer', () => {
 		expect(Array.isArray(readTracker)).toBe(true);
 		expect(Array.isArray(timeTracker)).toBe(true);
 		expect((timeTracker as Array<{ value: number }>)?.[0]?.value).toBeGreaterThan(0);
+
+		// content analytics is written from the same stop, keyed on the article
+		const analytics = await getContentAnalytics('article-1', bindings);
+		expect(analytics.articles_clicked?.total).toBe(1);
+		expect(analytics.article_read_time?.total).toBe(69);
+		expect(analytics.article_read_time?.average).toBe(69);
+		expect(analytics.article_recommended_clicked).toBeUndefined();
+	});
+
+	it('attributes a read to the recommendation that produced it', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const state = createDurableState();
+		const timer = new UserTimer(state, bindings);
+
+		let now = 1_000;
+		vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+		await timer.fetch(
+			new Request('https://do/timer', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'start',
+					userId: '42',
+					field: 'articles_read_time:article-9',
+					metadata: {
+						ref: 'recommended',
+						article: { id: 'article-9', author_id: 'author-1', title: 'Ocean News' }
+					}
+				})
+			})
+		);
+
+		now = 70_000;
+		await timer.fetch(
+			new Request('https://do/timer', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'stop',
+					userId: '42',
+					field: 'articles_read_time:article-9'
+				})
+			})
+		);
+
+		await state.waitForDeferred();
+
+		const analytics = await getContentAnalytics('article-9', bindings);
+		expect(analytics.article_recommended_clicked?.total).toBe(1);
+	});
+
+	it('does not fail the stop when the analytics write throws', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		const state = createDurableState();
+		const timer = new UserTimer(state, bindings);
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		let now = 1_000;
+		vi.spyOn(Date, 'now').mockImplementation(() => now);
+
+		await timer.fetch(
+			new Request('https://do/timer', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'start',
+					userId: '42',
+					field: 'prompts_read_time:prompt-1',
+					metadata: { prompt: { id: 'prompt-1', owner_id: 'author-1', prompt: 'Why?' } }
+				})
+			})
+		);
+
+		const put = vi.spyOn(kv, 'put');
+		put.mockImplementation(async (key: string, ...rest: any[]) => {
+			if (key.startsWith('content_analytics')) throw new Error('KV is down');
+			return (MockKVNamespace.prototype.put as any).call(kv, key, ...rest);
+		});
+
+		now = 40_000;
+		const res = await timer.fetch(
+			new Request('https://do/timer', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					action: 'stop',
+					userId: '42',
+					field: 'prompts_read_time:prompt-1'
+				})
+			})
+		);
+
+		expect(res.status).toBe(200);
+		await state.waitForDeferred();
+
+		// the badge tracker still landed
+		expect(await kv.get('user:badge_tracker:42:prompts_read_time', 'json')).toBeTruthy();
 	});
 
 	it('allows starting again after a successful stop', async () => {

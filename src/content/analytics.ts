@@ -79,7 +79,7 @@ export type OwnerContentAnalyticsResult = {
 	total_contents: number;
 };
 
-type AnalyticsLogEntry = {
+export type AnalyticsLogEntry = {
 	category: AnalyticsCategoryType;
 	value: number;
 	metadata?: Record<string, any>;
@@ -600,6 +600,47 @@ export async function logEvent(
 				metadata
 			}
 		],
+		bindings,
+		options
+	);
+}
+
+/**
+ * Record a batch without letting a failure reach the caller.
+ *
+ * Every in-worker writer goes through this rather than {@link logAnalyticsBatch}: analytics is a
+ * reporting side effect, and a KV blip must not fail quest completion or reading-time crediting.
+ * The two HTTP routes still call the raw function so an admin client sees a real error.
+ */
+export async function tryLogAnalyticsBatch(
+	contentId: string,
+	userId: string,
+	entries: AnalyticsLogEntry[],
+	bindings: Bindings,
+	options: AnalyticsBatchOptions = {}
+): Promise<void> {
+	try {
+		await logAnalyticsBatch(contentId, userId, entries, bindings, options);
+	} catch (err) {
+		console.warn(`Analytics: batch for content '${contentId}' failed`, {
+			error: err instanceof Error ? err.message : String(err)
+		});
+	}
+}
+
+/** single-event form of {@link tryLogAnalyticsBatch} */
+export async function tryLogEvent(
+	category: AnalyticsCategoryType,
+	contentId: string,
+	userId: string,
+	metadata: Record<string, any>,
+	bindings: Bindings,
+	options: AnalyticsBatchOptions = {}
+): Promise<void> {
+	await tryLogAnalyticsBatch(
+		contentId,
+		userId,
+		[{ category, value: 1, metadata }],
 		bindings,
 		options
 	);

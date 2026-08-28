@@ -6,7 +6,9 @@ import {
 	getContentAnalyticsEvents,
 	logAnalyticsBatch,
 	logEvent,
-	logTime
+	logTime,
+	tryLogAnalyticsBatch,
+	tryLogEvent
 } from '../../src/content/analytics';
 import { createMockBindings } from '../helpers/mock-bindings';
 import { MockKVNamespace } from '../helpers/mock-kv';
@@ -222,5 +224,46 @@ describe('content analytics', () => {
 		expect(ownerAnalytics.total_contents).toBe(1);
 		expect(ownerAnalytics.content_ids).toEqual(['legacy-article']);
 		expect(ownerAnalytics.aggregate.articles_clicked?.total).toBe(1);
+	});
+});
+
+describe('best-effort writers', () => {
+	it('records through tryLogEvent exactly as logEvent does', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+
+		await tryLogEvent('quests_started', 'quest-1', 'u-1', { title: 'Test' }, bindings);
+
+		const analytics = await getContentAnalytics('quest-1', bindings);
+		expect(analytics.quests_started?.total).toBe(1);
+		expect(analytics.quests_started?.events[0]?.metadata).toEqual({ title: 'Test' });
+	});
+
+	it('swallows a kv failure instead of surfacing it to the caller', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		vi.spyOn(kv, 'put').mockRejectedValue(new Error('KV is down'));
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		await expect(
+			tryLogEvent('quests_completed', 'quest-1', 'u-1', {}, bindings)
+		).resolves.toBeUndefined();
+		expect(warn).toHaveBeenCalled();
+	});
+
+	it('swallows a kv failure in the batch form too', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+		vi.spyOn(kv, 'getWithMetadata').mockRejectedValue(new Error('KV is down'));
+		vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		await expect(
+			tryLogAnalyticsBatch(
+				'article-1',
+				'u-1',
+				[{ category: 'articles_clicked', value: 1 }],
+				bindings
+			)
+		).resolves.toBeUndefined();
 	});
 });

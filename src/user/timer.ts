@@ -1,4 +1,4 @@
-import { AnalyticsCategoryType, logAnalyticsBatch } from '../content/analytics';
+import { AnalyticsCategoryType, tryLogAnalyticsBatch } from '../content/analytics';
 import { Activity, Article, Bindings, ExecutionCtxLike, Prompt } from '../util/types';
 import { normalizeId } from '../util/util';
 import { addBadgeProgress, TrackerEntry } from './badges';
@@ -251,7 +251,18 @@ async function accumulateField(
 					});
 				}
 
-				// await logAnalyticsBatch(contentId, userId, entries, bindings);
+				// attribution the client passes through; counted off a real read rather than a
+				// click, so a bounce off the card does not register as a recommendation working
+				if (normalizeText(metadata.ref) === 'recommended') {
+					entries.push({
+						category: 'article_recommended_clicked',
+						value: 1,
+						metadata: analyticsMetadata
+					});
+				}
+
+				// owner_host resolves itself off the entries' author_id metadata
+				await tryLogAnalyticsBatch(contentId, userId, entries, bindings);
 			}
 
 			return () => maybeAdvanceReadTimeQuestStep(userId, 'articles_read_time', bindings, rank);
@@ -294,7 +305,7 @@ async function accumulateField(
 					});
 				}
 
-				// await logAnalyticsBatch(contentId, userId, entries, bindings);
+				await tryLogAnalyticsBatch(contentId, userId, entries, bindings);
 			}
 			return undefined;
 		}
