@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { quests } from '../../../src/user/quests';
-import ocean from '@earth-app/ocean';
+import { ACTIVITY_TYPE } from '../../../src/util/enums';
 
 function normalizeVisionLabel(label: string): string {
 	return label.trim().toLowerCase().replace(/\s+/g, '_');
 }
 
-const validActivityTypes = new Set(
-	ocean.com.earthapp.activity.ActivityType.values().map((value) => value.name)
-);
+const validActivityTypes = new Set<string>(ACTIVITY_TYPE);
 
 describe('quests', () => {
 	it('exports a non-empty list of quests', () => {
@@ -30,6 +28,35 @@ describe('quests', () => {
 				`Quest '${quest.id}' does not have at least three steps`
 			).toBeGreaterThan(2);
 			expect(typeof quest.reward, `Quest reward in '${quest.id}' is not a number`).toBe('number');
+		}
+	});
+
+	/*
+	 * A title may be poetic, vague, or plain wrong about the vibe - the ID standard and the title
+	 * standard are different (audit §5.2). The one thing a title may not do is state a mechanic the
+	 * steps never check, so "...Walk" / "...Hike" / "...Run" has to be backed by a step that
+	 * verifies presence or movement.
+	 */
+	it('never promises locomotion in a title that no step verifies', () => {
+		const LOCOMOTION = /\b(walk|walking|hike|hiking|trek|run|running|stroll|roam|wander)\b/i;
+		const VERIFIES = new Set(['take_photo_location', 'distance_covered', 'trailmarker_added']);
+
+		for (const quest of quests) {
+			const claim = quest.title.match(LOCOMOTION);
+			if (!claim) continue;
+
+			const types = new Set<string>();
+			for (const stepGroup of quest.steps) {
+				for (const step of Array.isArray(stepGroup) ? stepGroup : [stepGroup]) {
+					types.add(step.type);
+				}
+			}
+
+			const verified = [...types].some((type) => VERIFIES.has(type));
+			expect(
+				verified,
+				`Quest '${quest.id}' title "${quest.title}" claims "${claim[0]}" but no step verifies presence or movement`
+			).toBe(true);
 		}
 	});
 
@@ -155,5 +182,58 @@ describe('quests', () => {
 				}
 			}
 		}
+	});
+});
+
+describe('say_one_thing', () => {
+	const quest = quests.find((entry) => entry.id === 'say_one_thing')!;
+
+	it('exists with the four escalating exchanges', () => {
+		expect(quest).toBeDefined();
+		expect(quest.steps).toHaveLength(4);
+	});
+
+	// the whole point of this mechanic is that it needs nothing: no social graph, no feed, no
+	// camera, no location. anything else added here is scope that the evidence does not support
+	it('asks for no permissions and no hardware', () => {
+		expect(quest.permissions).toBeUndefined();
+		expect(quest.mobile_only).not.toBe(true);
+
+		for (const stepGroup of quest.steps) {
+			for (const step of Array.isArray(stepGroup) ? stepGroup : [stepGroup]) {
+				expect(step.type).toBe('describe_text');
+				expect(step.mobile_only).not.toBe(true);
+			}
+		}
+	});
+
+	// repeated approaches across a week is the shape that held up a week past the study; four
+	// exchanges in one sitting is a different intervention
+	it('spreads the exchanges across days rather than one sitting', () => {
+		const delays = quest.steps
+			.flatMap((stepGroup) => (Array.isArray(stepGroup) ? stepGroup : [stepGroup]))
+			.map((step) => step.delay ?? 0);
+
+		expect(delays[0]).toBe(0);
+		for (const delay of delays.slice(1)) expect(delay).toBeGreaterThanOrEqual(28800);
+	});
+
+	/*
+	 * Copy contract, and it is the active ingredient rather than a style preference: the finding is
+	 * that people MISPREDICT how these exchanges go, so the quest has to hand the user their own
+	 * forecast to check. Telling them to be brave concedes that the fear was warranted.
+	 */
+	it('frames the ask as a prediction to check, never as courage', () => {
+		const copy = [
+			quest.description,
+			...quest.steps
+				.flatMap((stepGroup) => (Array.isArray(stepGroup) ? stepGroup : [stepGroup]))
+				.flatMap((step) => [step.description, step.tutorial_hint ?? ''])
+		]
+			.join(' ')
+			.toLowerCase();
+
+		expect(copy).toMatch(/\bexpect(ed|ation)?\b/);
+		expect(copy).not.toMatch(/\b(brave|bravery|courage|be bold|don't be shy|nervous|scary)\b/);
 	});
 });

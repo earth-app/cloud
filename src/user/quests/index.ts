@@ -474,7 +474,7 @@ export const quests = [
 	},
 	{
 		id: 'first_light_walk',
-		title: 'First Light Walk',
+		title: 'First Light',
 		description:
 			'Head out while the day is still deciding what it wants to be, and gather the quiet of first light.',
 		icon: 'mdi:weather-sunset-up',
@@ -808,6 +808,117 @@ export const quests = [
 		],
 		reward: 150,
 		permissions: ['camera', 'motion']
+	},
+	{
+		id: 'say_one_thing',
+		// the copy attacks the EXPECTATION, never the courage: people predict these exchanges go
+		// badly and they reliably do not (Epley & Schroeder 2014), so the quest is built to let the
+		// user catch their own forecast being wrong rather than to talk them into being brave
+		title: 'Say One Thing',
+		description:
+			'You will almost certainly enjoy this more than you expect to. That gap is the whole point - people predict these moments go badly, and then they do not. Four small exchanges, and you get to check your own prediction against what actually happens.',
+		icon: 'mdi:hand-wave',
+		rarity: 'normal',
+		steps: [
+			{
+				type: 'describe_text',
+				description:
+					'Say one friendly thing to someone already serving you - a barista, a cashier, a driver. Then write down what you expected to happen, and what actually did.',
+				tutorial_hint:
+					'A smile and a sentence is the entire ask. You are not starting a friendship.',
+				parameters: [
+					[
+						{
+							id: 'happened',
+							weight: 0.5,
+							ideal:
+								'The response describes a real, specific brief exchange that actually took place.'
+						},
+						{
+							id: 'forecast',
+							weight: 0.5,
+							ideal:
+								'The response says what the writer expected beforehand and compares it to how it actually went.'
+						}
+					],
+					0.5,
+					40
+				]
+			},
+			{
+				type: 'describe_text',
+				description:
+					'Ask one stranger a small question - the time, directions, whether the coffee here is any good. Write what you asked and how they answered.',
+				// spread across days rather than minutes; the effect in the literature comes from
+				// repeated approaches over a week, not from four exchanges in one sitting
+				delay: 28800,
+				parameters: [
+					[
+						{
+							id: 'asked',
+							weight: 0.5,
+							ideal: 'The response states the specific question that was asked of a stranger.'
+						},
+						{
+							id: 'answered',
+							weight: 0.5,
+							ideal:
+								'The response describes how the other person responded, in the writer own words.'
+						}
+					],
+					0.5,
+					40
+				]
+			},
+			{
+				type: 'describe_text',
+				description:
+					'This time, ask a follow-up. One question, then one more question about their answer. Write down what you learned that you would not have guessed.',
+				delay: 28800,
+				parameters: [
+					[
+						{
+							id: 'followed_up',
+							weight: 0.5,
+							ideal:
+								'The response describes asking a second question that built on the other person answer.'
+						},
+						{
+							id: 'learned',
+							weight: 0.5,
+							ideal:
+								'The response names something specific the writer learned or found surprising about the other person.'
+						}
+					],
+					0.55,
+					60
+				]
+			},
+			{
+				type: 'describe_text',
+				description:
+					'Look back at all four. Were they better or worse than you expected? Write what you would tell someone who was about to try this.',
+				delay: 28800,
+				parameters: [
+					[
+						{
+							id: 'compared',
+							weight: 0.5,
+							ideal:
+								'The response compares how the exchanges actually went against what the writer expected before starting.'
+						},
+						{
+							id: 'advice',
+							weight: 0.5,
+							ideal: 'The response gives concrete advice the writer would pass to someone else.'
+						}
+					],
+					0.55,
+					80
+				]
+			}
+		],
+		reward: 200
 	},
 	// #region rare quests
 	{

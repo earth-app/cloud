@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import ocean from '@earth-app/ocean';
 import { designActivityQuest, MATCH_TERM_DEFINITIONS } from '../../../src/user/quests/activity';
 import { ActivityType } from '../../../src/util/types';
+import { ACTIVITY_TYPE } from '../../../src/util/enums';
 
 describe('activity quests', () => {
 	it('has all term definitions defined', () => {
-		for (const type of ocean.com.earthapp.activity.ActivityType.values()) {
-			expect(MATCH_TERM_DEFINITIONS[type.name]).toBeDefined();
+		for (const type of ACTIVITY_TYPE) {
+			expect(MATCH_TERM_DEFINITIONS[type]).toBeDefined();
 		}
 	});
 
