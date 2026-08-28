@@ -58,6 +58,8 @@ export type OceanArticle = {
 
 export type Article = {
 	id: string;
+	// legacy numeric id; KV is keyed on this, not on `id`
+	nid?: string;
 	title: string;
 	description: string;
 	tags: string[];

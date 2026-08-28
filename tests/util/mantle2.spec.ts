@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
 	fetchReportableContentText,
 	getDeniedStagedActivityIds,
+	postArticle,
 	postStagedActivity,
 	retrieveActivityIds,
 	requestContentRemoval
@@ -275,5 +276,48 @@ describe('retrieveActivityIds', () => {
 		);
 
 		await expect(retrieveActivityIds(createMockBindings())).resolves.toEqual(['chess']);
+	});
+});
+
+describe('postArticle', () => {
+	const HEX = 'a1b2c3d4e5f60718293a4b5c6d7e8f90';
+
+	function respondsWith(body: unknown) {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			new Response(JSON.stringify(body), {
+				status: 200,
+				headers: { 'Content-Type': 'application/json' }
+			})
+		);
+	}
+
+	// mantle2 answers with the public hex id; every quiz read resolves to the numeric one, so
+	// keying the write on `id` would file the quiz where nothing looks for it
+	it('keys the quiz on the numeric id, not the public one', async () => {
+		const bindings = createMockBindings();
+		respondsWith({ id: HEX, nid: '000000000000000000000031', title: 'A' });
+
+		await postArticle({ title: 'A' } as any, [{ question: 'q' } as any], bindings);
+
+		expect(await bindings.KV.get('article:quiz:31')).not.toBeNull();
+		expect(await bindings.KV.get(`article:quiz:${HEX}`)).toBeNull();
+	});
+
+	it('records the alias so the first read skips the lookup', async () => {
+		const bindings = createMockBindings();
+		respondsWith({ id: HEX, nid: '31', title: 'A' });
+
+		await postArticle({ title: 'A' } as any, [{ question: 'q' } as any], bindings);
+
+		expect(await bindings.KV.get(`article:alias:${HEX}`)).toBe('31');
+	});
+
+	it('falls back to id when mantle2 has not started sending nid', async () => {
+		const bindings = createMockBindings();
+		respondsWith({ id: '000000000000000000000031', title: 'A' });
+
+		await postArticle({ title: 'A' } as any, [{ question: 'q' } as any], bindings);
+
+		expect(await bindings.KV.get('article:quiz:31')).not.toBeNull();
 	});
 });

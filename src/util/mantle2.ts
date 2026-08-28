@@ -1,5 +1,6 @@
 import { ArticleQuizQuestion } from '../content/boat';
 import { Bindings, Activity, Prompt, Article, Event } from './types';
+import { rememberAlias } from './ids';
 import { normalizeId } from './util';
 
 export async function getActivity(id: string, bindings: Bindings): Promise<Activity | null> {
@@ -302,10 +303,17 @@ export async function postArticle(
 		throw new Error('Failed to create article, no ID returned');
 	}
 
-	// add quiz to KV
+	// add quiz to KV. mantle2 answers with the public hex id and every read resolves to the
+	// numeric one, so keying on `data.id` would file the quiz where nothing looks for it
 	if (quiz) {
-		const key = `article:quiz:${normalizeId(data.id)}`;
-		await bindings.KV.put(key, JSON.stringify(quiz), { expirationTtl: 60 * 60 * 12 * 29 }); // 14.5 days (articles are deleted after 2 weeks)
+		const articleId = data.nid ? normalizeId(data.nid) : normalizeId(data.id);
+		await bindings.KV.put(`article:quiz:${articleId}`, JSON.stringify(quiz), {
+			expirationTtl: 60 * 60 * 12 * 29 // 14.5 days (articles are deleted after 2 weeks)
+		});
+
+		if (data.nid) {
+			await rememberAlias(bindings, 'article', data.id, normalizeId(data.nid));
+		}
 	}
 
 	return data;
