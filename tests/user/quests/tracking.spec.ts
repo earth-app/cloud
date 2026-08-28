@@ -22,6 +22,7 @@ import {
 	startQuest,
 	updateQuestProgress
 } from '../../../src/user/quests/tracking';
+import { getContentAnalytics } from '../../../src/content/analytics';
 import { sendUserNotification } from '../../../src/user/notifications';
 import { getImpactPoints } from '../../../src/user/points';
 import { quests } from '../../../src/user/quests';
@@ -129,6 +130,88 @@ describe('enrichProgressEntries', () => {
 		expect((enriched[4] as any)[1].data.startsWith('data:audio/x-caf;base64,')).toBe(true);
 		expect((enriched[4] as any)[2].data.startsWith('data:audio/octet-stream;base64,')).toBe(true);
 		expect((enriched[5] as any).data).toBeUndefined();
+	});
+
+	describe('firstImageOnly', () => {
+		async function seed(bindings: any) {
+			await Promise.all([
+				putEncryptedObject(bindings, 'a.bin', new Uint8Array([0xff, 0xd8, 0xff, 0xdb])),
+				putEncryptedObject(bindings, 'b.bin', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2])),
+				putEncryptedObject(bindings, 'c.bin', new Uint8Array([0x89, 0x50, 0x4e, 0x47, 3, 4]))
+			]);
+		}
+
+		it('stops after the first binary entry', async () => {
+			const bindings = createMockBindings();
+			await seed(bindings);
+			const entries = [
+				{ type: 'describe_text', index: 0, submittedAt: 1 },
+				{ type: 'take_photo_classification', index: 1, submittedAt: 1, r2Key: 'a.bin' },
+				{ type: 'draw_picture', index: 2, submittedAt: 1, r2Key: 'b.bin' },
+				{ type: 'take_photo_objects', index: 3, submittedAt: 1, r2Key: 'c.bin' }
+			] as any;
+
+			const enriched = await enrichProgressEntries(entries, bindings, { firstImageOnly: true });
+
+			expect((enriched[0] as any).data).toBeUndefined();
+			expect((enriched[1] as any).data.startsWith('data:image/jpeg;base64,')).toBe(true);
+			expect((enriched[2] as any).data).toBeUndefined();
+			expect((enriched[3] as any).data).toBeUndefined();
+			// the unenriched entries keep their r2Key, so a caller can still ask for them
+			expect((enriched[2] as any).r2Key).toBe('b.bin');
+		});
+
+		it('reads r2 once instead of once per image', async () => {
+			const bindings = createMockBindings();
+			await seed(bindings);
+			const get = vi.spyOn(bindings.R2, 'get');
+			const entries = [
+				{ type: 'take_photo_classification', index: 0, submittedAt: 1, r2Key: 'a.bin' },
+				{ type: 'draw_picture', index: 1, submittedAt: 1, r2Key: 'b.bin' },
+				{ type: 'take_photo_objects', index: 2, submittedAt: 1, r2Key: 'c.bin' }
+			] as any;
+
+			await enrichProgressEntries(entries, bindings, { firstImageOnly: true });
+			expect(get).toHaveBeenCalledTimes(1);
+		});
+
+		it('takes the first entry of an alt group and leaves its siblings alone', async () => {
+			const bindings = createMockBindings();
+			await seed(bindings);
+			const entries = [
+				[
+					{ type: 'draw_picture', index: 0, altIndex: 0, submittedAt: 1, r2Key: 'a.bin' },
+					{ type: 'draw_picture', index: 0, altIndex: 1, submittedAt: 1, r2Key: 'b.bin' }
+				],
+				{ type: 'take_photo_objects', index: 1, submittedAt: 1, r2Key: 'c.bin' }
+			] as any;
+
+			const enriched = await enrichProgressEntries(entries, bindings, { firstImageOnly: true });
+			expect((enriched[0] as any)[0].data).toBeDefined();
+			expect((enriched[0] as any)[1].data).toBeUndefined();
+			expect((enriched[1] as any).data).toBeUndefined();
+		});
+
+		it('is a no-op when nothing is binary', async () => {
+			const bindings = createMockBindings();
+			const entries = [{ type: 'describe_text', index: 0, submittedAt: 1 }] as any;
+			expect(await enrichProgressEntries(entries, bindings, { firstImageOnly: true })).toEqual(
+				entries
+			);
+		});
+
+		it('enriches everything when the flag is absent', async () => {
+			const bindings = createMockBindings();
+			await seed(bindings);
+			const entries = [
+				{ type: 'take_photo_classification', index: 0, submittedAt: 1, r2Key: 'a.bin' },
+				{ type: 'draw_picture', index: 1, submittedAt: 1, r2Key: 'b.bin' }
+			] as any;
+
+			const enriched = await enrichProgressEntries(entries, bindings);
+			expect((enriched[0] as any).data).toBeDefined();
+			expect((enriched[1] as any).data).toBeDefined();
+		});
 	});
 });
 
@@ -669,6 +752,28 @@ describe('quest lifecycle helpers', () => {
 		const afterReset = await getCurrentQuestProgress('101', bindings);
 		expect(afterReset.questId).toBeNull();
 		expect(afterReset.progress).toEqual([]);
+	});
+
+	it('logs quests_started and quests_completed to content analytics', async () => {
+		const kv = new MockKVNamespace();
+		const bindings = createMockBindings({ KV: kv as any });
+
+		await startQuest('303', 'vegetable_head', bindings);
+
+		const started = await getContentAnalytics('vegetable_head', bindings);
+		expect(started.quests_started?.total).toBe(1);
+		expect(started.quests_started?.events[0]?.user_id).toBe('303');
+		expect(started.quests_completed).toBeUndefined();
+
+		// flip the stored progress to completed, then archive
+		const progress = await kv.getWithMetadata('user:quest_progress:303', 'json');
+		await kv.put('user:quest_progress:303', JSON.stringify(progress.value ?? []), {
+			metadata: { ...(progress.metadata as object), completed: true }
+		});
+		await maybeArchiveCompletedQuest('303', bindings);
+
+		const completed = await getContentAnalytics('vegetable_head', bindings);
+		expect(completed.quests_completed?.total).toBe(1);
 	});
 
 	it('returns empty history and null completed payload when nothing archived', async () => {

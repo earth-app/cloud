@@ -15,6 +15,7 @@ import {
 	QuestDeviceMetadata,
 	validateStep
 } from './validation';
+import { tryLogEvent } from '../../content/analytics';
 import { markBadgeMastered, masteryBadgeIdFromQuestId } from '../badges/mastery';
 import { addBadgeProgress } from '../badges';
 import { getReadTime } from '../timer';
@@ -233,18 +234,46 @@ async function enrichEntry(
 	return { ...entry, data: `data:${mime};base64,${base64}` };
 }
 
-// Enrich all entries in a progress array with data URLs for binary payloads
+/**
+ * Enrich binary progress entries into data URLs.
+ *
+ * `firstImageOnly` stops after the first entry carrying an `r2Key`. A caller that wants one
+ * thumbnail (the memories card) otherwise pays for a base64 copy of every image in the quest -
+ * four photo steps means four blobs to serve a single tile.
+ */
 export async function enrichProgressEntries(
 	entries: (QuestStepProgressEntry | QuestStepProgressEntry[])[],
-	bindings: Bindings
+	bindings: Bindings,
+	opts: { firstImageOnly?: boolean } = {}
 ): Promise<(QuestStepProgressEntry | QuestStepProgressEntry[])[]> {
-	return Promise.all(
-		entries.map((entry) =>
-			Array.isArray(entry)
-				? Promise.all(entry.map((e) => enrichEntry(e, bindings)))
-				: enrichEntry(entry, bindings)
-		)
-	);
+	if (!opts.firstImageOnly) {
+		return Promise.all(
+			entries.map((entry) =>
+				Array.isArray(entry)
+					? Promise.all(entry.map((e) => enrichEntry(e, bindings)))
+					: enrichEntry(entry, bindings)
+			)
+		);
+	}
+
+	// sequential on purpose: the point is to stop after the first hit, not to race them
+	let taken = false;
+	const out: (QuestStepProgressEntry | QuestStepProgressEntry[])[] = [];
+	for (const entry of entries) {
+		const group = Array.isArray(entry) ? entry : [entry];
+		const enriched: QuestStepProgressEntry[] = [];
+		for (const e of group) {
+			if (taken || !('r2Key' in e)) {
+				enriched.push(e);
+				continue;
+			}
+			const result = await enrichEntry(e, bindings);
+			if ('data' in result) taken = true;
+			enriched.push(result);
+		}
+		out.push(Array.isArray(entry) ? enriched : enriched[0]!);
+	}
+	return out;
 }
 
 // convert a QuestStepResponse (with binary) to a QuestStepProgressEntry (with r2 key)
@@ -528,6 +557,16 @@ export async function maybeArchiveCompletedQuest(
 		if (quest) {
 			await notifyQuestCompletedOnce(bindings, userId0, quest);
 		}
+		await tryLogEvent(
+			'quests_completed',
+			res.metadata!.questId,
+			userId0,
+			{
+				...(quest ? { title: quest.title } : {}),
+				steps: String(progress.length)
+			},
+			bindings
+		);
 	};
 
 	if (ctx) {
@@ -985,6 +1024,14 @@ export async function startQuest(userId: string, questId: string, bindings: Bind
 			hashes
 		} satisfies QuestProgress
 	});
+
+	await tryLogEvent(
+		'quests_started',
+		questId,
+		userId0,
+		quest ? { title: quest.title } : {},
+		bindings
+	);
 
 	console.log(`User ${userId} started quest "${questId}"`);
 }
