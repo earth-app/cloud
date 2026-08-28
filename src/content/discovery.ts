@@ -90,7 +90,15 @@ export const WIKIPEDIA_LIST_PAGES = [
 	'List of art media',
 	'List of board games',
 	'List of games',
-	'Hobby'
+	'Hobby',
+	// five of the twelve pages above are sports indexes, which is most of why a live queue of 629
+	// came back 406 sports. each of these was checked against the live api rather than guessed
+	'Outline of food preparation',
+	'Outline of music',
+	'Outline of performing arts',
+	'Outline of the visual arts',
+	'Index of gardening articles',
+	'List of card games by number of cards'
 ];
 
 export type Candidate = {
@@ -778,6 +786,9 @@ export type CandidateNature =
 	| 'object'
 	| 'organization'
 	| 'work'
+	| 'rule'
+	| 'competition_class'
+	| 'unsuitable'
 	| 'ambiguous'
 	| 'unknown';
 
@@ -1014,7 +1025,62 @@ const NATURE_LEXICON: Array<[CandidateNature, string[]]> = [
 			'anime',
 			'character',
 			'series',
-			'franchise'
+			'franchise',
+			'subgenre'
+		]
+	],
+	[
+		// something that happens INSIDE an activity rather than being one. "Play in American
+		// football", "Formation in American football", "Offensive strategy in gridiron football"
+		'rule',
+		[
+			'rule',
+			'ruleset',
+			'penalty',
+			'foul',
+			'infraction',
+			'violation',
+			'sanction',
+			'play',
+			'formation',
+			'lineup',
+			'scheme',
+			'strategy',
+			'tactic',
+			'manoeuvre',
+			'maneuver',
+			'stance',
+			'grip',
+			'stroke',
+			'shot',
+			'throw',
+			'kick',
+			'serve',
+			'score',
+			'statistic',
+			'metric',
+			'notation',
+			'terminology',
+			'term',
+			'jargon'
+		]
+	],
+	[
+		// a division of an activity the catalog already has, rather than an activity
+		'competition_class',
+		[
+			'classification',
+			'division',
+			'bracket',
+			'weight-class',
+			'championship',
+			'championships',
+			'olympics',
+			'paralympics',
+			'medal',
+			'qualifier',
+			'playoff',
+			'playoffs'
 		]
 	]
 ];
@@ -1099,6 +1165,31 @@ const ARTICLES = new Set(['a', 'an', 'the']);
 // 'French loan-word meaning "cabinet-maker"'
 const AMBIGUOUS_MARKERS =
 	/\b(topics? referred to|disambiguation|may refer to|index of|commonly refers|name shared by|loan-?word|surname|given name)\b/i;
+
+// content the catalog does not carry regardless of how well-formed the entry is. checked against
+// the name AND the short description, since "Peep Show" reads clean on its own
+const UNSUITABLE_MARKERS =
+	/\b(erotic\w*|striptease|stripper|pornograph\w*|fetish|bdsm|peep[\s-]?show|lap[\s-]?dance|prostitut\w*|cockfight\w*|bullfight\w*|dogfight\w*|bear[\s-]?baiting|blood[\s-]?sport|sports?[\s-]?betting|gambling|wagering|bookmaking)\b/i;
+
+// a leading modifier naming a competition class of an activity the catalog already has;
+// the short description of "Paralympic Football" is "Paralympic sport", which reads as an
+// activity, so the NAME is the only witness for this class
+const COMPETITION_CLASS_MODIFIERS = new Set([
+	'paralympic',
+	'paralympics',
+	'olympic',
+	'olympics',
+	'commonwealth',
+	'collegiate',
+	'intercollegiate',
+	'professional',
+	'amateur',
+	'junior',
+	'senior',
+	'masters',
+	'youth',
+	'varsity'
+]);
 
 /** the leading noun phrase, lowercased, with articles removed */
 export function headPhrase(text: string): string[] {
@@ -1209,6 +1300,7 @@ export function classifyShortDescription(shortDescription: string | null): Candi
 	const text = (shortDescription ?? '').trim();
 	if (!text) return 'unknown';
 
+	if (UNSUITABLE_MARKERS.test(text)) return 'unsuitable';
 	if (AMBIGUOUS_MARKERS.test(text)) return 'ambiguous';
 
 	const head = headPhrase(text);
@@ -1264,6 +1356,21 @@ export function hasPracticeShapedName(id: string): boolean {
 }
 
 /**
+ * Whether the name is a competition class of an activity rather than an activity.
+ *
+ * A modifier alone is not enough: "Olympics" on its own is the games, and a one-word name has no
+ * activity being qualified.
+ *
+ * @param id activity id, snake_case
+ */
+export function namesCompetitionClass(id: string): boolean {
+	const words = id.split('_').filter(Boolean);
+	if (words.length < 2) return false;
+
+	return COMPETITION_CLASS_MODIFIERS.has(words[0]!.toLowerCase());
+}
+
+/**
  * Whether the short description describes the thing that was actually asked about.
  *
  * A redirect that changes the subject makes the description evidence about something else, so a
@@ -1295,6 +1402,17 @@ export function classifyCandidate(
 	shortDescription: string | null,
 	resolvedTitle?: string
 ): CandidateNature {
+	const name = id.replace(/_/g, ' ');
+
+	// ahead of everything: an unsuitable entry is unsuitable however well it is described, and
+	// "Pole Dancing" would otherwise be settled as an activity by its gerund name
+	if (UNSUITABLE_MARKERS.test(name) || UNSUITABLE_MARKERS.test(shortDescription ?? '')) {
+		return 'unsuitable';
+	}
+
+	// "Paralympic Nordic Skiing" is gerund-headed, so this has to come before the practice check
+	if (namesCompetitionClass(id)) return 'competition_class';
+
 	// the name settles it before the description gets a chance to describe something else
 	if (hasPracticeShapedName(id)) return 'activity';
 
@@ -1327,7 +1445,10 @@ const REJECTED_NATURES = new Set<CandidateNature>([
 	'substance',
 	'object',
 	'organization',
-	'work'
+	'work',
+	'rule',
+	'competition_class',
+	'unsuitable'
 ]);
 
 export function isRejectedNature(nature: CandidateNature): boolean {
@@ -1745,6 +1866,43 @@ async function readCatalogKeys(env: Bindings): Promise<string[]> {
 
 // #region Selection
 
+/**
+ * Take the shortlist round-robin across sources instead of straight off the top.
+ *
+ * Every source is ranked by popularity, and sports articles carry the most sitelinks, so a flat
+ * `slice(0, N)` handed the paid gates a shortlist that was mostly sports; a live queue of 629 came
+ * back 406 of them. Order within each source is preserved, so the best of each still wins.
+ *
+ * @param candidates ranked candidates, best first
+ * @param limit how many to take
+ */
+export function interleaveBySource(candidates: Candidate[], limit: number): Candidate[] {
+	const bySource = new Map<DiscoverySource, Candidate[]>();
+	for (const candidate of candidates) {
+		const bucket = bySource.get(candidate.source);
+		if (bucket) bucket.push(candidate);
+		else bySource.set(candidate.source, [candidate]);
+	}
+
+	const queues = [...bySource.values()];
+	const picked: Candidate[] = [];
+
+	// a source that runs dry drops out rather than holding its slot open
+	for (let round = 0; picked.length < limit; round++) {
+		let tookAny = false;
+		for (const queue of queues) {
+			if (picked.length >= limit) break;
+			const next = queue[round];
+			if (!next) continue;
+			picked.push(next);
+			tookAny = true;
+		}
+		if (!tookAny) break;
+	}
+
+	return picked;
+}
+
 export async function selectCandidates(
 	env: Bindings,
 	opts: { limit?: number; now?: number } = {}
@@ -1810,7 +1968,7 @@ export async function selectCandidates(
 	const rotated = ranked.slice(start).concat(ranked.slice(0, start));
 
 	// only the shortlist reaches the paid gates
-	const shortlist = rotated.slice(0, SPECIFICITY_BATCH);
+	const shortlist = interleaveBySource(rotated, SPECIFICITY_BATCH);
 
 	// deterministic and free, so it runs before anything billed; one request for the batch
 	const {
@@ -2189,6 +2347,9 @@ const NATURE_REASONS: Record<CandidateNature, string> = {
 	object: 'names an object, tool or brand, not something to do',
 	organization: 'names an organisation, not something to do',
 	work: 'names a creative work, not something to do',
+	rule: 'names a rule, play or formation inside an activity, not the activity',
+	competition_class: 'names a competition class of an activity the catalog already covers',
+	unsuitable: 'adult, gambling or blood-sport content the catalog does not carry',
 	ambiguous: 'the title is ambiguous; confirm which meaning was intended',
 	unknown: 'no short description available to screen against'
 };

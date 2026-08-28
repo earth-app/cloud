@@ -15,8 +15,10 @@ import {
 	fetchWikivoyageCandidates,
 	hasPracticeShapedName,
 	headPhrase,
+	interleaveBySource,
 	isRejectedNature,
 	isSameSubject,
+	namesCompetitionClass,
 	MAX_STAGED_PER_RUN,
 	filterSemanticDuplicates,
 	filterSpecificCandidates,
@@ -963,6 +965,44 @@ describe('variety', () => {
 	});
 });
 
+describe('interleaveBySource', () => {
+	const candidate = (id: string, source: any): any => ({ id, foldKey: id, source, score: 1 });
+
+	it('spreads the shortlist across sources rather than taking the top of one', () => {
+		const ranked = [
+			candidate('a', 'wikidata_sport'),
+			candidate('b', 'wikidata_sport'),
+			candidate('c', 'wikidata_sport'),
+			candidate('d', 'wikidata_sport'),
+			candidate('e', 'wikipedia_lists'),
+			candidate('f', 'wikidata_hobby')
+		];
+
+		expect(interleaveBySource(ranked, 3).map((c) => c.id)).toEqual(['a', 'e', 'f']);
+	});
+
+	it('keeps each source in rank order', () => {
+		const ranked = [
+			candidate('a', 'wikidata_sport'),
+			candidate('b', 'wikidata_sport'),
+			candidate('c', 'wikipedia_lists')
+		];
+
+		expect(interleaveBySource(ranked, 3).map((c) => c.id)).toEqual(['a', 'c', 'b']);
+	});
+
+	it('lets an exhausted source drop out instead of holding its slot', () => {
+		const ranked = [
+			candidate('a', 'wikidata_sport'),
+			candidate('b', 'wikidata_sport'),
+			candidate('c', 'wikipedia_lists')
+		];
+
+		expect(interleaveBySource(ranked, 10)).toHaveLength(3);
+		expect(interleaveBySource([], 5)).toEqual([]);
+	});
+});
+
 describe('headPhrase', () => {
 	it('reads the leading noun phrase and stops at a preposition', () => {
 		expect(headPhrase('Dock with moorings for yachts')).toEqual(['dock']);
@@ -1094,11 +1134,72 @@ describe('classifyCandidate', () => {
 	});
 });
 
+// the live queue was 629 rows that every existing detector called safe; these are the classes
+// that produced it, taken verbatim from that sample
+describe('the meaning-level gate', () => {
+	it('rejects a rule, play or formation inside a sport', () => {
+		expect(classifyCandidate('play_calling_system', 'Strategy in American football')).toBe('rule');
+		expect(
+			classifyCandidate(
+				'single_wing_formation',
+				'Formation in American football',
+				'Single-wing formation'
+			)
+		).toBe('rule');
+		expect(classifyCandidate('penalty_shot', 'Type of penalty in ice hockey', 'Penalty shot')).toBe(
+			'rule'
+		);
+	});
+
+	it('rejects a competition class off the name, which the description cannot settle', () => {
+		// "Paralympic sport" reads as an activity, so only the name witnesses this
+		expect(classifyCandidate('paralympic_football', 'Paralympic sport')).toBe('competition_class');
+		expect(classifyCandidate('paralympic_nordic_skiing', 'Paralympic sport')).toBe(
+			'competition_class'
+		);
+		expect(namesCompetitionClass('collegiate_wrestling')).toBe(true);
+	});
+
+	it('leaves a real activity alone when a modifier word appears mid-name', () => {
+		expect(namesCompetitionClass('skiing')).toBe(false);
+		expect(namesCompetitionClass('olympics')).toBe(false);
+		expect(namesCompetitionClass('senior')).toBe(false);
+		expect(classifyCandidate('nordic_skiing', 'Winter sport')).toBe('activity');
+	});
+
+	it('rejects adult, gambling and blood-sport entries whatever else they look like', () => {
+		expect(classifyCandidate('peep_show', 'Adult entertainment venue')).toBe('unsuitable');
+		expect(classifyCandidate('erotic_dance', 'Dance intended to be sexually arousing')).toBe(
+			'unsuitable'
+		);
+		// a gerund name would otherwise settle this as an activity before the description is read
+		expect(classifyCandidate('pole_dancing', 'Erotic dance performed on a pole')).toBe(
+			'unsuitable'
+		);
+		expect(classifyCandidate('sports_betting', 'Form of gambling')).toBe('unsuitable');
+		expect(classifyCandidate('spider_fighting', 'Blood sport involving spiders')).toBe(
+			'unsuitable'
+		);
+	});
+
+	it('does not catch a real practice with a nearby word', () => {
+		expect(classifyCandidate('bouldering', 'Form of rock climbing')).toBe('activity');
+		expect(classifyCandidate('shot_put', 'Track and field event')).toBe('activity');
+		expect(classifyCandidate('archery', 'Sport of shooting with a bow')).toBe('activity');
+	});
+});
+
 describe('isRejectedNature', () => {
 	it('rejects things, places, people and organisms', () => {
 		for (const nature of ['person', 'place', 'organism', 'substance', 'object', 'work'] as const) {
 			expect(isRejectedNature(nature)).toBe(true);
 		}
+	});
+
+	it('rejects a rule, a competition class and unsuitable content', () => {
+		expect(isRejectedNature('rule')).toBe(true);
+		expect(isRejectedNature('competition_class')).toBe(true);
+		expect(isRejectedNature('unsuitable')).toBe(true);
 	});
 
 	// rejecting on ambiguity cost wushu, taiji, sanda and barre to catch pitch and miniature
