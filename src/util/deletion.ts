@@ -6,8 +6,7 @@ import { deleteStrikes } from '../content/moderation/strikes';
 import { deleteEventImageSubmissions } from '../user/submissions';
 import { clearCachePrefix } from './cache';
 import { Bindings, ExecutionCtxLike } from './types';
-import { batchProcess } from './util';
-import { normalizeId } from './util';
+import { batchProcess, normalizeId } from './util';
 
 const DELETE_BATCH_SIZE = 200;
 
@@ -17,13 +16,8 @@ async function listAllKvKeysByPrefix(kv: KVNamespace, prefix: string): Promise<s
 
 	while (true) {
 		const page = await kv.list({ prefix, cursor, limit: 1000 });
-		for (const key of page.keys) {
-			keys.push(key.name);
-		}
-
-		if (page.list_complete || !page.cursor) {
-			break;
-		}
+		for (const key of page.keys) keys.push(key.name);
+		if (page.list_complete || !page.cursor) break;
 
 		cursor = page.cursor;
 	}
@@ -31,10 +25,8 @@ async function listAllKvKeysByPrefix(kv: KVNamespace, prefix: string): Promise<s
 	return keys;
 }
 
-export async function deleteKvKeys(kv: KVNamespace, keys: string[]): Promise<void> {
-	if (keys.length === 0) {
-		return;
-	}
+async function deleteKvKeys(kv: KVNamespace, keys: string[]): Promise<void> {
+	if (keys.length === 0) return;
 
 	await batchProcess(
 		keys.map((key) => kv.delete(key)),
@@ -42,7 +34,7 @@ export async function deleteKvKeys(kv: KVNamespace, keys: string[]): Promise<voi
 	);
 }
 
-export async function deleteKvPrefix(kv: KVNamespace, prefix: string): Promise<void> {
+async function deleteKvPrefix(kv: KVNamespace, prefix: string): Promise<void> {
 	const keys = await listAllKvKeysByPrefix(kv, prefix);
 	await deleteKvKeys(kv, keys);
 }
@@ -53,20 +45,13 @@ export async function deleteR2Prefix(r2: R2Bucket, prefix: string): Promise<void
 
 	while (true) {
 		const page = await r2.list({ prefix, cursor, limit: 1000 });
-		for (const object of page.objects) {
-			keys.push(object.key);
-		}
-
-		if (page.truncated !== true || !page.cursor) {
-			break;
-		}
+		for (const object of page.objects) keys.push(object.key);
+		if (page.truncated !== true || !page.cursor) break;
 
 		cursor = page.cursor;
 	}
 
-	if (keys.length === 0) {
-		return;
-	}
+	if (keys.length === 0) return;
 
 	await batchProcess(
 		keys.map((key) => r2.delete(key)),
@@ -80,17 +65,6 @@ async function deleteDurableObjectState(stub: DurableObjectStub): Promise<void> 
 	} catch (err) {
 		console.error('Failed to purge durable object state:', err);
 	}
-}
-
-export async function deleteUserDurableObjectState(userId: string, env: Bindings): Promise<void> {
-	const variants = Array.from(new Set([normalizeId(userId), userId].filter(Boolean)));
-
-	await Promise.all(
-		variants.flatMap((variant) => [
-			deleteDurableObjectState(env.TIMER.get(env.TIMER.idFromName(variant))),
-			deleteDurableObjectState(env.NOTIFIER.get(env.NOTIFIER.idFromName(`users:${variant}`)))
-		])
-	);
 }
 
 export async function deleteQuestHistoryDataForUser(userId: string, env: Bindings): Promise<void> {
@@ -171,7 +145,14 @@ export async function deleteUserDataVariant(
 		clearCachePrefix(`user:${userId}:submissions:`, env.CACHE)
 	]);
 
-	await deleteUserDurableObjectState(userId, env);
+	// both id forms, because a durable object named before normalizeId landed still holds state
+	const variants = Array.from(new Set([normalizeId(userId), userId].filter(Boolean)));
+	await Promise.all(
+		variants.flatMap((variant) => [
+			deleteDurableObjectState(env.TIMER.get(env.TIMER.idFromName(variant))),
+			deleteDurableObjectState(env.NOTIFIER.get(env.NOTIFIER.idFromName(`users:${variant}`)))
+		])
+	);
 
 	await Promise.allSettled(
 		JOURNEY_TYPES.map(async (type) => {

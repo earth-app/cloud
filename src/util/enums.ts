@@ -253,17 +253,8 @@ export type ActivityType = (typeof ACTIVITY_TYPE)[number];
 
 // #region guards
 
-/**
- * Narrow an unknown value to one of `values`, or fall back.
- *
- * Replaces ocean's `Enum.valueOf(string)`, which THREW on an unknown name. The backend can add an
- * enum member before the frontend ships, so a hard throw there takes a page down over a value it
- * simply has not heard of yet; falling back keeps the surface rendering.
- *
- * @param values the allowed set
- * @param value candidate, usually straight off the wire
- * @param fallback returned when the candidate is not a member
- */
+// falls back instead of throwing like ocean's Enum.valueOf did; the backend can add a member
+// before the frontend ships, and a throw there takes a page down over an unrecognised string
 function coerce<T extends string>(values: readonly T[], value: unknown, fallback: T): T {
 	return typeof value === 'string' && (values as readonly string[]).includes(value)
 		? (value as T)
