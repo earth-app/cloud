@@ -1265,8 +1265,12 @@ export function sanitizeAIOutput(
 	// Remove quotes and similar wrapper characters
 	if (opts.removeQuotes) {
 		cleaned = cleaned
+			// a curly apostrophe is an apostrophe, and the model writes that one. deleting it with
+			// the quotes is what produced live titles like "Educations Gender Gap" and
+			// "Greenlands Glaciers Retreat"
+			.replace(/[‘’]/g, "'")
+			.replace(/[“”`]/g, '') // fancy double quotes and backticks
 			.replace(/^["'`]+|["'`]+$/g, '') // Remove leading/trailing quotes
-			.replace(/[""''`]/g, '') // Remove fancy quotes and backticks only (preserve apostrophes)
 			.trim();
 	}
 
@@ -1910,7 +1914,10 @@ export function validateArticleSummary(summaryResponse: string, originalTitle: s
 	}
 }
 
-export function validatePromptQuestion(questionResponse: string): string {
+export function validatePromptQuestion(
+	questionResponse: string,
+	variant: PromptVariant = 'curiosity'
+): string {
 	try {
 		if (!questionResponse || typeof questionResponse !== 'string') {
 			logAIFailure('PromptQuestion', 'N/A', questionResponse, 'Invalid response type');
@@ -1948,7 +1955,11 @@ export function validatePromptQuestion(questionResponse: string): string {
 			throw new Error('Generated prompt question too long');
 		}
 
-		const prohibitedWords = ['imagine', 'you', 'your', 'i', 'my', 'we', 'our'];
+		// reflection prompts are second-person by design; only curiosity prompts stay pronoun-free
+		const prohibitedWords =
+			variant === 'reflection'
+				? ['imagine', 'i', 'my', 'we', 'our']
+				: ['imagine', 'you', 'your', 'i', 'my', 'we', 'our'];
 		const lowerQuestion = question.toLowerCase();
 
 		for (const word of prohibitedWords) {
@@ -1957,6 +1968,12 @@ export function validatePromptQuestion(questionResponse: string): string {
 				logAIFailure('PromptQuestion', 'N/A', question, `Contains prohibited word: ${word}`);
 				throw new Error('Generated prompt question contains prohibited phrase');
 			}
+		}
+
+		// a reflection prompt that never addresses the reader is just another curiosity prompt
+		if (variant === 'reflection' && !/\b(you|your|yours|yourself)\b/.test(lowerQuestion)) {
+			logAIFailure('PromptQuestion', 'N/A', question, 'Reflection prompt is not second-person');
+			throw new Error('Generated reflection prompt is not second-person');
 		}
 
 		return question;
@@ -2177,7 +2194,7 @@ REQUIREMENTS:
 OUTPUT FORMAT: Return only the topic words, nothing else.
 `;
 
-const topicExamples = [
+export const topicExamples = [
 	'self growth',
 	'perseverance',
 	'mental wellness',
@@ -2263,7 +2280,6 @@ const topicExamples = [
 	'exercise physiology',
 	'sleep science',
 	'pain management',
-	'addiction research',
 	'trauma research',
 	'urban planning',
 	'environmental science',
@@ -2620,10 +2636,16 @@ OUTPUT: Respond with ONLY a JSON object of the form {"questions": [ ... ]}. No m
 
 // Prompts Prompts
 
-export const promptsSystemMessage = `
+export const PROMPT_VARIANTS = ['curiosity', 'reflection'] as const;
+export type PromptVariant = (typeof PROMPT_VARIANTS)[number];
+
+// reflection prompts must address the reader; curiosity prompts stay third-person abstract
+export const promptsSystemMessage = (variant: PromptVariant = 'curiosity') => `
 Current date: ${new Date().toISOString().split('T')[0]}
 
-TASK: Generate exactly ONE original, thought-provoking question that encourages reflection and curiosity.
+TASK: Generate exactly ONE original, thought-provoking question that encourages ${
+	variant === 'reflection' ? 'self-reflection' : 'curiosity about the wider world'
+}.
 
 REQUIREMENTS:
 - Length: Under 15 words, under 100 characters
@@ -2632,13 +2654,27 @@ REQUIREMENTS:
 - Content: Timeless, inviting exploration and diverse perspectives
 - Language: Simple English, maximum one comma
 - Tone: Neutral and inclusive - avoid prescriptive or judgmental framing
-- Avoid: Personal pronouns, "what if", "imagine", clichés, company names, specific events, loaded language
+${
+	variant === 'reflection'
+		? `- Person: Address the reader directly with "you" or "your"; never use "I", "my", "we", or "our"
+- Subject: The reader's own experience, habits, memories, or choices`
+		: `- Avoid: Personal pronouns of any kind
+- Subject: People, ideas, and the world in general rather than the reader`
+}
+- Avoid: "what if", "imagine", clichés, company names, specific events, loaded language
 
 EXAMPLES OF GOOD QUESTIONS:
-- "What drives people to take creative risks?"
+${
+	variant === 'reflection'
+		? `- "Which of your habits would you keep for another decade?"
+- "What did you notice today that you usually walk past?"
+- "Where do you feel most like yourself?"
+- "What are you curious about but never look up?"`
+		: `- "What drives people to take creative risks?"
 - "How does curiosity shape learning?"
 - "Why do some habits stick while others fade?"
-- "What role does wonder play in discovery?"
+- "What role does wonder play in discovery?"`
+}
 
 OUTPUT: Return only the question, nothing else.
 `;
@@ -2890,12 +2926,35 @@ const topics = [
 	'late nights'
 ];
 
-export const promptsQuestionPrompt = () => {
-	const prefix = prefixes[Math.floor(Math.random() * prefixes.length)];
+const reflectionPrefixes = [
+	'What do you',
+	'What did you',
+	'When do you',
+	'Where do you',
+	'Why do you',
+	'How often do you',
+	'Which of your',
+	'What part of your',
+	'What would you',
+	'What have you',
+	'What keeps you',
+	'What surprised you',
+	'What do you notice',
+	'What do you avoid',
+	'What are you'
+];
+
+export const promptsQuestionPrompt = (variant: PromptVariant = 'curiosity') => {
+	const pool = variant === 'reflection' ? reflectionPrefixes : prefixes;
+	const prefix = pool[Math.floor(Math.random() * pool.length)];
 	const topic = topics[Math.floor(Math.random() * topics.length)];
 
 	return `Create a question with the prefix '${prefix}' about '${topic}' that is open-ended, engaging, and thought-provoking.`;
 };
+
+export function randomPromptVariant(): PromptVariant {
+	return PROMPT_VARIANTS[Math.floor(Math.random() * PROMPT_VARIANTS.length)];
+}
 
 // Events
 
@@ -3114,34 +3173,82 @@ export type UserProfilePromptData = {
 	}>;
 };
 
+// SDXL's CLIP text encoder hard-stops at 77 tokens (2 of them BOS/EOS) and silently drops the rest
+export const CLIP_TOKEN_LIMIT = 77;
+
+// conservative CLIP BPE estimate; short words are one token, longer ones split on ~4-char merges
+export function estimateClipTokens(text: string): number {
+	const words = text.toLowerCase().trim().split(/\s+/).filter(Boolean);
+
+	let tokens = 2;
+	for (const word of words) {
+		const letters = word.replace(/[^a-z0-9]/g, '');
+		tokens += word.length - letters.length; // punctuation each tokenizes on its own
+		if (!letters) continue;
+
+		tokens += letters.length <= 5 ? 1 : Math.ceil(letters.length / 4);
+	}
+
+	return tokens;
+}
+
+export const PROFILE_PHOTO_SUBJECT_CAP = 4;
+const PROFILE_PHOTO_SUBJECT_MAX_CHARS = 40;
+const PROFILE_PHOTO_STYLE = 'vibrant saturated colour, centred, simple complementary background';
+const PROFILE_PHOTO_FALLBACK_SUBJECT = 'simple natural objects and geometric shapes';
+
+// deterministic subject nouns from the user's own activity order; names only (alias fallback), never descriptions
+export function profilePhotoSubjects(
+	activities: UserProfilePromptData['activities'] | undefined,
+	cap: number = PROFILE_PHOTO_SUBJECT_CAP
+): string[] {
+	const seen = new Set<string>();
+	const subjects: string[] = [];
+
+	for (const activity of activities ?? []) {
+		const raw = activity?.name || activity?.aliases?.find((alias) => alias?.trim()) || '';
+		let label = raw
+			.toLowerCase()
+			.replace(/[^a-z0-9 ]/g, ' ')
+			.replace(/\s+/g, ' ')
+			.trim();
+
+		if (label.length > PROFILE_PHOTO_SUBJECT_MAX_CHARS) {
+			label = label
+				.slice(0, PROFILE_PHOTO_SUBJECT_MAX_CHARS)
+				.replace(/\s\S*$/, '')
+				.trim();
+		}
+
+		if (!label || seen.has(label)) continue;
+
+		seen.add(label);
+		subjects.push(label);
+		if (subjects.length >= cap) break;
+	}
+
+	return subjects;
+}
+
+function profilePhotoPromptText(subjects: string[]): string {
+	const subject = subjects.length ? subjects.join(', ') : PROFILE_PHOTO_FALLBACK_SUBJECT;
+	return `abstract flat painterly composition of ${subject}, ${PROFILE_PHOTO_STYLE}`;
+}
+
 export const userProfilePhotoPrompt = (data: UserProfilePromptData) => {
+	const subjects = profilePhotoSubjects(data.activities);
+	let prompt = profilePhotoPromptText(subjects);
+
+	// activities lead the prompt, so drop trailing subjects rather than let the encoder cut them
+	while (subjects.length > 0 && estimateClipTokens(prompt) > CLIP_TOKEN_LIMIT) {
+		subjects.pop();
+		prompt = profilePhotoPromptText(subjects);
+	}
+
 	return {
-		prompt: `
-		Generate a heavily expressive, abstract, artistic, colorful, vibrant, and unique profile picture for a user with the username "${data.username}."
-		The profile picture should be a special representation of the user as a whole, so include lots of vibrant colors and effects in every corner.
-		The photo should be around inanimate objects or attributes, avoiding things like people or animals, or symbols that represent them (like toys or paintings.)
-
-		The style of the profile picture should be in a flat, colorful, painting-like tone and style. Whatever you choose, make sure it is vibrant and colorful.
-        There should be no text, logos, or any other elements that could be considered as a watermark or branding. The primary object should be placed in the
-        center of the image. The background should be a simple, abstract design that complements the primary object without distracting from it.
-        The object should be easily recognizable and visually appealing, with a focus on the colors and shapes rather than intricate details.
-
-        They created their account on ${data.created_at}. They have set their account visibility to ${data.visibility}.
-		The user lives in ${data.country}. Their name is "${data.full_name ?? 'No name provided.'}".
-
-		Lastly, the like the following activities:
-		${data.activities.map(
-			(activity) =>
-				`- ${activity.name} (aka ${activity.aliases.join(', ')}): ${
-					activity.description
-						? activity.description.substring(0, 140)
-						: 'No description available.'
-				}\nIt is categorized as '${activity.types.join(', ')}.'\n`
-		)}
-
-		If any field says "None Provided" or "Unknown," disregard that element as apart of the profile picture, as the user has omitted said details.
-		`.trim(),
-		negative_prompt: `Avoid elements of toys, scary elements, political or sensitive statements, words, or any branding.`,
+		prompt,
+		negative_prompt:
+			'person, people, face, human, portrait, figure, animal, toy, text, words, letters, logo, watermark, signature, branding, scary, political',
 		guidance: 7.5
 	} satisfies AiTextToImageInput;
 };

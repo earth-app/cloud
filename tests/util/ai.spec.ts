@@ -13,6 +13,8 @@ import {
 	articleTopicPrompt,
 	articleTopicSystemMessage,
 	classifyEventEntry,
+	CLIP_TOKEN_LIMIT,
+	estimateClipTokens,
 	eventActivitySelectionQuery,
 	eventDescriptionPrompt,
 	eventDescriptionSystemMessage,
@@ -23,12 +25,17 @@ import {
 	generateProfilePhoto,
 	isPlaceBirthdaySource,
 	logAIFailure,
+	profilePhotoSubjects,
+	PROFILE_PHOTO_SUBJECT_CAP,
 	promptCriteria,
+	PROMPT_VARIANTS,
 	promptsQuestionPrompt,
 	promptsSystemMessage,
+	randomPromptVariant,
 	sanitizeAIOutput,
 	sanitizeForContentType,
 	userProfilePhotoPrompt,
+	type UserProfilePromptData,
 	validateActivityDescription,
 	inferActivityTags,
 	selectActivityIcon,
@@ -62,6 +69,23 @@ describe('sanitizeAIOutput', () => {
 
 	it('returns empty string for non-string input', () => {
 		expect(sanitizeAIOutput('' as string)).toBe('');
+	});
+
+	// the model writes a curly apostrophe, and it used to be deleted along with the curly quotes:
+	// live titles read "Educations Gender Gap" and "Greenlands Glaciers Retreat"
+	it('keeps a curly apostrophe as an apostrophe', () => {
+		expect(sanitizeForContentType('Education’s Gender Gap', 'title')).toBe(
+			"Education's Gender Gap"
+		);
+		expect(sanitizeForContentType('Greenland’s Glaciers Retreat', 'title')).toBe(
+			"Greenland's Glaciers Retreat"
+		);
+	});
+
+	it('still strips the quotes it was written to strip', () => {
+		expect(sanitizeForContentType('“Quoted Title”', 'title')).toBe('Quoted Title');
+		expect(sanitizeForContentType('`Backticked Title`', 'title')).toBe('Backticked Title');
+		expect(sanitizeForContentType('"Wrapped Title"', 'title')).toBe('Wrapped Title');
 	});
 });
 
@@ -195,6 +219,29 @@ describe('validateArticleSummary', () => {
 describe('validatePromptQuestion', () => {
 	it('rejects prohibited phrasing', () => {
 		expect(() => validatePromptQuestion('What if your world changed?')).toThrow();
+	});
+
+	it('still keeps curiosity prompts free of second-person pronouns', () => {
+		expect(() => validatePromptQuestion('What do you notice on a walk?')).toThrow();
+		expect(validatePromptQuestion('How does curiosity shape learning?')).toContain('curiosity');
+	});
+
+	it('accepts second-person reflection prompts', () => {
+		expect(validatePromptQuestion('What do you notice on a walk?', 'reflection')).toBe(
+			'What do you notice on a walk?'
+		);
+	});
+
+	it('rejects a reflection prompt that never addresses the reader', () => {
+		expect(() =>
+			validatePromptQuestion('How does curiosity shape learning?', 'reflection')
+		).toThrow('not second-person');
+	});
+
+	it('keeps first-person pronouns out of reflection prompts', () => {
+		expect(() => validatePromptQuestion('What do we owe your future self?', 'reflection')).toThrow(
+			'prohibited phrase'
+		);
 	});
 });
 
@@ -419,13 +466,42 @@ describe('articleSimilarityQuery', () => {
 
 describe('promptsSystemMessage', () => {
 	it('contains task instructions', () => {
-		expect(promptsSystemMessage).toContain('Generate exactly ONE');
+		expect(promptsSystemMessage()).toContain('Generate exactly ONE');
+	});
+
+	it('bans pronouns for curiosity but requires them for reflection', () => {
+		expect(promptsSystemMessage('curiosity')).toContain('Personal pronouns of any kind');
+		expect(promptsSystemMessage('curiosity')).toContain('curiosity about the wider world');
+
+		const reflection = promptsSystemMessage('reflection');
+		expect(reflection).not.toContain('Personal pronouns of any kind');
+		expect(reflection).toContain('Address the reader directly');
+		expect(reflection).toContain('self-reflection');
 	});
 });
 
 describe('promptsQuestionPrompt', () => {
 	it('returns a dynamic question-generation instruction', () => {
 		expect(promptsQuestionPrompt()).toContain('Create a question');
+	});
+
+	it('draws reflection prefixes from the second-person pool', () => {
+		const prefixes = new Set(
+			Array.from({ length: 60 }, () => promptsQuestionPrompt('reflection')).map(
+				(instruction) => instruction.match(/prefix '([^']+)'/)![1]
+			)
+		);
+		expect(prefixes.size).toBeGreaterThan(1);
+		for (const prefix of prefixes) {
+			expect(prefix.toLowerCase()).toContain('you');
+		}
+	});
+});
+
+describe('randomPromptVariant', () => {
+	it('produces both variants over repeated draws', () => {
+		const drawn = new Set(Array.from({ length: 100 }, () => randomPromptVariant()));
+		expect(drawn).toEqual(new Set(PROMPT_VARIANTS));
 	});
 });
 
@@ -534,18 +610,151 @@ describe('eventImageCriteria', () => {
 	});
 });
 
+describe('estimateClipTokens', () => {
+	it('reserves the BOS/EOS slots', () => {
+		expect(estimateClipTokens('')).toBe(2);
+	});
+
+	it('counts short words once and splits longer ones', () => {
+		expect(estimateClipTokens('flat')).toBe(3);
+		expect(estimateClipTokens('complementary')).toBe(2 + Math.ceil(13 / 4));
+	});
+
+	it('counts punctuation separately', () => {
+		expect(estimateClipTokens('flat, flat')).toBe(estimateClipTokens('flat flat') + 1);
+	});
+});
+
+describe('profilePhotoSubjects', () => {
+	const activity = (name: string, aliases: string[] = []) => ({
+		name,
+		description: 'a very long description that must never reach the encoder',
+		types: ['HOBBY'] as any,
+		aliases
+	});
+
+	it('caps the subject list and preserves the user order', () => {
+		const subjects = profilePhotoSubjects([
+			activity('Coding'),
+			activity('Reading'),
+			activity('Cross Country'),
+			activity('Track and Field'),
+			activity('Writing')
+		]);
+
+		expect(subjects).toEqual(['coding', 'reading', 'cross country', 'track and field']);
+		expect(subjects.length).toBe(PROFILE_PHOTO_SUBJECT_CAP);
+	});
+
+	it('falls back to the first usable alias when the name is empty', () => {
+		expect(profilePhotoSubjects([activity('', ['  ', 'Sunglasses Collecting'])])).toEqual([
+			'sunglasses collecting'
+		]);
+	});
+
+	it('dedupes, strips punctuation, and trims over-long names on a word boundary', () => {
+		expect(profilePhotoSubjects([activity('Track & Field'), activity('track  field')])).toEqual([
+			'track field'
+		]);
+		expect(
+			profilePhotoSubjects([activity('a'.repeat(60) + ' tail')])[0].length
+		).toBeLessThanOrEqual(40);
+		expect(
+			profilePhotoSubjects([activity('competitive underwater basket weaving league')])
+		).toEqual(['competitive underwater basket weaving']);
+	});
+
+	it('returns nothing for missing or unusable activities', () => {
+		expect(profilePhotoSubjects(undefined)).toEqual([]);
+		expect(profilePhotoSubjects([activity('!!!', ['???'])])).toEqual([]);
+	});
+});
+
 describe('userProfilePhotoPrompt', () => {
-	it('returns model input prompt with user context', () => {
-		const payload = userProfilePhotoPrompt({
-			username: 'earthy',
-			bio: 'bio',
-			created_at: '2026-01-01',
-			visibility: 'PUBLIC' as any,
-			country: 'US',
-			full_name: 'Earth User',
-			activities: []
-		});
-		expect(payload.prompt).toContain('earthy');
+	const user = (activities: UserProfilePromptData['activities']): UserProfilePromptData => ({
+		username: 'earthy',
+		bio: 'bio',
+		created_at: '2026-01-01',
+		visibility: 'PUBLIC' as any,
+		country: 'US',
+		full_name: 'Earth User',
+		activities
+	});
+
+	const activity = (name: string) => ({
+		name,
+		description: 'x'.repeat(400),
+		types: ['HOBBY'] as any,
+		aliases: [name.toLowerCase()]
+	});
+
+	it('leads with the activity subjects, ahead of the style text', () => {
+		const payload = userProfilePhotoPrompt(user([activity('Coding'), activity('Karting')]));
+
+		expect(payload.prompt).toContain('coding, karting');
+		expect(payload.prompt.indexOf('coding')).toBeLessThan(payload.prompt.indexOf('vibrant'));
+	});
+
+	it('fits inside the CLIP token limit even for a full activity list', () => {
+		const payload = userProfilePhotoPrompt(
+			user(
+				[
+					'Coding',
+					'Reading',
+					'Cross Country',
+					'Track and Field',
+					'Writing',
+					'Sunglasses Collecting',
+					'Debate',
+					'Weightlifting',
+					'Karting'
+				].map(activity)
+			)
+		);
+
+		expect(estimateClipTokens(payload.prompt)).toBeLessThanOrEqual(CLIP_TOKEN_LIMIT);
+		expect(estimateClipTokens(payload.negative_prompt!)).toBeLessThanOrEqual(CLIP_TOKEN_LIMIT);
+	});
+
+	it('drops trailing subjects when many-word names would overflow the budget', () => {
+		// adversarial shape: every word tokenizes on its own, so four capped labels still blow the budget
+		const wordy = Array.from({ length: PROFILE_PHOTO_SUBJECT_CAP }, (_, i) =>
+			activity(`a${i} bb cc dd ee ff gg hh ii jj kk ll mm nn oo`)
+		);
+		const payload = userProfilePhotoPrompt(user(wordy));
+
+		expect(estimateClipTokens(payload.prompt)).toBeLessThanOrEqual(CLIP_TOKEN_LIMIT);
+		expect(payload.prompt).toContain('a0');
+		expect(payload.prompt).not.toContain('a3');
+	});
+
+	it('never leaks the non-visual profile fields the encoder used to cut', () => {
+		const payload = userProfilePhotoPrompt(user([activity('Coding')]));
+
+		expect(payload.prompt).not.toContain('earthy');
+		expect(payload.prompt).not.toContain('2026-01-01');
+		expect(payload.prompt).not.toContain('PUBLIC');
+		expect(payload.prompt).not.toContain('US');
+		expect(payload.prompt).not.toContain('Earth User');
+		expect(payload.prompt).not.toContain('x'.repeat(20));
+	});
+
+	it('keeps every person and animal term in the negative prompt', () => {
+		const payload = userProfilePhotoPrompt(user([activity('Coding')]));
+
+		for (const term of ['person', 'people', 'face', 'human', 'portrait', 'figure', 'animal']) {
+			expect(payload.negative_prompt).toContain(term);
+		}
+		expect(payload.prompt).not.toContain('people');
+	});
+
+	it('falls back to a generic subject with no activities and stays deterministic', () => {
+		const empty = userProfilePhotoPrompt(user([]));
+		expect(empty.prompt).toContain('simple natural objects and geometric shapes');
+
+		const first = userProfilePhotoPrompt(user([activity('Coding'), activity('Debate')]));
+		const second = userProfilePhotoPrompt(user([activity('Coding'), activity('Debate')]));
+		expect(first.prompt).toBe(second.prompt);
 	});
 });
 
