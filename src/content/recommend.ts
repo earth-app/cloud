@@ -26,11 +26,6 @@ type Scored = {
 
 const WORD_SPLIT = /\W+/;
 
-/**
- * Tokens of length > 2, lowercased, from the name and description.
- *
- * @param activity candidate or current activity
- */
 function keywordSet(activity: RecommendActivity): Set<string> {
 	const out = new Set<string>();
 	const add = (text: string) => {
@@ -52,14 +47,9 @@ function typesOf(activity: RecommendActivity): ActivityType[] {
 
 // #region validation
 
-/**
- * Accept only what the algorithm can actually score.
- *
- * ocean ran this through `Exportable.fromJson`, which THREW on a malformed entry and took the whole
- * request with it. Dropping the bad entry instead keeps a recommendation coming back when mantle2
+/* ocean ran this through Exportable.fromJson, which THREW on a malformed entry and took the whole
+ * request with it. dropping the bad entry keeps a recommendation coming back when mantle2
  * sends one dud row in a batch of hundreds.
- *
- * @param value one element of the posted array
  */
 export function isRecommendActivity(value: unknown): value is RecommendActivity {
 	if (!value || typeof value !== 'object') return false;
@@ -74,33 +64,18 @@ export function isRecommendActivity(value: unknown): value is RecommendActivity 
 	return true;
 }
 
-/**
- * Keep the valid entries of a posted array.
- *
- * @param value the raw `all` or `user` array
- */
 export function parseActivities(value: unknown): RecommendActivity[] {
 	return Array.isArray(value) ? value.filter(isRecommendActivity) : [];
 }
 
 // #endregion
 
-// #region recommendation
+// #region scoring against a user
 
-/**
- * Recommend up to three activities from `all`, given what the user already does.
- *
- * - the first is the closest match to the user's current activities
- * - the second is related-but-different (a tie-break between similarity and novelty)
- * - the third is intentionally different, for a fresh experience
- *
- * @param all every activity in the system
- * @param current the activities the user is already engaged in
- */
-export function recommendActivity(
-	all: RecommendActivity[],
-	current: RecommendActivity[]
-): RecommendActivity[] {
+/** below this on both axes an activity counts as distant from what the user already does */
+export const DISTANT_SCORE = 0.2;
+
+function scoreAgainst(all: RecommendActivity[], current: RecommendActivity[]): Scored[] {
 	const currentIds = new Set(current.map((a) => a.id));
 
 	const currentKeywords = new Set<string>();
@@ -135,6 +110,71 @@ export function recommendActivity(
 		});
 	}
 
+	return scored;
+}
+
+export function isDistant(entry: Scored): boolean {
+	return entry.keywordScore < DISTANT_SCORE && entry.typeScore < DISTANT_SCORE;
+}
+
+export type SurpriseActivity = {
+	activity: RecommendActivity;
+	/** true when nothing at all is shared with the user's current set, not merely little */
+	unrelated: boolean;
+	/** how many candidates were distant enough to be drawn instead */
+	pool: number;
+};
+
+/* the catalog is 470 items and reads as a searchable list; this is the exploration surface it was
+ * missing. same shape as recommendActivity's `different` slot - filter to the distant
+ * tail, then sample uniformly - so a re-roll keeps landing somewhere unexpected rather than walking
+ * a ranked list. Falls back to the least-related candidate when nothing clears the bar, and to a
+ * plain random pick when the user has no activities to be distant from.
+ *
+ */
+export function surpriseActivity(
+	all: RecommendActivity[],
+	current: RecommendActivity[],
+	random: () => number = Math.random
+): SurpriseActivity | null {
+	if (all.length === 0) return null;
+
+	if (current.length === 0) {
+		const pick = all[Math.floor(random() * all.length)] ?? all[all.length - 1]!;
+		return { activity: pick, unrelated: true, pool: all.length };
+	}
+
+	const scored = scoreAgainst(all, current);
+	if (scored.length === 0) return null;
+
+	const distant = scored.filter(isDistant);
+	if (distant.length === 0) {
+		const worst = [...scored].sort((a, b) => a.totalScore - b.totalScore)[0]!;
+		return { activity: worst.activity, unrelated: worst.isNovel, pool: 0 };
+	}
+
+	const drawn = distant[Math.floor(random() * distant.length)] ?? distant[distant.length - 1]!;
+	return { activity: drawn.activity, unrelated: drawn.isNovel, pool: distant.length };
+}
+
+// #endregion
+
+// #region recommendation
+
+/**
+ * Recommend up to three activities from `all`, given what the user already does.
+ *
+ * - the first is the closest match to the user's current activities
+ * - the second is related-but-different (a tie-break between similarity and novelty)
+ * - the third is intentionally different, for a fresh experience
+ *
+ */
+export function recommendActivity(
+	all: RecommendActivity[],
+	current: RecommendActivity[]
+): RecommendActivity[] {
+	const scored = scoreAgainst(all, current);
+
 	// score desc, then prefer a novel candidate on a tie
 	const sorted = [...scored].sort(
 		(a, b) => b.totalScore - a.totalScore || Number(b.isNovel) - Number(a.isNovel)
@@ -150,7 +190,7 @@ export function recommendActivity(
 
 	/* deliberately drawn from `scored`, NOT `sorted`: the kotlin fell back to the last element in
 	   INSERTION order, so keeping the unsorted list preserves which activity that is */
-	const distant = scored.filter((s) => s.keywordScore < 0.2 && s.typeScore < 0.2);
+	const distant = scored.filter(isDistant);
 	const different =
 		distant.length > 0
 			? distant[Math.floor(Math.random() * distant.length)]?.activity
