@@ -3,6 +3,7 @@ import { normalizeId, clampNumber } from '../util/util';
 import { sendUserNotification } from './notifications';
 import { classifySentiment } from '../content/moderation/ai';
 import { trackAndGrant } from './badges';
+import { getActivitySnapshot } from './activities';
 
 // mirrors crust/src/shared/types/trailmarks.ts (do not import across repos)
 
@@ -25,6 +26,11 @@ export interface Trailmark {
 	thanks_for_author?: number;
 	// set when this note was left as an answer to a daily prompt (surfaces on the prompt)
 	prompt_id?: string;
+	// the activity the author was doing here; the one field that makes a note legible as
+	// "someone who does what I do stood here"
+	activity_id?: string;
+	// true when the viewer's own activities include activity_id (computed per viewer, never stored)
+	shared_activity?: boolean;
 }
 
 export interface TrailmarkCreateInput {
@@ -34,6 +40,8 @@ export interface TrailmarkCreateInput {
 	note: string;
 	// optional: also surface this note under a daily prompt as a 'from outside' response
 	prompt_id?: string;
+	// optional: the activity this note came out of
+	activity_id?: string;
 }
 
 // notes linger for the next visitor; long enough to matter, bounded so the map self-cleans
@@ -213,6 +221,17 @@ function sanitizePromptId(raw: unknown): string | null {
 	return clean || null;
 }
 
+// activity ids are catalog slugs; same character class as a prompt id but lowercased
+function sanitizeActivityId(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null;
+	const clean = raw
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9_-]/g, '')
+		.slice(0, 64);
+	return clean || null;
+}
+
 const promptPrefix = (promptId: string) => `trailmark:prompt:${promptId}:`;
 const promptKey = (promptId: string, id: string) => `${promptPrefix(promptId)}${id}`;
 
@@ -256,6 +275,7 @@ export async function createTrailmark(
 			: undefined;
 
 	const promptId = sanitizePromptId(input.prompt_id);
+	const activityId = sanitizeActivityId(input.activity_id);
 
 	const bucket = geohashEncode(lat, lng);
 	const id = `${bucket}${genSuffix()}`;
@@ -267,7 +287,8 @@ export async function createTrailmark(
 		geo: { lat, lng, ...(placeLabel ? { place_label: placeLabel } : {}) },
 		note,
 		created_at: new Date().toISOString(),
-		...(promptId ? { prompt_id: promptId } : {})
+		...(promptId ? { prompt_id: promptId } : {}),
+		...(activityId ? { activity_id: activityId } : {})
 	};
 
 	const meta: GeoMeta = { lat, lng, created_at: trailmark.created_at };
@@ -306,16 +327,30 @@ async function appendToUserIndex(env: Bindings, uid: string, mark: Trailmark): P
 	await env.KV.put(userKey(uid), JSON.stringify(next), { expirationTtl: TRAILMARK_TTL });
 }
 
+export interface NearbyTrailmarkOptions {
+	/** only notes left while doing this activity */
+	activityId?: string;
+	/** only notes whose activity the viewer also does; ignored without a viewer */
+	sharedOnly?: boolean;
+}
+
 export async function getNearbyTrailmarks(
 	env: Bindings,
 	lat: number,
 	lng: number,
 	radius: number = DEFAULT_RADIUS,
-	viewerUid?: string
+	viewerUid?: string,
+	options: NearbyTrailmarkOptions = {}
 ): Promise<Trailmark[]> {
 	if (!isValidLatLng(lat, lng)) return [];
 	const radiusM = clampNumber(radius, 1, MAX_RADIUS, DEFAULT_RADIUS);
 	const viewer = viewerUid ? normalizeId(viewerUid) : '';
+	const activityFilter = sanitizeActivityId(options.activityId);
+
+	// one read for the whole request; the snapshot is written by the activities-changed hook
+	const viewerActivities = viewer
+		? new Set((await getActivitySnapshot(viewer, env.KV)).map((id) => id.toLowerCase()))
+		: new Set<string>();
 
 	const buckets = coveringBuckets(lat, lng, radiusM);
 
@@ -357,14 +392,21 @@ export async function getNearbyTrailmarks(
 		if (!rec || typeof rec.note !== 'string') continue;
 		// re-verify radius for any metadata-less fallback candidate
 		if (rec.geo && !within(lat, lng, rec.geo, radiusM)) continue;
-		out.push(await enrichForViewer(env, rec, viewer));
+		if (activityFilter && rec.activity_id !== activityFilter) continue;
+		if (options.sharedOnly && !(rec.activity_id && viewerActivities.has(rec.activity_id))) continue;
+		out.push(await enrichForViewer(env, rec, viewer, viewerActivities));
 	}
 	return out;
 }
 
 // shapes a stored mark for a viewer: the private thanks tally goes only to the author,
 // every other viewer gets thanked_by_me. shared by nearby + prompt lookups
-async function enrichForViewer(env: Bindings, rec: Trailmark, viewer: string): Promise<Trailmark> {
+async function enrichForViewer(
+	env: Bindings,
+	rec: Trailmark,
+	viewer: string,
+	viewerActivities?: ReadonlySet<string>
+): Promise<Trailmark> {
 	const enriched: Trailmark = {
 		id: rec.id,
 		author_uid: rec.author_uid,
@@ -372,8 +414,12 @@ async function enrichForViewer(env: Bindings, rec: Trailmark, viewer: string): P
 		geo: rec.geo,
 		note: rec.note,
 		created_at: rec.created_at,
-		...(rec.prompt_id ? { prompt_id: rec.prompt_id } : {})
+		...(rec.prompt_id ? { prompt_id: rec.prompt_id } : {}),
+		...(rec.activity_id ? { activity_id: rec.activity_id } : {})
 	};
+
+	// the shared-interest signal: computed per viewer from their own activity list, never stored
+	if (rec.activity_id && viewerActivities?.has(rec.activity_id)) enriched.shared_activity = true;
 
 	const isAuthor = viewer !== '' && normalizeId(rec.author_uid) === viewer;
 	if (isAuthor) {
@@ -409,10 +455,14 @@ export async function getTrailmarksForPrompt(
 		entries.map(({ id }) => env.KV.get<Trailmark>(markKey(id), 'json'))
 	);
 
+	const viewerActivities = viewer
+		? new Set((await getActivitySnapshot(viewer, env.KV)).map((id) => id.toLowerCase()))
+		: new Set<string>();
+
 	const out: Trailmark[] = [];
 	for (const rec of records) {
 		if (!rec || typeof rec.note !== 'string') continue;
-		out.push(await enrichForViewer(env, rec, viewer));
+		out.push(await enrichForViewer(env, rec, viewer, viewerActivities));
 	}
 	return out;
 }

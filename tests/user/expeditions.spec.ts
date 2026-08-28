@@ -6,7 +6,9 @@ import {
 	creditContribution,
 	computeGarden,
 	expeditionMinutes,
-	isExpeditionGoal
+	getExpeditionsForActivity,
+	isExpeditionGoal,
+	MAX_ACTIVITY_EXPEDITIONS
 } from '../../src/user/expeditions';
 import { isBadgeGranted } from '../../src/user/badges';
 import { createMockBindings } from '../helpers/mock-bindings';
@@ -214,6 +216,45 @@ describe('computeGarden', () => {
 		// a different owner grows a different garden
 		const gOther = computeGarden('101', exp);
 		expect(gOther.elements[0].seed).not.toBe(g1.elements[0].seed);
+	});
+
+	it('reseeds when the owner activity fingerprint changes, and only then', () => {
+		const before = computeGarden('100', null);
+		const unchanged = computeGarden('100', null, { activityFingerprint: '' });
+		const reseeded = computeGarden('100', null, { activityFingerprint: 'abc123' });
+		const again = computeGarden('100', null, { activityFingerprint: 'abc123' });
+		const other = computeGarden('100', null, { activityFingerprint: 'zzz999' });
+
+		// an empty fingerprint must not disturb a garden that existed before activities mattered
+		expect(unchanged.elements.map((e) => e.seed)).toEqual(before.elements.map((e) => e.seed));
+		expect(reseeded.elements.map((e) => e.seed)).not.toEqual(before.elements.map((e) => e.seed));
+		expect(again.elements.map((e) => e.seed)).toEqual(reseeded.elements.map((e) => e.seed));
+		expect(other.elements.map((e) => e.seed)).not.toEqual(reseeded.elements.map((e) => e.seed));
+
+		// the scene keeps its size and shape; only the arrangement moves
+		expect(reseeded.elements).toHaveLength(before.elements.length);
+		expect(reseeded.level).toBe(before.level);
+	});
+
+	it('reseeds contributor signature elements too', () => {
+		const exp = {
+			id: 'a',
+			owner_uid: '100',
+			title: 't',
+			goal: 'nature_minutes' as const,
+			target: 240,
+			progress: 240,
+			contributors: [{ uid: '200', username: 'alex', contribution: 240 }],
+			status: 'active' as const,
+			starts_at: new Date().toISOString(),
+			ends_at: future()
+		};
+
+		const plain = computeGarden('100', exp);
+		const reseeded = computeGarden('100', exp, { activityFingerprint: 'abc123' });
+		const signature = (g: typeof plain) => g.elements.at(-1)!.seed;
+
+		expect(signature(reseeded)).not.toBe(signature(plain));
 	});
 
 	it('grows a calm baseline garden with no expedition', () => {
@@ -434,5 +475,87 @@ describe('circle expedition + garden routes', () => {
 		const g = (await response.json()) as { animated: boolean; level: number };
 		expect(g.animated).toBe(false);
 		expect(g.level).toBe(0);
+	});
+});
+
+describe('activity-gathered expeditions', () => {
+	function future(days = 7): string {
+		return new Date(Date.now() + days * 86400000).toISOString();
+	}
+
+	async function start(env: Bindings, owner: string, activityId?: string, title = 'Group Walk') {
+		return startExpedition(env, {
+			owner_uid: owner,
+			title,
+			goal: 'nature_minutes',
+			target: 240,
+			ends_at: future(),
+			...(activityId ? { activity_id: activityId } : {})
+		});
+	}
+
+	it('sanitizes the activity id onto the expedition', async () => {
+		const env = createMockBindings();
+		const exp = await start(env, '100', ' Bouldering!! ');
+		expect(exp.activity_id).toBe('bouldering');
+
+		const bare = await start(env, '101', '???');
+		expect(bare.activity_id).toBeUndefined();
+	});
+
+	it('finds open expeditions by the activity they are gathered around', async () => {
+		const env = createMockBindings();
+		const bouldering = await start(env, '100', 'bouldering', 'Chalk Club');
+		await start(env, '101', 'birdwatching', 'Dawn Chorus');
+		await start(env, '102', undefined, 'Unthemed');
+
+		const found = await getExpeditionsForActivity(env, 'Bouldering');
+		expect(found.map((e) => e.id)).toEqual([bouldering.id]);
+		expect(found[0]!.title).toBe('Chalk Club');
+
+		expect(await getExpeditionsForActivity(env, 'kayaking')).toEqual([]);
+		expect(await getExpeditionsForActivity(env, '!!!')).toEqual([]);
+	});
+
+	it('lists several expeditions for one activity, newest first, capped', async () => {
+		const env = createMockBindings();
+		for (let i = 0; i < 4; i++) await start(env, `${200 + i}`, 'bouldering', `Group ${i}`);
+
+		const all = await getExpeditionsForActivity(env, 'bouldering');
+		expect(all).toHaveLength(4);
+
+		const capped = await getExpeditionsForActivity(env, 'bouldering', 2);
+		expect(capped).toHaveLength(2);
+		expect(capped.length).toBeLessThanOrEqual(MAX_ACTIVITY_EXPEDITIONS);
+	});
+
+	it('never offers a finished expedition as something to join', async () => {
+		const env = createMockBindings();
+		const exp = await start(env, '100', 'bouldering');
+
+		// expire it the way the reader sees it: past ends_at
+		const stored = JSON.parse((await env.KV.get(`expedition:${exp.id}`))!) as Record<
+			string,
+			unknown
+		>;
+		stored.ends_at = new Date(Date.now() - 86400000).toISOString();
+		await env.KV.put(`expedition:${exp.id}`, JSON.stringify(stored));
+
+		expect(await getExpeditionsForActivity(env, 'bouldering')).toEqual([]);
+	});
+
+	it('serves the join surface over the route', async () => {
+		const bindings = createMockBindings();
+		await start(bindings, '100', 'bouldering', 'Chalk Club');
+
+		const res = await callApp('/activities/bouldering/expeditions', {}, true, bindings);
+		expect(res.response.status).toBe(200);
+		expect(await res.response.json()).toMatchObject({
+			total: 1,
+			expeditions: [{ title: 'Chalk Club', activity_id: 'bouldering' }]
+		});
+
+		const bad = await callApp(`/activities/${'x'.repeat(80)}/expeditions`, {}, true, bindings);
+		expect(bad.response.status).toBe(400);
 	});
 });

@@ -23,6 +23,9 @@ export interface Expedition {
 	status: ExpeditionStatus;
 	starts_at: string;
 	ends_at: string;
+	// the activity this expedition is gathered around; how strangers who share an interest end up
+	// in the same garden without a follower graph
+	activity_id?: string;
 }
 
 export type GardenElementKind = 'tree' | 'flower' | 'water' | 'stone' | 'creature' | 'star';
@@ -67,6 +70,19 @@ const EXPEDITION_GRACE = 60 * 60 * 24 * 7; // 7 days
 
 const idKey = (id: string) => `expedition:${id}`;
 const ownerKey = (uid: string) => `expedition:owner:${normalizeId(uid)}`;
+const activityPrefix = (activityId: string) => `expedition:activity:${activityId}:`;
+const activityKey = (activityId: string, id: string) => `${activityPrefix(activityId)}${id}`;
+
+// catalog slugs only; keeps a hand-typed activity from opening a key-space
+export function sanitizeActivityId(raw: unknown): string | null {
+	if (typeof raw !== 'string') return null;
+	const clean = raw
+		.trim()
+		.toLowerCase()
+		.replace(/[^a-z0-9_-]/g, '')
+		.slice(0, 64);
+	return clean || null;
+}
 
 export function isExpeditionGoal(v: unknown): v is ExpeditionGoal {
 	return typeof v === 'string' && (GOALS as string[]).includes(v);
@@ -94,10 +110,54 @@ function computeStatus(exp: Expedition): ExpeditionStatus {
 async function writeExpedition(env: Bindings, exp: Expedition): Promise<void> {
 	const ttl = ttlFor(exp);
 	const body = JSON.stringify(exp);
-	await Promise.all([
+	const writes = [
 		env.KV.put(idKey(exp.id), body, { expirationTtl: ttl }),
 		env.KV.put(ownerKey(exp.owner_uid), body, { expirationTtl: ttl })
-	]);
+	];
+
+	// index-by-activity so an expedition can be discovered by what it is about, not by who owns it
+	if (exp.activity_id) {
+		writes.push(
+			env.KV.put(activityKey(exp.activity_id, exp.id), '1', {
+				expirationTtl: ttl,
+				metadata: { starts_at: exp.starts_at }
+			})
+		);
+	}
+
+	await Promise.all(writes);
+}
+
+export const MAX_ACTIVITY_EXPEDITIONS = 25;
+
+/**
+ * Open expeditions gathered around one activity.
+ *
+ * The isolation goal is the reason this exists: activities are the only standing statement of what
+ * a person is into, and until now nothing social read them. This is the join surface - no feed, no
+ * follower graph, no stranger's profile, just "these groups are doing the thing you do".
+ */
+export async function getExpeditionsForActivity(
+	env: Bindings,
+	activityId: string,
+	limit: number = MAX_ACTIVITY_EXPEDITIONS
+): Promise<Expedition[]> {
+	const id = sanitizeActivityId(activityId);
+	if (!id) return [];
+
+	const page = await env.KV.list<{ starts_at?: string }>({ prefix: activityPrefix(id) });
+	const ids = page.keys
+		.map((key) => ({
+			id: key.name.slice(key.name.lastIndexOf(':') + 1),
+			starts_at: key.metadata?.starts_at || ''
+		}))
+		.sort((a, b) => Date.parse(b.starts_at || '') - Date.parse(a.starts_at || ''))
+		.slice(0, Math.max(1, Math.min(limit, MAX_ACTIVITY_EXPEDITIONS)));
+
+	const records = await Promise.all(ids.map(({ id: expId }) => getExpedition(env, expId)));
+
+	// a completed or expired expedition is not something to join
+	return records.filter((exp): exp is Expedition => !!exp && exp.status === 'active');
 }
 
 export async function getExpedition(env: Bindings, id: string): Promise<Expedition | null> {
@@ -122,6 +182,8 @@ export type StartExpeditionInput = {
 	target: number;
 	ends_at: string;
 	members?: { uid: string; username: string }[];
+	/** gathers the expedition around an activity so people who share it can find it */
+	activity_id?: string;
 };
 
 // starts (or replaces) the owner's expedition. members seed the contributor roster at 0.
@@ -159,7 +221,10 @@ export async function startExpedition(
 		contributors: roster.slice(0, MAX_CONTRIBUTORS),
 		status: 'active',
 		starts_at: new Date().toISOString(),
-		ends_at: ends.toISOString()
+		ends_at: ends.toISOString(),
+		...(sanitizeActivityId(input.activity_id)
+			? { activity_id: sanitizeActivityId(input.activity_id)! }
+			: {})
 	};
 
 	await writeExpedition(env, exp);
@@ -272,9 +337,12 @@ export function expeditionMinutes(exp: Expedition | null): number {
 export function computeGarden(
 	ownerUid: string,
 	exp: Expedition | null,
-	options: { animated?: boolean; extraMinutes?: number } = {}
+	options: { animated?: boolean; extraMinutes?: number; activityFingerprint?: string } = {}
 ): CircleGarden {
 	const owner = normalizeId(ownerUid);
+	// the garden reseeds when the owner's activities change; an empty fingerprint keeps the
+	// pre-existing arrangement, so a user who never edits activities never sees it shuffle
+	const fingerprint = options.activityFingerprint ? `:${options.activityFingerprint}` : '';
 	const totalMinutes = Math.max(
 		0,
 		expeditionMinutes(exp) + clampInt(options.extraMinutes ?? 0, 0, 10_000_000, 0)
@@ -290,7 +358,7 @@ export function computeGarden(
 	const perElement = LEVEL_MINUTES / 4; // 30 min per element
 	const fieldCount = Math.min(MAX_ELEMENTS, MIN_ELEMENTS + level);
 	for (let i = 0; i < fieldCount; i++) {
-		const seed = hashString(`${owner}:garden:${i}`);
+		const seed = hashString(`${owner}${fingerprint}:garden:${i}`);
 		const threshold = i * perElement;
 		const growth = clampNumber((totalMinutes - threshold) / perElement, 0, 1, 0);
 		const element: GardenElement = {
@@ -305,7 +373,7 @@ export function computeGarden(
 	// one signature element per contributor, grown by their share of the goal
 	for (const c of contributors) {
 		if (elements.length >= MAX_ELEMENTS) break;
-		const seed = hashString(`${owner}:sig:${c.uid}`);
+		const seed = hashString(`${owner}${fingerprint}:sig:${c.uid}`);
 		elements.push({
 			kind: 'tree',
 			seed,
