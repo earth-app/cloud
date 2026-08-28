@@ -11,12 +11,30 @@ export default defineConfig({
 			include: ['src/**/*.ts'],
 			exclude: ['tests/helpers/**', '**/*.d.ts']
 		},
-		testTimeout: 15000
-	},
-	plugins: [
-		cloudflareTest({
-			remoteBindings: false,
-			wrangler: { configPath: './wrangler.jsonc' }
-		})
-	]
+		testTimeout: 15000,
+		projects: [
+			{
+				test: {
+					name: 'workers',
+					include: ['tests/**/*.spec.ts'],
+					exclude: ['tests/**/*.node.spec.ts'],
+					testTimeout: 15000
+				},
+				plugins: [
+					cloudflareTest({
+						remoteBindings: false,
+						wrangler: { configPath: './wrangler.jsonc' }
+					})
+				]
+			},
+			{
+				// the workers pool has no filesystem, so source-scanning guards run on node
+				test: {
+					name: 'node',
+					environment: 'node',
+					include: ['tests/**/*.node.spec.ts']
+				}
+			}
+		]
+	}
 });
