@@ -9,6 +9,25 @@ function getLeaderboardCacheKey(type: string) {
 	return `leaderboard:${type}`;
 }
 
+function getJourneyBestKey(type: string, normalizedId: string) {
+	return `journey:best:${type}:${normalizedId}`;
+}
+
+// flat bonus for beating your own record; self-approach goals track motivation about twice as
+// strongly as normative ones, so the bonus is not scaled by anyone else's streak
+export const PERSONAL_BEST_BONUS = 25;
+
+// no expirationTtl on purpose: the streak key lives 48h and the record has to outlive it
+export async function getJourneyBest(id: string, type: string, kv: KVNamespace): Promise<number> {
+	if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
+
+	const raw = await kv.get(getJourneyBestKey(type, normalizeId(id)));
+	if (!raw) return 0;
+
+	const best = parseInt(raw, 10);
+	return Number.isFinite(best) && best > 0 ? best : 0;
+}
+
 export async function getJourney(
 	id: string,
 	type: string,
@@ -32,6 +51,23 @@ export async function getJourney(
 	if (!result.metadata) return [0, 0];
 
 	return [result.metadata.streak || 0, result.metadata.lastWrite || 0];
+}
+
+// refreshes the 48h streak window without advancing the streak (KV replaces metadata wholesale, so streak must be rewritten)
+export async function touchJourney(
+	id: string,
+	type: string,
+	streak: number,
+	kv: KVNamespace
+): Promise<void> {
+	if (!JOURNEY_TYPES.includes(type)) throw new Error('Invalid journey type');
+
+	const normalizedId = normalizeId(id);
+	const key = `journey:${type}:${normalizedId}`;
+	await kv.put(key, streak.toString(), {
+		expirationTtl: 60 * 60 * 24 * 2,
+		metadata: { lastWrite: Date.now(), streak }
+	});
 }
 
 export async function incrementJourney(
@@ -68,24 +104,21 @@ export async function incrementJourney(
 		await clearCache(getLeaderboardCacheKey(type), cacheKv);
 	}
 
-	// add impact points for journey increment + incrementing while in top leaderboard
+	// add impact points for the increment itself, plus a bonus for beating your own record
 	ctx.waitUntil(
 		(async () => {
 			try {
 				await addImpactPoints(normalizedId, 5, `${capitalizeFully(type)} Journey`, kv);
 
-				const rank = await retrieveLeaderboardRank(normalizedId, type, kv, cacheKv || kv);
-				if (rank > 0 && rank <= TOP_LEADERBOARD_COUNT) {
-					// bonus points for being in the leaderboard, scaled by rank (1st gets 260, 250th gets 10)
-					const bonusPoints = Math.min(260, Math.max(10, 260 - rank)); // ensure at least 10 points for being in the leaderboard
-					if (bonusPoints > 0) {
-						await addImpactPoints(
-							normalizedId,
-							bonusPoints,
-							`${capitalizeFully(type)} Journey Leaderboard Bonus (Rank #${rank})`,
-							kv
-						);
-					}
+				const previousBest = await getJourneyBest(normalizedId, type, kv);
+				if (newValue > previousBest) {
+					await kv.put(getJourneyBestKey(type, normalizedId), newValue.toString());
+					await addImpactPoints(
+						normalizedId,
+						PERSONAL_BEST_BONUS,
+						`${capitalizeFully(type)} Journey Personal Best (${newValue})`,
+						kv
+					);
 				}
 			} catch (err) {
 				console.error(`Failed to add impact points for journey increment for user '${id}':`, err);

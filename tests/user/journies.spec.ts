@@ -1,13 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	PERSONAL_BEST_BONUS,
 	TOP_LEADERBOARD_COUNT,
 	addActivityToJourney,
 	getActivityJourney,
 	getJourney,
+	getJourneyBest,
 	incrementJourney,
 	resetJourney,
 	retrieveLeaderboard,
-	retrieveLeaderboardRank
+	retrieveLeaderboardRank,
+	touchJourney
 } from '../../src/user/journies';
 import { MockKVNamespace } from '../helpers/mock-kv';
 import * as points from '../../src/user/points';
@@ -36,6 +39,35 @@ describe('getJourney', () => {
 		expect(lastWrite).toBe(1234);
 		expect(await kv.get('journey:article:123')).toBe('7');
 		expect(await kv.get('journey:article:00000123')).toBeNull();
+	});
+});
+
+describe('touchJourney', () => {
+	it('throws for unsupported journey type', async () => {
+		await expect(touchJourney('1', 'invalid', 3, new MockKVNamespace() as any)).rejects.toThrow(
+			'Invalid journey type'
+		);
+	});
+
+	it('keeps the streak in metadata when only refreshing the window', async () => {
+		const kv = new MockKVNamespace();
+		await kv.put('journey:article:42', '2', { metadata: { streak: 2, lastWrite: 1 } });
+
+		await touchJourney('42', 'article', 2, kv as any);
+
+		const [streak, lastWrite] = await getJourney('42', 'article', kv as any);
+		expect(streak).toBe(2);
+		expect(lastWrite).toBeGreaterThan(1);
+		expect(await kv.get('journey:article:42')).toBe('2');
+	});
+
+	it('normalizes legacy padded ids onto the canonical key', async () => {
+		const kv = new MockKVNamespace();
+
+		await touchJourney('00000042', 'article', 5, kv as any);
+
+		expect(await kv.get('journey:article:42')).toBe('5');
+		expect(await kv.get('journey:article:00000042')).toBeNull();
 	});
 });
 
@@ -88,6 +120,102 @@ describe('incrementJourney', () => {
 		expect(await kv.get('journey:article:00000444')).toBeNull();
 		expect(await kv.get('journey:article:444')).not.toBeNull();
 		expect(error).toHaveBeenCalled();
+	});
+});
+
+describe('journey personal best', () => {
+	// the suite above leaves an addImpactPoints spy in place, so call counts here need a clean slate
+	beforeEach(() => {
+		vi.restoreAllMocks();
+	});
+
+	it('returns 0 with nothing on record', async () => {
+		const kv = new MockKVNamespace();
+		expect(await getJourneyBest('42', 'article', kv as any)).toBe(0);
+	});
+
+	it('throws for unsupported journey type', async () => {
+		await expect(getJourneyBest('42', 'invalid', new MockKVNamespace() as any)).rejects.toThrow(
+			'Invalid journey type'
+		);
+	});
+
+	it('normalizes legacy padded ids when reading the record', async () => {
+		const kv = new MockKVNamespace();
+		await kv.put('journey:best:article:42', '9');
+		expect(await getJourneyBest('00000042', 'article', kv as any)).toBe(9);
+	});
+
+	it('ignores a corrupt record rather than reporting a negative best', async () => {
+		const kv = new MockKVNamespace();
+		await kv.put('journey:best:article:42', 'not-a-number');
+		expect(await getJourneyBest('42', 'article', kv as any)).toBe(0);
+	});
+
+	it('pays the flat personal-best bonus when the streak sets a new record', async () => {
+		const kv = new MockKVNamespace();
+		const ctx = { waitUntil: vi.fn(async (promise: Promise<unknown>) => void (await promise)) };
+		const add = vi.spyOn(points, 'addImpactPoints').mockResolvedValue(undefined as any);
+
+		await incrementJourney('42', 'article', kv as any, ctx as any);
+		await Promise.all(ctx.waitUntil.mock.results.map((r) => r.value));
+
+		expect(add).toHaveBeenCalledWith('42', 5, 'Article Journey', kv);
+		expect(add).toHaveBeenCalledWith(
+			'42',
+			PERSONAL_BEST_BONUS,
+			'Article Journey Personal Best (1)',
+			kv
+		);
+		expect(await getJourneyBest('42', 'article', kv as any)).toBe(1);
+	});
+
+	it('pays nothing extra while the streak is still under the record', async () => {
+		const kv = new MockKVNamespace();
+		const ctx = { waitUntil: vi.fn(async (promise: Promise<unknown>) => void (await promise)) };
+		await kv.put('journey:best:article:42', '10');
+		const add = vi.spyOn(points, 'addImpactPoints').mockResolvedValue(undefined as any);
+
+		await incrementJourney('42', 'article', kv as any, ctx as any);
+		await Promise.all(ctx.waitUntil.mock.results.map((r) => r.value));
+
+		expect(add).toHaveBeenCalledTimes(1);
+		expect(add).toHaveBeenCalledWith('42', 5, 'Article Journey', kv);
+		// the record must not be walked backwards by a shorter run
+		expect(await getJourneyBest('42', 'article', kv as any)).toBe(10);
+	});
+
+	// regression: the bonus used to be 260-rank, so rank #1 was worth 259 points per increment
+	it('never pays a bonus that depends on leaderboard rank', async () => {
+		const kv = new MockKVNamespace();
+		const cache = new MockKVNamespace();
+		const ctx = { waitUntil: vi.fn(async (promise: Promise<unknown>) => void (await promise)) };
+
+		// sole entry, so this user is rank #1 on every read
+		await kv.put('journey:article:42', '3', { metadata: { streak: 3, lastWrite: 1 } });
+		const add = vi.spyOn(points, 'addImpactPoints').mockResolvedValue(undefined as any);
+
+		await incrementJourney('42', 'article', kv as any, ctx as any, cache as any);
+		await Promise.all(ctx.waitUntil.mock.results.map((r) => r.value));
+
+		const awarded = add.mock.calls.map((call) => call[1]);
+		expect(awarded).toEqual([5, PERSONAL_BEST_BONUS]);
+		expect(add.mock.calls.every((call) => !String(call[2]).includes('Rank'))).toBe(true);
+	});
+
+	it('keeps the record after the 48h streak key expires', async () => {
+		const kv = new MockKVNamespace();
+		const ctx = { waitUntil: vi.fn(async (promise: Promise<unknown>) => void (await promise)) };
+		vi.spyOn(points, 'addImpactPoints').mockResolvedValue(undefined as any);
+
+		await kv.put('journey:article:42', '6', { metadata: { streak: 6, lastWrite: 1 } });
+		await incrementJourney('42', 'article', kv as any, ctx as any);
+		await Promise.all(ctx.waitUntil.mock.results.map((r) => r.value));
+		expect(await getJourneyBest('42', 'article', kv as any)).toBe(7);
+
+		// streak lapses; the record is on a separate untimed key
+		await kv.delete('journey:article:42');
+		expect(await getJourneyBest('42', 'article', kv as any)).toBe(7);
 	});
 });
 
