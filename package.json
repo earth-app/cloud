@@ -19,7 +19,7 @@
     "@types/pako": "^2.0.4",
     "exifreader": "^4.42.0",
     "hono": "^4.13.0",
-    "music-metadata": "^11.14.0",
+    "music-metadata": "^12.0.0",
     "pako": "^3.0.1"
   },
   "devDependencies": {
