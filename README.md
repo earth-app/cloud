@@ -92,8 +92,8 @@ This worker is the Cloudflare backend that the Drupal 11 `earth-app/mantle2` mod
 
 ### Development Tools
 
-- **Wrangler** (^4.80.0): local dev, deploy, and type generation
-- **Vitest** (^4.1.2) + **@cloudflare/vitest-pool-workers** (^0.14.1): worker-native tests
+- **Wrangler** (^4.151.1): local dev, deploy, and type generation
+- **Vitest** (5.0.5) + **@cloudflare/vitest-plugin** (^1.4.4): worker-native tests
 - **Prettier** (^3.8.1): formatting with Husky + lint-staged
 - **Bun**: package/runtime tooling
 
