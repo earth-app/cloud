@@ -18,6 +18,7 @@ import { getNatureMinutesSince } from '../trails';
 import { getUserTrailmarks } from '../trailmarks';
 
 const USER_AGENT = '@earth-app/cloud v1.0 (support@earth-app.com)';
+const LOOKUP_TIMEOUT_MS = 3000;
 
 // hard cap so a cold workers-ai start can't stack past crust's timeout
 const AI_VALIDATION_TIMEOUT_MS = 33000;
@@ -264,7 +265,8 @@ async function resolveOpenFacts(
 ): Promise<BarcodeResolution | null> {
 	try {
 		const res = await fetch(`https://${host}/api/v2/product/${value}.json?fields=${OFF_FIELDS}`, {
-			headers: { 'User-Agent': USER_AGENT }
+			headers: { 'User-Agent': USER_AGENT },
+			signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS)
 		});
 		if (!res.ok) return null;
 		const json = (await res.json()) as { product?: any };
@@ -290,7 +292,8 @@ async function resolveOpenFacts(
 async function resolveBook(value: string): Promise<BarcodeResolution | null> {
 	try {
 		const res = await fetch(
-			`https://openlibrary.org/api/books?bibkeys=ISBN:${value}&format=json&jscmd=data`
+			`https://openlibrary.org/api/books?bibkeys=ISBN:${value}&format=json&jscmd=data`,
+			{ signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) }
 		);
 		if (!res.ok) return null;
 		const json = (await res.json()) as Record<string, any>;
@@ -321,7 +324,7 @@ async function resolveMusic(value: string): Promise<BarcodeResolution | null> {
 	try {
 		const res = await fetch(
 			`https://musicbrainz.org/ws/2/release?query=barcode:${value}&fmt=json`,
-			{ headers: { 'User-Agent': USER_AGENT } }
+			{ headers: { 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) }
 		);
 		if (!res.ok) return null;
 		const json = (await res.json()) as { releases?: any[] };
@@ -353,7 +356,8 @@ async function resolveVehicle(value: string): Promise<BarcodeResolution | null> 
 	if (!VIN_REGEX.test(vin)) return null;
 	try {
 		const res = await fetch(
-			`https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/${vin}?format=json`
+			`https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVinValues/${vin}?format=json`,
+			{ signal: AbortSignal.timeout(LOOKUP_TIMEOUT_MS) }
 		);
 		if (!res.ok) return null;
 		const json = (await res.json()) as { Results?: any[] };
@@ -515,7 +519,6 @@ async function validateScanBarcode(
 function validateMobileDevice(
 	data: QuestDeviceMetadata
 ): { success: true } | { success: false; message: string } {
-	const make = (data.make ?? '').toLowerCase().trim();
 	const model = (data.model ?? '').toLowerCase().trim();
 	const os = (data.os ?? '').toLowerCase().trim();
 
@@ -539,7 +542,6 @@ function validateMobileDevice(
 	}
 
 	// Make alone is ambiguous (Apple/Samsung/etc. make both mobile and desktop); unknown makes pass.
-	void make;
 	return { success: true };
 }
 
@@ -872,7 +874,7 @@ async function validateStepAudio(
 			allSignals
 		);
 		const hasAndroidEncoderSignal =
-			/\bandroid\b|samsung\s*voice\s*recorder|google\s*recorder|oneplus|huawei|xiaomi|lg|motorola|sony|nokia/i.test(
+			/\bandroid\b|samsung\s*voice\s*recorder|google\s*recorder|\b(?:oneplus|huawei|xiaomi|lg|motorola|sony|nokia)\b/i.test(
 				allSignals
 			);
 

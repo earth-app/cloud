@@ -306,6 +306,29 @@ describe('validateStep', () => {
 		expect(result.message).toContain('AMR audio codec');
 	});
 
+	it('does not read an incidental "lg" inside a tag as an Android encoder', async () => {
+		mockParseBuffer.mockResolvedValueOnce({
+			common: { encodedby: 'Algorithm Studio', comment: [] },
+			format: { container: 'M4A', codec: 'MPEG-4/AAC' },
+			native: {}
+		} as any);
+		mockScoreAudio.mockResolvedValueOnce(['transcript', { score: 0.8, breakdown: [] }] as any);
+
+		const step = {
+			type: 'transcribe_audio',
+			description: 'Speak about topic',
+			parameters: ['topic', 0.7]
+		} as any;
+		const response = {
+			type: 'transcribe_audio',
+			index: 0,
+			data: new Uint8Array([1, 2, 3, 4])
+		} as any;
+
+		const result = await validateStep(step, response, createMockBindings(), validDevice);
+		expect(result.success).toBe(true);
+	});
+
 	it('accepts transcribe_audio when metadata parsing fails but score meets threshold', async () => {
 		mockParseBuffer.mockRejectedValueOnce(new Error('bad metadata'));
 		mockScoreAudio.mockResolvedValueOnce(['transcript', { score: 0.8, breakdown: [] }] as any);
