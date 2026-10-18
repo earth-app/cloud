@@ -146,8 +146,7 @@ describe('submitEventImage', () => {
 		const exifModule = await import('exifreader');
 		exifModule.default.load = () =>
 			({
-				GPSLatitude: { value: '37.7749' },
-				GPSLongitude: { value: '-122.4194' }
+				gps: { Latitude: 37.7749, Longitude: -122.4194 }
 			}) as any;
 
 		mapsMocks.reverseGeocode.mockResolvedValueOnce({} as any);
@@ -156,19 +155,13 @@ describe('submitEventImage', () => {
 		await submitEventImage(101n, 202n, new Uint8Array([1, 2, 3]), bindings, ctx as any);
 		await Promise.all(pending);
 
-		// Badge progress depends on EXIF parsing which may not be available
-		// in all test environments; assert badge called only if the
-		// geocoding/extraction mocks were invoked.
-		if (mapsMocks.reverseGeocode.mock.calls.length || mapsMocks.extractCountry.mock.calls.length) {
-			expect(badgesMocks.addBadgeProgress).toHaveBeenCalledWith(
-				'202',
-				'event_countries_photographed',
-				'united_states',
-				bindings.KV
-			);
-		} else {
-			expect(true).toBe(true);
-		}
+		expect(mapsMocks.reverseGeocode).toHaveBeenCalledWith(37.7749, -122.4194, bindings);
+		expect(badgesMocks.addBadgeProgress).toHaveBeenCalledWith(
+			'202',
+			'event_countries_photographed',
+			'united_states',
+			bindings.KV
+		);
 	});
 });
 

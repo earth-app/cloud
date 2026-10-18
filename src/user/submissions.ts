@@ -139,17 +139,17 @@ export async function submitEventImage(
 			// check countries photographed badge based on metadata from original image
 			(async () => {
 				try {
-					const metadata = ExifReader.load(image.buffer);
+					const metadata = ExifReader.load(image.buffer, { expanded: true });
 
 					// try IPTC first, may not be available
-					let country = metadata['Country/Primary Location Name']?.value?.toString();
+					let country = metadata.iptc?.['Country/Primary Location Name']?.value?.toString();
 					if (!country) {
 						// try and use EXIF GPS data
-						const latitude = Number(metadata.GPSLatitude?.value?.toString() || '0');
-						const longitude = Number(metadata.GPSLongitude?.value?.toString() || '0');
+						const latitude = metadata.gps?.Latitude;
+						const longitude = metadata.gps?.Longitude;
 
 						// ignore if no GPS data found in EXIF
-						if (!latitude || !longitude) return;
+						if (latitude === undefined || longitude === undefined) return;
 						country = extractCountry(await reverseGeocode(latitude, longitude, bindings));
 					}
 
