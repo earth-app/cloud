@@ -139,6 +139,18 @@ describe('scheduled', () => {
 		);
 	});
 
+	it('keeps caching the other leaderboards when one journey type fails', async () => {
+		mocks.retrieveLeaderboard.mockRejectedValueOnce(new Error('kv unavailable'));
+
+		await expect(
+			scheduled({ cron: '0 */4 * * *' } as ScheduledController, createMockBindings(), {
+				waitUntil: () => {}
+			} as any)
+		).resolves.toBeUndefined();
+
+		expect(mocks.retrieveLeaderboard).toHaveBeenCalledTimes(3);
+	});
+
 	it('creates and posts a prompt on hourly cron', async () => {
 		await scheduled({ cron: '0 * * * *' } as ScheduledController, createMockBindings(), {
 			waitUntil: () => {}

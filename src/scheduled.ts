@@ -118,14 +118,22 @@ export default async function scheduled(
 		const types = ['article', 'prompt', 'event'];
 		await Promise.all(
 			types.map(async (type) => {
-				await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
-				console.log(`Cached leaderboard for journey type: ${type}`);
+				try {
+					await retrieveLeaderboard(type, TOP_LEADERBOARD_COUNT, env.KV, env.CACHE);
+					console.log(`Cached leaderboard for journey type: ${type}`);
+				} catch (err) {
+					console.error(`Failed to cache ${type} leaderboard; continuing`, err);
+				}
 			})
 		);
 
 		console.log('Running scheduled task: Cache points leaderboard');
-		await retrievePointsLeaderboard(TOP_POINTS_LEADERBOARD_COUNT, env.KV, env.CACHE);
-		console.log('Cached impact points leaderboard');
+		try {
+			await retrievePointsLeaderboard(TOP_POINTS_LEADERBOARD_COUNT, env.KV, env.CACHE);
+			console.log('Cached impact points leaderboard');
+		} catch (err) {
+			console.error('Failed to cache impact points leaderboard', err);
+		}
 
 		console.log('Finished at', new Date().toISOString());
 		return;

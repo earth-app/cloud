@@ -5,6 +5,7 @@ import {
 	postStagedActivity,
 	retrieveActivityIds
 } from '../util/mantle2';
+import { extractAIText } from '../util/ai-runtime';
 import { tryCache } from '../util/cache';
 import { Activity, Bindings } from '../util/types';
 
@@ -1625,7 +1626,7 @@ export async function filterSpecificCandidates(
 			max_tokens: 16 * candidates.length + 64,
 			temperature: 0
 		});
-		response = String((result as { response?: string })?.response ?? '');
+		response = extractAIText(result);
 	} catch (err) {
 		console.warn('Activity discovery: specificity gate unavailable, keeping all candidates', {
 			error: err instanceof Error ? err.message : String(err)
