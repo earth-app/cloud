@@ -79,12 +79,12 @@ export async function clearCache(id: string, kv: KVNamespace): Promise<void> {
 
 export async function clearCachePrefix(prefix: string, kv: KVNamespace): Promise<void> {
 	try {
-		let list = await kv.list({ prefix });
-		for (const key of list.keys) await kv.delete(key.name);
-		while (list.list_complete === false) {
+		let cursor: string | undefined;
+		do {
+			const list = await kv.list({ prefix, cursor });
 			for (const key of list.keys) await kv.delete(key.name);
-			list = await kv.list({ prefix, cursor: list.cursor });
-		}
+			cursor = list.list_complete === false ? list.cursor : undefined;
+		} while (cursor);
 	} catch (err) {
 		console.error(`Failed to clear cache for prefix ${prefix}:`, err);
 	}

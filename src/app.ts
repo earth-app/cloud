@@ -51,7 +51,7 @@ import {
 	deleteEventImageSubmission,
 	submitEventImage
 } from './user/submissions';
-import { ImageSizes, getProfileVariation, newProfilePhoto } from './user/profile';
+import { ImageSizes, getProfileVariation, newProfilePhoto, validSizes } from './user/profile';
 import { activityFingerprint, applyActivityChange, getActivitySnapshot } from './user/activities';
 import {
 	buildPlanMenu,
@@ -1410,9 +1410,8 @@ app.get('/users/profile_photo/:id', async (c) => {
 		return c.text('Invalid User ID', 400);
 	}
 
-	const sizeParam = c.req.query('size') || '128';
-	const size = sizeParam ? (parseInt(sizeParam, 10) as ImageSizes) : undefined;
-	if (!size || size <= 0 || size > 1024 || isNaN(size)) {
+	const size = parseInt(c.req.query('size') || '128', 10) as ImageSizes;
+	if (!size || !validSizes.includes(size)) {
 		return c.text('Invalid size parameter', 400);
 	}
 
@@ -1420,15 +1419,7 @@ app.get('/users/profile_photo/:id', async (c) => {
 	return c.json(
 		await tryCache(cacheKey, c.env.CACHE, async () => {
 			const photo = await getProfileVariation(id, size, c.env, c.executionCtx);
-			if (!photo) {
-				return null;
-			}
 			return { data: toDataURL(photo) };
-		}).then((result) => {
-			if (!result) {
-				return c.text('Profile photo not found', 404);
-			}
-			return result;
 		}),
 		200
 	);
@@ -1466,6 +1457,8 @@ app.put('/users/profile_photo/:id', async (c) => {
 	if (!photo) {
 		return c.json({ message: 'Failed to update profile photo' }, 500);
 	}
+
+	await clearCachePrefix(`user:profile_photo:${id}:`, c.env.CACHE);
 
 	return c.json({ data: toDataURL(photo) });
 });

@@ -123,4 +123,17 @@ describe('clearCachePrefix', () => {
 		expect(await env.KV.get(c)).toBe('3');
 		await env.KV.delete(c);
 	});
+
+	it('deletes the final page when the prefix spans several list pages', async () => {
+		const prefix = `test:cache:pages:${crypto.randomUUID()}:`;
+		const names = Array.from({ length: 1105 }, (_, i) => `${prefix}${i}`);
+		for (let i = 0; i < names.length; i += 100) {
+			await Promise.all(names.slice(i, i + 100).map((n) => env.KV.put(n, '1')));
+		}
+
+		await clearCachePrefix(prefix, env.KV);
+
+		const left = await env.KV.list({ prefix });
+		expect(left.keys).toHaveLength(0);
+	});
 });

@@ -849,6 +849,34 @@ describe('PUT /users/profile_photo/:id', () => {
 		expect(json.data.startsWith('data:')).toBe(true);
 	});
 
+	it('clears cached photo variants once a new photo is generated', async () => {
+		const bindings = createMockBindings({
+			AI: {
+				run: vi.fn(
+					async () =>
+						new ReadableStream<Uint8Array>({
+							start(controller) {
+								controller.enqueue(new Uint8Array(2048).fill(7));
+								controller.close();
+							}
+						})
+				)
+			} as any
+		});
+		const stale = 'user:profile_photo:333:128';
+		await bindings.CACHE.put(stale, JSON.stringify({ data: 'data:stale' }));
+
+		const response = await callApp(
+			'/users/profile_photo/333',
+			{ method: 'PUT', body: JSON.stringify(sampleProfilePrompt) },
+			true,
+			bindings
+		);
+
+		expect(response.status).toBe(200);
+		expect(await bindings.CACHE.get(stale)).toBeNull();
+	});
+
 	it('rejects admin and invalid IDs', async () => {
 		const adminPut = await callApp('/users/profile_photo/1', {
 			method: 'PUT',
@@ -897,6 +925,9 @@ describe('GET /users/profile_photo/:id', () => {
 	it('rejects invalid ids and size values', async () => {
 		const badSize = await callApp('/users/profile_photo/123?size=5000', { method: 'GET' });
 		expect(badSize.status).toBe(400);
+
+		const unsupportedSize = await callApp('/users/profile_photo/123?size=64', { method: 'GET' });
+		expect(unsupportedSize.status).toBe(400);
 
 		const badId = await callApp('/users/profile_photo/abc', { method: 'GET' });
 		expect(badId.status).toBe(400);
