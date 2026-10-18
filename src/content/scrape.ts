@@ -1039,19 +1039,4 @@ export async function searchAllSourced(
 	return out;
 }
 
-/**
- * {@link searchAllSourced} without the source annotation.
- *
- * @param query search terms
- * @param pageLimit pages to take from each source
- * @param keys api keys by scraper name
- */
-export async function searchAll(
-	query: string,
-	pageLimit: number = 5,
-	keys: ApiKeys = {}
-): Promise<Page[]> {
-	return (await searchAllSourced(query, pageLimit, keys)).map((entry) => entry.page);
-}
-
 // #endregion

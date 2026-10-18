@@ -24,12 +24,7 @@
 	},
 	"send_metrics": false,
 	"triggers": {
-		"crons": [
-			"0 * * * *", // Every hour (prompts)
-			"0 */4 * * *", // Every 4 hours (articles x2, leaderboard caching)
-			"0 0 */4 * *", // Every 4 days (events)
-			"0 2 * * *" // Daily (expire stale content reports)
-		]
+		"crons": ["0 * * * *", "0 */4 * * *", "0 0 */4 * *", "0 2 * * *"]
 	},
 	"limits": {
 		"cpu_ms": 300000

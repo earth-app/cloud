@@ -368,7 +368,3 @@ export async function lockActiveMasteryIfApplicable(
 	await lockMasteryQuest(userId, badgeId, kv);
 	return { locked: true, badgeId };
 }
-
-export function findBadge(badgeId: string): Badge | undefined {
-	return badges.find((b) => b.id === badgeId);
-}

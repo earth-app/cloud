@@ -1,5 +1,5 @@
 import { ArticleQuizQuestion } from '../content/boat';
-import { Bindings, Activity, Prompt, Article, Event } from './types';
+import { Bindings, Activity, Prompt, Article } from './types';
 import { rememberAlias } from './ids';
 import { normalizeId } from './util';
 
@@ -317,25 +317,6 @@ export async function postArticle(
 	}
 
 	return data;
-}
-
-export async function getEvent(id: string, bindings: Bindings): Promise<Event | null> {
-	const url = `${bindings.MANTLE_URL || 'https://api.earth-app.com'}/v2/events/${id}`;
-
-	const response = await fetch(url, {
-		method: 'GET',
-		headers: {
-			'Content-Type': 'application/json',
-			Authorization: `Bearer ${bindings.ADMIN_API_KEY}`
-		}
-	});
-	const event = await response.json<Event>();
-
-	if (!event || !event.id) {
-		return null;
-	}
-
-	return event;
 }
 
 // candidate text fields across reportable content types (prompt/article/event/response/user)
