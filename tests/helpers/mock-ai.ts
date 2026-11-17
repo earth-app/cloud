@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { articleTopicSystemMessage } from '../../src/util/ai';
 
 export type MockAiOverrides = Record<string, unknown | ((input: unknown) => unknown)>;
 
@@ -40,10 +41,11 @@ export function createMockAiRun(overrides: MockAiOverrides = {}) {
 			};
 		}
 
-		if (modelName.includes('llava')) {
+		if (modelName.includes('moondream')) {
 			return {
-				description:
-					'A bright outdoor photo showing nature, community activity, and a clear focal subject.'
+				answer:
+					'A bright outdoor photo showing nature, community activity, and a clear focal subject.',
+				caption: null
 			};
 		}
 
@@ -101,12 +103,18 @@ export function createMockAiRun(overrides: MockAiOverrides = {}) {
 			};
 		}
 
-		if (modelName.includes('llama-3.2-3b-instruct')) {
-			return { response: 'sustainable cities' };
-		}
-
-		if (modelName.includes('llama-3.1-8b-instruct-fp8')) {
-			return { response: 'NATURE, TECHNOLOGY' };
+		if (modelName.includes('gemma-4')) {
+			// gemma-4 answers in the openai chat-completions shape; topic and tags share the model
+			const messages = (input as { messages?: Array<{ content?: string }> })?.messages || [];
+			const isTopic = messages[0]?.content === articleTopicSystemMessage.trim();
+			return {
+				choices: [
+					{
+						finish_reason: 'stop',
+						message: { content: isTopic ? 'sustainable cities' : 'NATURE, TECHNOLOGY' }
+					}
+				]
+			};
 		}
 
 		if (modelName.includes('llama-4-scout-17b-16e-instruct')) {
