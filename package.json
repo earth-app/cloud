@@ -15,20 +15,20 @@
   },
   "dependencies": {
     "@earth-app/moho": "^1.1.0",
-    "@types/bun": "^1.4.3",
-    "exifreader": "^4.50.0",
-    "hono": "^4.13.13",
-    "music-metadata": "^12.2.2",
-    "pako": "^3.0.2"
+    "@types/bun": "^1.4.4",
+    "exifreader": "^4.54.0",
+    "hono": "^4.13.19",
+    "music-metadata": "^12.7.0",
+    "pako": "^3.0.3"
   },
   "devDependencies": {
-    "@cloudflare/vitest-plugin": "^1.4.4",
+    "@cloudflare/vitest-plugin": "^1.8.4",
     "@vitest/coverage-istanbul": "5.0.5",
     "husky": "^9.1.7",
-    "lint-staged": "^17.6.0",
-    "prettier": "^3.9.10",
+    "lint-staged": "^17.6.1",
+    "prettier": "^3.10.1",
     "vitest": "5.0.5",
-    "wrangler": "^4.151.1"
+    "wrangler": "^4.164.0"
   },
   "lint-staged": {
     "*.{js,ts,json,yml,md}": "prettier --write"
