@@ -102,18 +102,63 @@ describe('getProfileVariation', () => {
 });
 
 describe('newProfilePhoto', () => {
+	const profileData = {
+		username: 'earthy',
+		bio: 'bio',
+		created_at: '2026-01-01',
+		visibility: 'PUBLIC' as any,
+		country: 'US',
+		full_name: 'Earth User',
+		activities: []
+	};
+
+	it('converts a jpeg render to png before storing it', async () => {
+		const png = new Uint8Array(2048).fill(9);
+		const outputs: unknown[] = [];
+		const bindings = createMockBindings({
+			AI: { run: async () => ({ image: btoa('\xff\xd8' + '\x01'.repeat(2048)) }) } as any,
+			IMAGES: {
+				input: () => {
+					const stage = {
+						output: (options: unknown) => {
+							outputs.push(options);
+							return Promise.resolve({
+								image: () =>
+									new ReadableStream<Uint8Array>({
+										start(controller) {
+											controller.enqueue(png);
+											controller.close();
+										}
+									})
+							});
+						}
+					};
+					// the 128 and 32 variants resize first
+					return { ...stage, transform: () => stage };
+				}
+			} as any
+		});
+		const waits: Promise<unknown>[] = [];
+		const ctx = { waitUntil: (promise: Promise<unknown>) => waits.push(promise) };
+
+		const profile = await newProfilePhoto(profileData, 12n, bindings, ctx as any);
+		await Promise.all(waits);
+
+		expect(outputs[0]).toEqual({ format: 'image/png' });
+		expect(Array.from(profile)).toEqual(Array.from(png));
+		expect(
+			Array.from(
+				new Uint8Array(await (await bindings.R2.get('users/12/profile.png'))!.arrayBuffer())
+			)
+		).toEqual(Array.from(png));
+	});
+
 	it('generates image and schedules variant writes', async () => {
 		const waits: Promise<unknown>[] = [];
 		const bindings = createMockBindings({
 			AI: {
-				run: async () =>
-					new ReadableStream<Uint8Array>({
-						start(controller) {
-							// must clear MIN_PROFILE_BYTES (1024); sdxl output under 1KB is treated as corrupt
-							controller.enqueue(new Uint8Array(2048).fill(7));
-							controller.close();
-						}
-					})
+				// must clear MIN_PROFILE_BYTES (1024); output under 1KB is treated as corrupt
+				run: async () => ({ image: btoa('\x07'.repeat(2048)) })
 			} as any
 		});
 		const ctx = { waitUntil: (promise: Promise<unknown>) => waits.push(promise) };

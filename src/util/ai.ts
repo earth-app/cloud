@@ -3156,7 +3156,9 @@ export const eventImageCriteria = (event: Event) =>
 
 // User Profile Photo
 
-const profileModel = '@cf/bytedance/stable-diffusion-xl-lightning';
+// the 9b draws people and code text into the image even when told not to; the 4b obeys far more
+// often and costs about a twelfth as much
+const profileModel = '@cf/black-forest-labs/flux-2-klein-4b';
 
 export type UserProfilePromptData = {
 	username: string;
@@ -3173,28 +3175,13 @@ export type UserProfilePromptData = {
 	}>;
 };
 
-// SDXL's CLIP text encoder hard-stops at 77 tokens (2 of them BOS/EOS) and silently drops the rest
-export const CLIP_TOKEN_LIMIT = 77;
-
-// conservative CLIP BPE estimate; short words are one token, longer ones split on ~4-char merges
-export function estimateClipTokens(text: string): number {
-	const words = text.toLowerCase().trim().split(/\s+/).filter(Boolean);
-
-	let tokens = 2;
-	for (const word of words) {
-		const letters = word.replace(/[^a-z0-9]/g, '');
-		tokens += word.length - letters.length; // punctuation each tokenizes on its own
-		if (!letters) continue;
-
-		tokens += letters.length <= 5 ? 1 : Math.ceil(letters.length / 4);
-	}
-
-	return tokens;
-}
-
 export const PROFILE_PHOTO_SUBJECT_CAP = 4;
 const PROFILE_PHOTO_SUBJECT_MAX_CHARS = 40;
+const PROFILE_PHOTO_SIZE = 1024;
 const PROFILE_PHOTO_STYLE = 'vibrant saturated colour, centred, simple complementary background';
+// flux has no negative prompt, so the exclusions ride in the prompt itself
+const PROFILE_PHOTO_EXCLUDE =
+	'purely inanimate scene with no people, faces, animals, text, letters, logos or watermarks';
 const PROFILE_PHOTO_FALLBACK_SUBJECT = 'simple natural objects and geometric shapes';
 
 // deterministic subject nouns from the user's own activity order; names only (alias fallback), never descriptions
@@ -3232,54 +3219,35 @@ export function profilePhotoSubjects(
 
 function profilePhotoPromptText(subjects: string[]): string {
 	const subject = subjects.length ? subjects.join(', ') : PROFILE_PHOTO_FALLBACK_SUBJECT;
-	return `abstract flat painterly composition of ${subject}, ${PROFILE_PHOTO_STYLE}`;
+	return `abstract flat painterly composition of ${subject}, ${PROFILE_PHOTO_STYLE}, ${PROFILE_PHOTO_EXCLUDE}`;
 }
 
-export const userProfilePhotoPrompt = (data: UserProfilePromptData) => {
-	const subjects = profilePhotoSubjects(data.activities);
-	let prompt = profilePhotoPromptText(subjects);
-
-	// activities lead the prompt, so drop trailing subjects rather than let the encoder cut them
-	while (subjects.length > 0 && estimateClipTokens(prompt) > CLIP_TOKEN_LIMIT) {
-		subjects.pop();
-		prompt = profilePhotoPromptText(subjects);
-	}
-
-	return {
-		prompt,
-		negative_prompt:
-			'person, people, face, human, portrait, figure, animal, toy, text, words, letters, logo, watermark, signature, branding, scary, political',
-		guidance: 7.5
-	} satisfies AiTextToImageInput;
-};
+export const userProfilePhotoPrompt = (data: UserProfilePromptData) => ({
+	prompt: profilePhotoPromptText(profilePhotoSubjects(data.activities)),
+	width: PROFILE_PHOTO_SIZE,
+	height: PROFILE_PHOTO_SIZE
+});
 
 export async function generateProfilePhoto(
 	data: UserProfilePromptData,
 	ai: Ai
 ): Promise<Uint8Array> {
-	const profile = await ai.run(profileModel, userProfilePhotoPrompt(data));
-
-	const reader = profile.getReader();
-	const chunks: Uint8Array[] = [];
-	let done = false;
-
-	while (!done) {
-		const { value, done: readerDone } = await reader.read();
-		done = readerDone;
-		if (value) {
-			chunks.push(value);
-		}
+	const form = new FormData();
+	for (const [key, value] of Object.entries(userProfilePhotoPrompt(data))) {
+		form.append(key, String(value));
 	}
 
-	const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
-	const imageBytes = new Uint8Array(totalLength);
-	let offset = 0;
-	for (const chunk of chunks) {
-		imageBytes.set(chunk, offset);
-		offset += chunk.length;
-	}
+	const encoded = new Response(form);
+	const result = (await ai.run(
+		profileModel as any,
+		{
+			multipart: { body: encoded.body, contentType: encoded.headers.get('content-type') }
+		} as any
+	)) as { image?: string };
 
-	return imageBytes;
+	if (!result?.image) throw new Error('Profile photo model returned no image');
+
+	return Uint8Array.from(atob(result.image), (char) => char.charCodeAt(0));
 }
 
 // Badge Mastery

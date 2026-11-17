@@ -823,20 +823,7 @@ describe('DELETE /events/thumbnail/:id', () => {
 
 describe('PUT /users/profile_photo/:id', () => {
 	it('stores generated profile photos for valid prompt data', async () => {
-		const bindings = createMockBindings({
-			AI: {
-				run: vi.fn(
-					async () =>
-						new ReadableStream<Uint8Array>({
-							start(controller) {
-								// must clear MIN_PROFILE_BYTES (1024); sdxl output under 1KB is treated as corrupt
-								controller.enqueue(new Uint8Array(2048).fill(7));
-								controller.close();
-							}
-						})
-				)
-			} as any
-		});
+		const bindings = createMockBindings({ AI: imageAi() as any });
 
 		const response = await callApp(
 			'/users/profile_photo/222',
@@ -850,19 +837,7 @@ describe('PUT /users/profile_photo/:id', () => {
 	});
 
 	it('clears cached photo variants once a new photo is generated', async () => {
-		const bindings = createMockBindings({
-			AI: {
-				run: vi.fn(
-					async () =>
-						new ReadableStream<Uint8Array>({
-							start(controller) {
-								controller.enqueue(new Uint8Array(2048).fill(7));
-								controller.close();
-							}
-						})
-				)
-			} as any
-		});
+		const bindings = createMockBindings({ AI: imageAi() as any });
 		const stale = 'user:profile_photo:333:128';
 		await bindings.CACHE.put(stale, JSON.stringify({ data: 'data:stale' }));
 
@@ -894,20 +869,7 @@ describe('PUT /users/profile_photo/:id', () => {
 
 describe('GET /users/profile_photo/:id', () => {
 	it('returns generated profile photos when available', async () => {
-		const bindings = createMockBindings({
-			AI: {
-				run: vi.fn(
-					async () =>
-						new ReadableStream<Uint8Array>({
-							start(controller) {
-								// must clear MIN_PROFILE_BYTES (1024); sdxl output under 1KB is treated as corrupt
-								controller.enqueue(new Uint8Array(2048).fill(7));
-								controller.close();
-							}
-						})
-				)
-			} as any
-		});
+		const bindings = createMockBindings({ AI: imageAi() as any });
 
 		await callApp(
 			'/users/profile_photo/222',
@@ -934,19 +896,9 @@ describe('GET /users/profile_photo/:id', () => {
 	});
 });
 
-// sdxl output under MIN_PROFILE_BYTES (1024) is treated as corrupt, so the stream must clear it
+// output under MIN_PROFILE_BYTES (1024) is treated as corrupt, so the image must clear it
 function imageAi() {
-	return {
-		run: vi.fn(
-			async () =>
-				new ReadableStream<Uint8Array>({
-					start(controller) {
-						controller.enqueue(new Uint8Array(2048).fill(7));
-						controller.close();
-					}
-				})
-		)
-	} as never;
+	return { run: vi.fn(async () => ({ image: btoa('\x07'.repeat(2048)) })) } as never;
 }
 
 describe('if-then plan routes', () => {

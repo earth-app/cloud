@@ -13,8 +13,6 @@ import {
 	articleTopicPrompt,
 	articleTopicSystemMessage,
 	classifyEventEntry,
-	CLIP_TOKEN_LIMIT,
-	estimateClipTokens,
 	eventActivitySelectionQuery,
 	eventDescriptionPrompt,
 	eventDescriptionSystemMessage,
@@ -610,21 +608,6 @@ describe('eventImageCriteria', () => {
 	});
 });
 
-describe('estimateClipTokens', () => {
-	it('reserves the BOS/EOS slots', () => {
-		expect(estimateClipTokens('')).toBe(2);
-	});
-
-	it('counts short words once and splits longer ones', () => {
-		expect(estimateClipTokens('flat')).toBe(3);
-		expect(estimateClipTokens('complementary')).toBe(2 + Math.ceil(13 / 4));
-	});
-
-	it('counts punctuation separately', () => {
-		expect(estimateClipTokens('flat, flat')).toBe(estimateClipTokens('flat flat') + 1);
-	});
-});
-
 describe('profilePhotoSubjects', () => {
 	const activity = (name: string, aliases: string[] = []) => ({
 		name,
@@ -695,37 +678,21 @@ describe('userProfilePhotoPrompt', () => {
 		expect(payload.prompt.indexOf('coding')).toBeLessThan(payload.prompt.indexOf('vibrant'));
 	});
 
-	it('fits inside the CLIP token limit even for a full activity list', () => {
-		const payload = userProfilePhotoPrompt(
-			user(
-				[
-					'Coding',
-					'Reading',
-					'Cross Country',
-					'Track and Field',
-					'Writing',
-					'Sunglasses Collecting',
-					'Debate',
-					'Weightlifting',
-					'Karting'
-				].map(activity)
-			)
-		);
+	it('caps the subject list for a full activity list', () => {
+		const names = ['Coding', 'Reading', 'Cross Country', 'Track and Field', 'Writing', 'Debate'];
+		const payload = userProfilePhotoPrompt(user(names.map(activity)));
 
-		expect(estimateClipTokens(payload.prompt)).toBeLessThanOrEqual(CLIP_TOKEN_LIMIT);
-		expect(estimateClipTokens(payload.negative_prompt!)).toBeLessThanOrEqual(CLIP_TOKEN_LIMIT);
+		expect(payload.prompt).toContain('track and field');
+		expect(payload.prompt).not.toContain('writing');
+		expect(payload.prompt).not.toContain('debate');
+		expect(PROFILE_PHOTO_SUBJECT_CAP).toBe(4);
 	});
 
-	it('drops trailing subjects when many-word names would overflow the budget', () => {
-		// adversarial shape: every word tokenizes on its own, so four capped labels still blow the budget
-		const wordy = Array.from({ length: PROFILE_PHOTO_SUBJECT_CAP }, (_, i) =>
-			activity(`a${i} bb cc dd ee ff gg hh ii jj kk ll mm nn oo`)
-		);
-		const payload = userProfilePhotoPrompt(user(wordy));
+	it('asks for a square 1024 image', () => {
+		const payload = userProfilePhotoPrompt(user([activity('Coding')]));
 
-		expect(estimateClipTokens(payload.prompt)).toBeLessThanOrEqual(CLIP_TOKEN_LIMIT);
-		expect(payload.prompt).toContain('a0');
-		expect(payload.prompt).not.toContain('a3');
+		expect(payload.width).toBe(1024);
+		expect(payload.height).toBe(1024);
 	});
 
 	it('never leaks the non-visual profile fields the encoder used to cut', () => {
@@ -739,13 +706,13 @@ describe('userProfilePhotoPrompt', () => {
 		expect(payload.prompt).not.toContain('x'.repeat(20));
 	});
 
-	it('keeps every person and animal term in the negative prompt', () => {
+	it('excludes people, animals and text inside the prompt since flux has no negative prompt', () => {
 		const payload = userProfilePhotoPrompt(user([activity('Coding')]));
 
-		for (const term of ['person', 'people', 'face', 'human', 'portrait', 'figure', 'animal']) {
-			expect(payload.negative_prompt).toContain(term);
+		for (const term of ['people', 'faces', 'animals', 'text', 'logos']) {
+			expect(payload.prompt).toContain(term);
 		}
-		expect(payload.prompt).not.toContain('people');
+		expect(payload).not.toHaveProperty('negative_prompt');
 	});
 
 	it('falls back to a generic subject with no activities and stays deterministic', () => {
@@ -759,37 +726,43 @@ describe('userProfilePhotoPrompt', () => {
 });
 
 describe('generateProfilePhoto', () => {
-	it('collects image chunks from ai stream', async () => {
-		const ai = {
-			run: vi.fn(async () => {
-				const chunks = [new Uint8Array([1, 2]), new Uint8Array([3, 4])];
-				let idx = 0;
-				return new ReadableStream<Uint8Array>({
-					pull(controller) {
-						if (idx < chunks.length) {
-							controller.enqueue(chunks[idx++]);
-						} else {
-							controller.close();
-						}
-					}
-				});
-			})
-		} as unknown as Ai;
+	const profile: UserProfilePromptData = {
+		username: 'earthy',
+		bio: 'bio',
+		created_at: '2026-01-01',
+		visibility: 'PUBLIC' as any,
+		country: 'US',
+		full_name: 'Earth User',
+		activities: []
+	};
 
-		const image = await generateProfilePhoto(
-			{
-				username: 'earthy',
-				bio: 'bio',
-				created_at: '2026-01-01',
-				visibility: 'PUBLIC' as any,
-				country: 'US',
-				full_name: 'Earth User',
-				activities: []
-			},
-			ai
-		);
+	it('sends the prompt as multipart form data and decodes the base64 image', async () => {
+		const run = vi.fn(async (_model: string, _input: unknown) => ({
+			image: btoa('\x01\x02\x03\x04')
+		}));
+		const image = await generateProfilePhoto(profile, { run } as unknown as Ai);
 
 		expect(Array.from(image)).toEqual([1, 2, 3, 4]);
+
+		const [model, input] = run.mock.calls[0] as [
+			string,
+			{ multipart: { body: ReadableStream; contentType: string } }
+		];
+		expect(model).toBe('@cf/black-forest-labs/flux-2-klein-4b');
+		expect(input.multipart.contentType).toContain('multipart/form-data');
+
+		const form = await new Response(input.multipart.body, {
+			headers: { 'content-type': input.multipart.contentType }
+		}).formData();
+		expect(form.get('prompt')).toBe(userProfilePhotoPrompt(profile).prompt);
+		expect(form.get('width')).toBe('1024');
+		expect(form.get('height')).toBe('1024');
+	});
+
+	it('throws when the model returns no image', async () => {
+		const ai = { run: vi.fn(async () => ({})) } as unknown as Ai;
+
+		await expect(generateProfilePhoto(profile, ai)).rejects.toThrow('returned no image');
 	});
 });
 

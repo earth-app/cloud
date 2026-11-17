@@ -92,6 +92,9 @@ function createMockImagesBinding() {
 				output: () => ({
 					image: () => stream
 				})
+			}),
+			output: () => ({
+				image: () => stream
 			})
 		})
 	};
