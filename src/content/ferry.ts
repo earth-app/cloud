@@ -7,8 +7,37 @@ import { streamToUint8Array } from '../util/util';
 const embedModel = '@cf/baai/bge-m3';
 const imageClassificationModel = '@cf/microsoft/resnet-50';
 const objectDetectionModel = '@cf/facebook/detr-resnet-50';
-const imageCaptionModel = '@cf/llava-hf/llava-1.5-7b-hf';
+export const imageCaptionModel = '@cf/moondream/moondream3.1-9B-A2B';
 const audioTranscriptionModel = '@cf/openai/whisper-large-v3-turbo';
+
+// moondream takes the image as a data uri and only answers over a stream; a plain call
+// resolves to `{}`. every event carries the answer so far, so the last one is the full text
+export async function captionImage(ai: Ai, image: Uint8Array, question: string): Promise<string> {
+	const mime = image[0] === 0x89 ? 'image/png' : image[0] === 0x52 ? 'image/webp' : 'image/jpeg';
+	const result = await (ai as any).run(imageCaptionModel, {
+		task: 'query',
+		image: `data:${mime};base64,${Buffer.from(image).toString('base64')}`,
+		question,
+		// the reasoning trace is billed output tokens we never read
+		reasoning: false,
+		max_tokens: 512,
+		stream: true
+	});
+
+	if (!(result instanceof ReadableStream)) return String(result?.answer ?? '').trim();
+
+	let answer = '';
+	for (const line of (await new Response(result).text()).split('\n')) {
+		if (!line.startsWith('data:')) continue;
+		try {
+			const text = JSON.parse(line.slice(5)).chunk?.answer;
+			if (typeof text === 'string' && text) answer = text;
+		} catch {
+			// [DONE] and keep-alive lines are not json
+		}
+	}
+	return answer.trim();
+}
 
 // images larger than this must be downscaled to be passed to workers AI
 const AI_IMAGE_MAX_DIMENSION = 1024;
@@ -201,14 +230,7 @@ export async function scoreImage(
 	const scaled = await downscaleImageForAI(env, image);
 
 	// caption, score
-	const caption = await env.AI.run(imageCaptionModel, {
-		image: [...new Uint8Array(scaled)],
-		prompt,
-		// Caption prompts cap output at ~150 words; 2048 was ~10× excess and billed accordingly.
-		max_tokens: 512
-	});
-
-	const text = caption?.description?.trim();
+	const text = await captionImage(env.AI, scaled, prompt);
 	if (!text) {
 		throw new Error('Image captioning failed');
 	}

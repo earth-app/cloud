@@ -1,12 +1,11 @@
 import { Bindings } from '../../util/types';
-import { downscaleImageForAI } from '../ferry';
+import { captionImage, downscaleImageForAI, imageCaptionModel } from '../ferry';
 import { getEventImage } from '../../user/submissions';
 import { ContentReport, getReport, patchReportStatus, setReportAi, ReportReason } from '../reports';
 import { fetchReportableContentText, requestContentRemoval } from '../../util/mantle2';
 import { runAI } from '../../util/ai-runtime';
 
 const textSafetyModel = '@cf/meta/llama-guard-3-8b';
-const imageCaptionModel = '@cf/llava-hf/llava-1.5-7b-hf';
 const sentimentModel = '@cf/huggingface/distilbert-sst-2-int8';
 
 // a note only rejects on a confidently-negative verdict; mild negativity still posts
@@ -138,22 +137,18 @@ export async function classifySentiment(env: Bindings, text: string): Promise<Se
 export async function moderateImage(env: Bindings, image: Uint8Array): Promise<ModerationResult> {
 	// no server nsfw model: caption the image, then run the caption through the text guard
 	const scaled = await downscaleImageForAI(env, image);
-	let caption: { description?: string };
+	let caption: string;
 	try {
-		caption = (await runAI('moderateImage:caption', () =>
-			env.AI.run(imageCaptionModel as any, {
-				image: [...new Uint8Array(scaled)],
-				prompt: 'Describe this image in detail for content safety review.',
-				max_tokens: 512
-			})
-		)) as { description?: string };
+		caption = await runAI('moderateImage:caption', () =>
+			captionImage(env.AI, scaled, 'Describe this image in detail for content safety review.')
+		);
 	} catch (err) {
 		// fail-safe: no caption means no basis to flag; leave for human review
 		console.error('moderateImage: captioning unavailable, degrading to not-flagged', { err });
 		return { model: imageCaptionModel, flagged: false, confidence: 0, labels: [], severe: false };
 	}
 
-	return moderateText(env, caption?.description?.trim() || '');
+	return moderateText(env, caption);
 }
 
 // invoked from POST /v1/reports (background): enrich the report with ai triage labels and, for severe

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+	captionImage,
 	classifyImage,
 	detectObjects,
 	downscaleImageForAI,
@@ -94,6 +95,51 @@ describe('scoreText', () => {
 		expect(result.breakdown).toHaveLength(2);
 		expect(result.score).toBeGreaterThanOrEqual(0);
 		expect(result.score).toBeLessThanOrEqual(1);
+	});
+});
+
+describe('captionImage', () => {
+	const sse = (...events: unknown[]) =>
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				const encoder = new TextEncoder();
+				for (const event of events)
+					controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+				controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+				controller.close();
+			}
+		});
+	const ai = (result: unknown) => ({ run: vi.fn(async () => result) }) as unknown as Ai;
+	const image = new Uint8Array([0x89, 0x50]);
+
+	it('returns the last cumulative answer from the stream', async () => {
+		const stream = sse(
+			{ status: 'processing' },
+			{ chunk: { answer: 'A', caption: null } },
+			{ chunk: { answer: 'A stylized globe', caption: null } },
+			{ response: '' }
+		);
+
+		expect(await captionImage(ai(stream), image, 'what is it?')).toBe('A stylized globe');
+	});
+
+	it('sends a png data uri with reasoning off and streaming on', async () => {
+		const binding = ai(sse({ chunk: { answer: 'x' } }));
+		await captionImage(binding, image, 'what is it?');
+
+		expect((binding.run as any).mock.calls[0][1]).toMatchObject({
+			task: 'query',
+			image: `data:image/png;base64,${btoa('\x89\x50')}`,
+			question: 'what is it?',
+			reasoning: false,
+			stream: true
+		});
+	});
+
+	it('reads a plain answer object and returns empty for an unusable result', async () => {
+		expect(await captionImage(ai({ answer: ' a cat ' }), image, 'q')).toBe('a cat');
+		expect(await captionImage(ai({}), image, 'q')).toBe('');
+		expect(await captionImage(ai(sse({ status: 'processing' })), image, 'q')).toBe('');
 	});
 });
 
@@ -212,16 +258,16 @@ describe('downscaleImageForAI', () => {
 });
 
 describe('image scoring downscales before inference', () => {
-	// the vision models receive the image as an int array, so assert they get the *downscaled* bytes
+	// the caption model gets a data uri, so assert it encodes the *downscaled* bytes
 	it('scoreImage captions the downscaled image', async () => {
 		const downscaled = new Uint8Array([7, 7, 7]);
 		const { binding } = mockImages(downscaled);
-		let capturedImage: number[] | undefined;
+		let captionInput: Record<string, unknown> | undefined;
 		const aiRun = vi.fn(
-			async (_model: string, input: { image?: number[]; text?: string | string[] }) => {
+			async (_model: string, input: { image?: string; text?: string | string[] }) => {
 				if (input.image) {
-					capturedImage = input.image;
-					return { description: 'a cat' };
+					captionInput = input;
+					return { answer: 'a cat' };
 				}
 				const texts = Array.isArray(input.text) ? input.text : [input.text!];
 				return { data: texts.map(() => [1, 0, 0]) };
@@ -229,9 +275,15 @@ describe('image scoring downscales before inference', () => {
 		);
 		const bindings = createBindings(aiRun, binding);
 
-		await scoreImage(bindings, bigImage(), 'prompt', rubric);
+		await scoreImage(bindings, bigImage(), 'describe the cat', rubric);
 
-		expect(capturedImage).toEqual([7, 7, 7]);
+		expect(captionInput).toMatchObject({
+			task: 'query',
+			image: `data:image/jpeg;base64,${btoa('\x07\x07\x07')}`,
+			question: 'describe the cat',
+			reasoning: false,
+			stream: true
+		});
 	});
 
 	it('classifyImage classifies the downscaled image', async () => {
