@@ -35,8 +35,10 @@ import type { Badge } from '../user/badges';
 import { activityTypeNames, badgeTier, labelsForBadge, masterySpec } from '../user/badges/mastery';
 
 export const descriptionModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
-export const tagsModel = '@cf/meta/llama-3.1-8b-instruct-fp8';
-export const articleTopicModel = '@cf/meta/llama-3.2-3b-instruct';
+export const tagsModel = '@cf/google/gemma-4-26b-a4b-it';
+export const articleTopicModel = '@cf/google/gemma-4-26b-a4b-it';
+// gemma reasons by default and spends the whole max_tokens on it, returning empty content
+export const gemmaNoThinking = { chat_template_kwargs: { enable_thinking: false } };
 export const rankerModel = '@cf/baai/bge-reranker-base';
 export const articleModel = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 export const quizModel = '@cf/meta/llama-4-scout-17b-16e-instruct';
@@ -131,7 +133,8 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 		// Generate tags with error handling
 		let tagsResult;
 		try {
-			tagsResult = await ai.run(tagsModel, {
+			tagsResult = await ai.run(tagsModel as any, {
+				...gemmaNoThinking,
 				messages: [
 					{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
 					{ role: 'user', content: prompts.activityTagsPrompt(activity, desc) }
@@ -142,7 +145,7 @@ export async function createActivityData(id: string, activity: string, ai: Ai) {
 			tagsResult = { response: '' };
 		}
 
-		let tags = prompts.validateActivityTags(tagsResult?.response || '', activity);
+		let tags = prompts.validateActivityTags(extractAIText(tagsResult), activity);
 
 		// a bare OTHER means the model failed rather than that the activity is genuinely
 		// uncategorizable, and it is the exact value discovery's quality gate rejects
@@ -270,7 +273,8 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 
 	let topicRaw;
 	try {
-		topicRaw = await ai.run(articleTopicModel, {
+		topicRaw = await ai.run(articleTopicModel as any, {
+			...gemmaNoThinking,
 			messages: [
 				{ role: 'system', content: prompts.articleTopicSystemMessage.trim() },
 				{ role: 'user', content: prompts.articleTopicPrompt().trim() }
@@ -283,7 +287,7 @@ export async function findArticle(bindings: Bindings): Promise<[OceanArticle[], 
 		throw new Error('Failed to generate article topic using AI model');
 	}
 
-	const topic = prompts.validateArticleTopic(topicRaw?.response || '');
+	const topic = prompts.validateArticleTopic(extractAIText(topicRaw));
 	console.debug('Generated article topic:', topic);
 
 	const tags = pickLenses();
@@ -635,7 +639,8 @@ export async function groundArticleLenses(
 	if (tags.length === 0) return [];
 
 	try {
-		const result = await ai.run(tagsModel, {
+		const result = await ai.run(tagsModel as any, {
+			...gemmaNoThinking,
 			messages: [
 				{ role: 'system', content: prompts.articleLensSystemMessage.trim() },
 				{ role: 'user', content: prompts.articleLensPrompt(content, tags) }
@@ -644,7 +649,7 @@ export async function groundArticleLenses(
 			temperature: 0
 		});
 
-		return prompts.validateArticleLenses(String(result?.response ?? ''), tags);
+		return prompts.validateArticleLenses(extractAIText(result), tags);
 	} catch (aiError) {
 		console.warn('Article lens grounding unavailable; keeping the primary lens only', {
 			error: aiError instanceof Error ? aiError.message : String(aiError)
@@ -1315,7 +1320,8 @@ export async function createEvent(
 
 	let tagsResult;
 	try {
-		tagsResult = await ai.run(tagsModel, {
+		tagsResult = await ai.run(tagsModel as any, {
+			...gemmaNoThinking,
 			messages: [
 				{ role: 'system', content: prompts.activityTagsSystemMessage.trim() },
 				{ role: 'user', content: `'${name}'` }
@@ -1339,7 +1345,7 @@ export async function createEvent(
 
 	// Combine activity types and ranked activity IDs
 	const activities = [
-		...prompts.validateActivityTags(tagsResult?.response || '', name),
+		...prompts.validateActivityTags(extractAIText(tagsResult), name),
 		...rankedActivityIds
 	];
 

@@ -1,4 +1,4 @@
-import { ActivityDataError, createActivityData, tagsModel } from './boat';
+import { ActivityDataError, createActivityData, gemmaNoThinking, tagsModel } from './boat';
 import { cosineSimilarity, embedTexts } from './ferry';
 import {
 	getDeniedStagedActivityIds,
@@ -1618,7 +1618,8 @@ export async function filterSpecificCandidates(
 
 	let response: string;
 	try {
-		const result = await (env.AI as Ai).run(tagsModel, {
+		const result = await (env.AI as Ai).run(tagsModel as any, {
+			...gemmaNoThinking,
 			messages: [
 				{ role: 'system', content: SPECIFICITY_SYSTEM },
 				{ role: 'user', content: listing }

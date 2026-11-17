@@ -184,8 +184,8 @@ describe('createActivityData', () => {
 				if (model.includes('llama-4-scout')) {
 					return { response: longDescription };
 				}
-				if (model.includes('llama-3.1-8b-instruct-fp8')) {
-					return { response: 'NATURE,TECHNOLOGY' };
+				if (model.includes('gemma-4')) {
+					return { choices: [{ message: { content: 'NATURE,TECHNOLOGY' } }] };
 				}
 				return {};
 			})
@@ -197,6 +197,10 @@ describe('createActivityData', () => {
 		expect(result.aliases).toContain('horticulture');
 		expect(result.aliases).toContain('cultivation');
 		expect(result.fields.icon).toBe('ph:plant-rounded');
+
+		// gemma spends the whole token budget reasoning unless thinking is switched off
+		const tagsCall = ai.run.mock.calls.find(([model]: [string]) => model.includes('gemma-4'));
+		expect(tagsCall[1]).toMatchObject({ chat_template_kwargs: { enable_thinking: false } });
 	});
 });
 
@@ -293,7 +297,7 @@ describe('findArticle', () => {
 					}
 
 					if (model.includes(articleTopicModel)) {
-						return { response: 'Climate Change' };
+						return { choices: [{ message: { content: 'Climate Change' } }] };
 					}
 
 					throw new Error('Unexpected model called: ' + model);

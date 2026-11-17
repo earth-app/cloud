@@ -47,7 +47,7 @@ vi.mock('../../src/content/boat', async (importOriginal) => {
 	return {
 		...actual,
 		createActivityData: vi.fn(),
-		tagsModel: '@cf/meta/llama-3.1-8b-instruct-fp8'
+		tagsModel: '@cf/google/gemma-4-26b-a4b-it'
 	};
 });
 
@@ -807,7 +807,7 @@ describe('specificity gate', () => {
 	function aiReturning(text: string) {
 		env.AI = {
 			run: vi.fn(async (model: string) =>
-				String(model).includes('llama-3.1-8b') ? { response: text } : {}
+				String(model).includes('gemma-4') ? { choices: [{ message: { content: text } }] } : {}
 			)
 		} as unknown as typeof env.AI;
 	}
