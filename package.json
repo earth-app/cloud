@@ -23,11 +23,11 @@
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.8.4",
-    "@vitest/coverage-istanbul": "5.0.5",
+    "@vitest/coverage-istanbul": "5.1.1",
     "husky": "^9.1.7",
     "lint-staged": "^17.6.1",
     "prettier": "^3.10.1",
-    "vitest": "5.0.5",
+    "vitest": "5.1.1",
     "wrangler": "^4.164.0"
   },
   "lint-staged": {
